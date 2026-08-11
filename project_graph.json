@@ -1,0 +1,1433 @@
+{
+  "project": "PhoneLink",
+  "schema_version": "1.0",
+  "root_node": "REQ-1",
+  "nodes": [
+    {
+      "id": "REQ-1",
+      "name": "Requirements, Scope & Threat Boundary",
+      "category": "requirements",
+      "status": "PENDING",
+      "depends_on": [],
+      "blocks": [
+        "ARCH-1",
+        "ARCH-4"
+      ],
+      "parallelizable": false,
+      "priority": "P0",
+      "acceptance_criteria": [
+        "Functional scope and explicit non-goals documented",
+        "Device/OS version targets for Android, macOS, and VPS defined",
+        "VPS data-retention policy stated in testable terms"
+      ],
+      "tests": [
+        "Requirements doc reviewed against all brief areas",
+        "Sign-off recorded before ARCH-1 starts"
+      ],
+      "components": [
+        "Documentation"
+      ]
+    },
+    {
+      "id": "ARCH-1",
+      "name": "High-Level System Architecture",
+      "category": "architecture",
+      "status": "PENDING",
+      "depends_on": [
+        "REQ-1"
+      ],
+      "blocks": [
+        "ARCH-2",
+        "AND-1",
+        "VPS-1",
+        "MAC-1"
+      ],
+      "parallelizable": true,
+      "priority": "P0",
+      "acceptance_criteria": [
+        "Component and data-flow diagrams cover Android, VPS, Mac",
+        "Every REQ-1 requirement traces to a component",
+        "Technology stack per platform decided and justified"
+      ],
+      "tests": [
+        "Architecture reviewed against REQ-1 checklist",
+        "Diagram peer-reviewed for gaps"
+      ],
+      "components": [
+        "Documentation",
+        "Shared protocol"
+      ]
+    },
+    {
+      "id": "ARCH-4",
+      "name": "Threat Model & Abuse-Case Analysis",
+      "category": "architecture",
+      "status": "PENDING",
+      "depends_on": [
+        "REQ-1"
+      ],
+      "blocks": [
+        "ARCH-2",
+        "AND-2",
+        "AND-3",
+        "VPS-2",
+        "FILE-1",
+        "FILE-5",
+        "CAM-1"
+      ],
+      "parallelizable": true,
+      "priority": "P0",
+      "acceptance_criteria": [
+        "Threats covering VPS compromise, device loss, replay/MITM, unauthorized camera use documented",
+        "Non-consensual-use abuse case analyzed with resulting design constraints",
+        "Every threat has a mitigation or accepted-risk note"
+      ],
+      "tests": [
+        "Threat list cross-checked against every later security-relevant node",
+        "Abuse-case constraints traced into CAM-1 and FILE-5 specs"
+      ],
+      "components": [
+        "Documentation"
+      ]
+    },
+    {
+      "id": "AND-1",
+      "name": "Android Project Foundation",
+      "category": "android",
+      "status": "PENDING",
+      "depends_on": [
+        "ARCH-1"
+      ],
+      "blocks": [
+        "AND-2",
+        "AND-5",
+        "AND-7",
+        "TEST-1"
+      ],
+      "parallelizable": true,
+      "priority": "P0",
+      "acceptance_criteria": [
+        "Project builds via CI",
+        "Lint/static analysis configured",
+        "Module structure supports later features"
+      ],
+      "tests": [
+        "`./gradlew build` succeeds in CI",
+        "Empty app launches on emulator"
+      ],
+      "components": [
+        "Android",
+        "Tests"
+      ]
+    },
+    {
+      "id": "ARCH-2",
+      "name": "Transport & Session Protocol Design",
+      "category": "architecture",
+      "status": "PENDING",
+      "depends_on": [
+        "ARCH-1",
+        "ARCH-4"
+      ],
+      "blocks": [
+        "ARCH-3",
+        "AND-5",
+        "VPS-3",
+        "MAC-2"
+      ],
+      "parallelizable": true,
+      "priority": "P0",
+      "acceptance_criteria": [
+        "Transport/encryption scheme defined (E2E, VPS relays ciphertext only)",
+        "Session-establishment sequence diagrammed",
+        "Key-exchange approach specified"
+      ],
+      "tests": [
+        "Protocol spec self-reviewed against ARCH-4 threats",
+        "Handshake sequence diagram completed"
+      ],
+      "components": [
+        "Documentation",
+        "Shared protocol"
+      ]
+    },
+    {
+      "id": "MAC-1",
+      "name": "Mac Client Project Foundation",
+      "category": "mac",
+      "status": "PENDING",
+      "depends_on": [
+        "ARCH-1"
+      ],
+      "blocks": [
+        "MAC-2",
+        "MAC-4",
+        "TEST-1"
+      ],
+      "parallelizable": true,
+      "priority": "P0",
+      "acceptance_criteria": [
+        "Project builds via CI",
+        "Skeleton CLI executable runs"
+      ],
+      "tests": [
+        "Build succeeds in CI",
+        "Skeleton binary prints version/help"
+      ],
+      "components": [
+        "Mac",
+        "Tests"
+      ]
+    },
+    {
+      "id": "VPS-1",
+      "name": "VPS Base Infrastructure & Deployment Skeleton",
+      "category": "vps",
+      "status": "PENDING",
+      "depends_on": [
+        "ARCH-1"
+      ],
+      "blocks": [
+        "VPS-5",
+        "VPS-2",
+        "VPS-7",
+        "TEST-1"
+      ],
+      "parallelizable": true,
+      "priority": "P0",
+      "acceptance_criteria": [
+        "Reproducible deployment (IaC/script) provisions a hardened base host",
+        "Skeleton service reachable over TLS"
+      ],
+      "tests": [
+        "Re-running deployment script yields an identical environment",
+        "Port scan shows only intended ports open"
+      ],
+      "components": [
+        "VPS",
+        "Tests"
+      ]
+    },
+    {
+      "id": "AND-2",
+      "name": "Android Device Identity Provisioning",
+      "category": "android",
+      "status": "PENDING",
+      "depends_on": [
+        "AND-1",
+        "ARCH-4"
+      ],
+      "blocks": [
+        "AND-3"
+      ],
+      "parallelizable": true,
+      "priority": "P1",
+      "acceptance_criteria": [
+        "Stable device ID tied to a Keystore-backed keypair generated on first launch",
+        "ID persists across restarts; reinstall yields a new identity"
+      ],
+      "tests": [
+        "Unit test: identity persists after process restart",
+        "Unit test: reinstall produces new identity"
+      ],
+      "components": [
+        "Android",
+        "Tests"
+      ]
+    },
+    {
+      "id": "AND-5",
+      "name": "Android Core Network Transport Layer",
+      "category": "android",
+      "status": "PENDING",
+      "depends_on": [
+        "AND-1",
+        "ARCH-2"
+      ],
+      "blocks": [
+        "AND-6",
+        "AND-7"
+      ],
+      "parallelizable": true,
+      "priority": "P1",
+      "acceptance_criteria": [
+        "TLS/mTLS (per ARCH-2) connection established to VPS",
+        "Connect/disconnect/error events handled cleanly"
+      ],
+      "tests": [
+        "Simulated connect success/TLS-failure/unreachable-server tests pass",
+        "State-transition unit tests pass"
+      ],
+      "components": [
+        "Android",
+        "Shared protocol",
+        "Tests"
+      ]
+    },
+    {
+      "id": "ARCH-3",
+      "name": "Application Message Schema & API Contract",
+      "category": "architecture",
+      "status": "PENDING",
+      "depends_on": [
+        "ARCH-2"
+      ],
+      "blocks": [
+        "VPS-4",
+        "FILE-2",
+        "CAM-3"
+      ],
+      "parallelizable": true,
+      "priority": "P1",
+      "acceptance_criteria": [
+        "Versioned schema for auth, file ops, camera ops, status, errors",
+        "Backward-compatible versioning strategy defined"
+      ],
+      "tests": [
+        "Schema validated with a linter",
+        "Example messages round-trip in a test script"
+      ],
+      "components": [
+        "Documentation",
+        "Shared protocol"
+      ]
+    },
+    {
+      "id": "TEST-1",
+      "name": "Test Infrastructure & CI Pipeline",
+      "category": "testing",
+      "status": "PENDING",
+      "depends_on": [
+        "AND-1",
+        "VPS-1",
+        "MAC-1"
+      ],
+      "blocks": [
+        "TEST-2"
+      ],
+      "parallelizable": true,
+      "priority": "P1",
+      "acceptance_criteria": [
+        "CI runs unit tests for all three components on every change",
+        "Regression-suite hook defined for the Node Completion Protocol"
+      ],
+      "tests": [
+        "CI green on a trivial change to each component",
+        "CI correctly fails on an intentionally broken test"
+      ],
+      "components": [
+        "Android",
+        "VPS",
+        "Mac",
+        "Tests"
+      ]
+    },
+    {
+      "id": "VPS-5",
+      "name": "VPS Platform Security Hardening",
+      "category": "vps",
+      "status": "PENDING",
+      "depends_on": [
+        "VPS-1"
+      ],
+      "blocks": [
+        "VPS-2",
+        "SEC-1"
+      ],
+      "parallelizable": true,
+      "priority": "P1",
+      "acceptance_criteria": [
+        "Firewall, strong TLS config, key-only SSH, secrets kept out of source control",
+        "Basic rate limiting/brute-force protection active"
+      ],
+      "tests": [
+        "External TLS scan meets defined bar",
+        "Automated secret-scan finds nothing",
+        "Brute-force simulation triggers rate limiting"
+      ],
+      "components": [
+        "VPS",
+        "Tests"
+      ]
+    },
+    {
+      "id": "VPS-7",
+      "name": "VPS Logging & Monitoring",
+      "category": "vps",
+      "status": "PENDING",
+      "depends_on": [
+        "VPS-1"
+      ],
+      "blocks": [
+        "SEC-2",
+        "REL-1"
+      ],
+      "parallelizable": true,
+      "priority": "P2",
+      "acceptance_criteria": [
+        "Structured logs for auth/connection/error events",
+        "File contents, camera frames, and message payloads never logged",
+        "Basic alerting on repeated auth failures"
+      ],
+      "tests": [
+        "Log audit finds no payload data under normal and error conditions",
+        "Simulated repeated-failure triggers an alert"
+      ],
+      "components": [
+        "VPS",
+        "Tests"
+      ]
+    },
+    {
+      "id": "AND-3",
+      "name": "Android Cryptographic Key Management",
+      "category": "android",
+      "status": "PENDING",
+      "depends_on": [
+        "AND-2",
+        "ARCH-4"
+      ],
+      "blocks": [
+        "AND-4",
+        "AND-6"
+      ],
+      "parallelizable": true,
+      "priority": "P1",
+      "acceptance_criteria": [
+        "Keys generated/stored in Android Keystore, hardware-backed where available",
+        "Keys never exportable in plaintext",
+        "Signing operation available for the auth handshake"
+      ],
+      "tests": [
+        "Unit test confirms non-exportability",
+        "Instrumented test: key survives app update"
+      ],
+      "components": [
+        "Android",
+        "Tests"
+      ]
+    },
+    {
+      "id": "AND-7",
+      "name": "Android Background Execution & Foreground Service",
+      "category": "android",
+      "status": "PENDING",
+      "depends_on": [
+        "AND-1",
+        "AND-5"
+      ],
+      "blocks": [
+        "AND-8",
+        "AND-9",
+        "CAM-2"
+      ],
+      "parallelizable": true,
+      "priority": "P1",
+      "acceptance_criteria": [
+        "Connection maintained via a compliant foreground service with a persistent, user-visible notification",
+        "Correct foreground-service-type declared per current Android rules",
+        "No use of undocumented APIs to evade Doze/App Standby"
+      ],
+      "tests": [
+        "Instrumented test: notification visible for entire service lifetime",
+        "Manual test: service survives normal Doze cycling on a real device"
+      ],
+      "components": [
+        "Android",
+        "Tests"
+      ]
+    },
+    {
+      "id": "VPS-2",
+      "name": "VPS Device Authentication & Identity Registry",
+      "category": "vps",
+      "status": "PENDING",
+      "depends_on": [
+        "VPS-1",
+        "VPS-5",
+        "ARCH-4"
+      ],
+      "blocks": [
+        "AND-6",
+        "VPS-3",
+        "MAC-2"
+      ],
+      "parallelizable": true,
+      "priority": "P0",
+      "acceptance_criteria": [
+        "Authorized-device registry verifies signatures/certs on connect",
+        "Unregistered devices rejected",
+        "Revocation takes effect immediately for new connections"
+      ],
+      "tests": [
+        "Integration test: registered device authenticates",
+        "Integration test: unregistered device rejected",
+        "Integration test: revoked device rejected post-revocation"
+      ],
+      "components": [
+        "VPS",
+        "Shared protocol",
+        "Tests"
+      ]
+    },
+    {
+      "id": "AND-4",
+      "name": "Android Secure Local Storage",
+      "category": "android",
+      "status": "PENDING",
+      "depends_on": [
+        "AND-3"
+      ],
+      "blocks": [
+        "AND-6",
+        "FILE-1",
+        "CAM-1"
+      ],
+      "parallelizable": true,
+      "priority": "P1",
+      "acceptance_criteria": [
+        "Tokens/config stored via EncryptedSharedPreferences or equivalent",
+        "No secrets in plaintext logs or files"
+      ],
+      "tests": [
+        "Static scan finds no plaintext secret storage",
+        "Instrumented test: data unreadable outside app sandbox"
+      ],
+      "components": [
+        "Android",
+        "Tests"
+      ]
+    },
+    {
+      "id": "AND-9",
+      "name": "Android Boot-Persistence & Reboot Recovery",
+      "category": "android",
+      "status": "PENDING",
+      "depends_on": [
+        "AND-7"
+      ],
+      "blocks": [
+        "TEST-4"
+      ],
+      "parallelizable": true,
+      "priority": "P2",
+      "acceptance_criteria": [
+        "Service resumes after reboot per RECEIVE_BOOT_COMPLETED and current deferred-start rules, without manual app reopen where the OS permits",
+        "Degrades gracefully (prompts user) if OEM auto-start restrictions block it"
+      ],
+      "tests": [
+        "Manual reboot test on 2+ real devices/OEMs",
+        "Verifies no crash if boot-complete permission is later revoked"
+      ],
+      "components": [
+        "Android",
+        "Tests"
+      ]
+    },
+    {
+      "id": "MAC-2",
+      "name": "Mac Authentication & Identity",
+      "category": "mac",
+      "status": "PENDING",
+      "depends_on": [
+        "MAC-1",
+        "ARCH-2",
+        "VPS-2"
+      ],
+      "blocks": [
+        "MAC-3"
+      ],
+      "parallelizable": true,
+      "priority": "P1",
+      "acceptance_criteria": [
+        "Mac generates/stores a Keychain-backed identity keypair",
+        "Completes auth handshake against VPS-2"
+      ],
+      "tests": [
+        "Integration test: Mac authenticates against staging VPS",
+        "Credential wipe/re-pair flow tested"
+      ],
+      "components": [
+        "Mac",
+        "VPS",
+        "Shared protocol",
+        "Tests"
+      ]
+    },
+    {
+      "id": "VPS-3",
+      "name": "VPS Session Coordination & Signaling",
+      "category": "vps",
+      "status": "PENDING",
+      "depends_on": [
+        "VPS-2",
+        "ARCH-2"
+      ],
+      "blocks": [
+        "VPS-4",
+        "VPS-6"
+      ],
+      "parallelizable": true,
+      "priority": "P1",
+      "acceptance_criteria": [
+        "Tracks connected authorized devices and pairs Android/Mac sessions",
+        "Exposes presence/status"
+      ],
+      "tests": [
+        "Integration test with two simulated clients confirms correct pairing",
+        "No cross-pairing across unrelated device pairs"
+      ],
+      "components": [
+        "VPS",
+        "Shared protocol",
+        "Tests"
+      ]
+    },
+    {
+      "id": "AND-6",
+      "name": "Android Authentication Handshake",
+      "category": "android",
+      "status": "PENDING",
+      "depends_on": [
+        "AND-3",
+        "AND-4",
+        "AND-5",
+        "VPS-2"
+      ],
+      "blocks": [
+        "AND-8",
+        "INT-1"
+      ],
+      "parallelizable": true,
+      "priority": "P0",
+      "acceptance_criteria": [
+        "Device completes handshake against a live VPS-2 instance",
+        "Bad credentials and expired tokens are rejected"
+      ],
+      "tests": [
+        "Integration test: successful auth against staging VPS",
+        "Integration test: wrong-key and expired-token rejection"
+      ],
+      "components": [
+        "Android",
+        "VPS",
+        "Shared protocol",
+        "Tests"
+      ]
+    },
+    {
+      "id": "CAM-1",
+      "name": "Camera Permission & Explicit Activation Authorization Flow",
+      "category": "camera",
+      "status": "PENDING",
+      "depends_on": [
+        "ARCH-4",
+        "AND-4"
+      ],
+      "blocks": [
+        "CAM-2",
+        "SEC-2"
+      ],
+      "parallelizable": true,
+      "priority": "P1",
+      "acceptance_criteria": [
+        "Camera access requires OS runtime permission plus a separate in-app opt-in toggle, defaulting OFF",
+        "Remote activation requests are never auto-approved"
+      ],
+      "tests": [
+        "Instrumented test: camera cannot activate remotely while the app-level toggle is OFF",
+        "Fresh-install test confirms toggle defaults OFF"
+      ],
+      "components": [
+        "Android",
+        "Tests"
+      ]
+    },
+    {
+      "id": "FILE-1",
+      "name": "Android Storage Access Layer",
+      "category": "files",
+      "status": "PENDING",
+      "depends_on": [
+        "AND-4",
+        "ARCH-4"
+      ],
+      "blocks": [
+        "FILE-2"
+      ],
+      "parallelizable": true,
+      "priority": "P1",
+      "acceptance_criteria": [
+        "Requests only minimum storage permissions via SAF/MediaStore/scoped storage",
+        "Handles permission denial gracefully",
+        "No access outside granted scope"
+      ],
+      "tests": [
+        "Instrumented tests for granted and denied permission paths"
+      ],
+      "components": [
+        "Android",
+        "Tests"
+      ]
+    },
+    {
+      "id": "MAC-3",
+      "name": "Mac Connection Manager",
+      "category": "mac",
+      "status": "PENDING",
+      "depends_on": [
+        "MAC-2"
+      ],
+      "blocks": [
+        "MAC-4",
+        "INT-1",
+        "INT-3"
+      ],
+      "parallelizable": true,
+      "priority": "P0",
+      "acceptance_criteria": [
+        "Manages connect/disconnect/reconnect lifecycle",
+        "Exposes current status to CLI/future GUI"
+      ],
+      "tests": [
+        "Integration test: simulated disconnect drives correct status transitions and reconnect attempts"
+      ],
+      "components": [
+        "Mac",
+        "Shared protocol",
+        "Tests"
+      ]
+    },
+    {
+      "id": "VPS-4",
+      "name": "VPS Relay Data Path",
+      "category": "vps",
+      "status": "PENDING",
+      "depends_on": [
+        "VPS-3",
+        "ARCH-3"
+      ],
+      "blocks": [
+        "VPS-8",
+        "INT-1",
+        "FILE-3",
+        "FILE-4",
+        "CAM-3"
+      ],
+      "parallelizable": true,
+      "priority": "P0",
+      "acceptance_criteria": [
+        "Forwards encrypted messages between paired sessions without decrypting them",
+        "Enforces per-connection size/rate limits",
+        "No payload retained after relay"
+      ],
+      "tests": [
+        "Integration test: byte-for-byte relay integrity both directions",
+        "Audit confirms no payload persists in VPS memory/disk after relay"
+      ],
+      "components": [
+        "VPS",
+        "Shared protocol",
+        "Tests"
+      ]
+    },
+    {
+      "id": "VPS-6",
+      "name": "VPS Session Resumption & Reconnection Handling",
+      "category": "vps",
+      "status": "PENDING",
+      "depends_on": [
+        "VPS-3"
+      ],
+      "blocks": [
+        "INT-3"
+      ],
+      "parallelizable": true,
+      "priority": "P2",
+      "acceptance_criteria": [
+        "Session resumes after brief disconnect without full re-auth, within a defined token-validity window"
+      ],
+      "tests": [
+        "Integration test: disconnect N seconds, reconnect, session resumes with minimal Mac-side interruption"
+      ],
+      "components": [
+        "VPS",
+        "Shared protocol",
+        "Tests"
+      ]
+    },
+    {
+      "id": "AND-8",
+      "name": "Android Reconnection & Network-Change Handling",
+      "category": "android",
+      "status": "PENDING",
+      "depends_on": [
+        "AND-6",
+        "AND-7"
+      ],
+      "blocks": [
+        "INT-3"
+      ],
+      "parallelizable": true,
+      "priority": "P2",
+      "acceptance_criteria": [
+        "Detects connectivity loss and Wi-Fi/cellular handoff",
+        "Reconnects with exponential backoff and jitter",
+        "Resumes session without full re-auth where the protocol allows"
+      ],
+      "tests": [
+        "Airplane-mode toggle test",
+        "Wi-Fi-to-cellular handoff test",
+        "VPS-restart reconnection test"
+      ],
+      "components": [
+        "Android",
+        "Shared protocol",
+        "Tests"
+      ]
+    },
+    {
+      "id": "CAM-2",
+      "name": "Android Camera Capture Module",
+      "category": "camera",
+      "status": "PENDING",
+      "depends_on": [
+        "CAM-1",
+        "AND-7"
+      ],
+      "blocks": [
+        "CAM-3"
+      ],
+      "parallelizable": true,
+      "priority": "P1",
+      "acceptance_criteria": [
+        "Camera activates only within a foreground service carrying the OS-mandated camera-in-use indicator",
+        "Camera deactivates immediately on session end/timeout"
+      ],
+      "tests": [
+        "Instrumented test: OS camera-in-use indicator present for entire capture duration",
+        "Auto-deactivation test after session end/timeout"
+      ],
+      "components": [
+        "Android",
+        "Tests"
+      ]
+    },
+    {
+      "id": "INT-1",
+      "name": "First End-to-End Encrypted Connection",
+      "category": "integration",
+      "status": "PENDING",
+      "depends_on": [
+        "AND-6",
+        "VPS-4",
+        "MAC-3"
+      ],
+      "blocks": [
+        "INT-2",
+        "INT-3",
+        "FILE-2",
+        "SEC-1"
+      ],
+      "parallelizable": true,
+      "priority": "P0",
+      "acceptance_criteria": [
+        "Real Android device, real Mac, and staging VPS authenticate and exchange a test message end-to-end",
+        "VPS relay confirmed never to see plaintext"
+      ],
+      "tests": [
+        "Scripted E2E ping test Mac to Android and Android to Mac",
+        "Instrumentation confirms ciphertext-only relay"
+      ],
+      "components": [
+        "Android",
+        "VPS",
+        "Mac",
+        "Shared protocol",
+        "Tests"
+      ]
+    },
+    {
+      "id": "MAC-4",
+      "name": "Mac CLI Command Framework",
+      "category": "mac",
+      "status": "PENDING",
+      "depends_on": [
+        "MAC-1",
+        "MAC-3"
+      ],
+      "blocks": [
+        "FILE-2",
+        "CAM-4"
+      ],
+      "parallelizable": true,
+      "priority": "P1",
+      "acceptance_criteria": [
+        "Extensible CLI with help text and consistent argument parsing",
+        "Scriptable, correct exit codes"
+      ],
+      "tests": [
+        "Smoke test for each defined command",
+        "Non-zero exit code confirmed on failure paths"
+      ],
+      "components": [
+        "Mac",
+        "Tests"
+      ]
+    },
+    {
+      "id": "VPS-8",
+      "name": "VPS Direct-Connection Optimization (Optional)",
+      "category": "vps",
+      "status": "PENDING",
+      "depends_on": [
+        "VPS-4"
+      ],
+      "blocks": [],
+      "parallelizable": true,
+      "priority": "P3",
+      "acceptance_criteria": [
+        "Direct path used when both clients can establish one, reducing relay load",
+        "Automatic, seamless fallback to VPS-4 relay on failure"
+      ],
+      "tests": [
+        "Integration test on NAT-friendly network confirms direct path used",
+        "Integration test on restrictive NAT confirms seamless relay fallback"
+      ],
+      "components": [
+        "VPS",
+        "Android",
+        "Mac",
+        "Shared protocol",
+        "Tests"
+      ]
+    },
+    {
+      "id": "CAM-3",
+      "name": "Camera Frame Streaming Protocol & Transport",
+      "category": "camera",
+      "status": "PENDING",
+      "depends_on": [
+        "CAM-2",
+        "VPS-4",
+        "ARCH-3"
+      ],
+      "blocks": [
+        "CAM-4",
+        "SEC-1"
+      ],
+      "parallelizable": true,
+      "priority": "P1",
+      "acceptance_criteria": [
+        "Frames encoded and streamed through the relay at an acceptable rate/latency for a preview use case"
+      ],
+      "tests": [
+        "Integration test measures end-to-end latency/frame rate under defined network conditions",
+        "Stream-stop test after camera deactivation"
+      ],
+      "components": [
+        "Android",
+        "VPS",
+        "Shared protocol",
+        "Tests"
+      ]
+    },
+    {
+      "id": "FILE-2",
+      "name": "Remote File Listing",
+      "category": "files",
+      "status": "PENDING",
+      "depends_on": [
+        "FILE-1",
+        "ARCH-3",
+        "INT-1",
+        "MAC-4"
+      ],
+      "blocks": [
+        "FILE-3",
+        "FILE-4",
+        "FILE-5"
+      ],
+      "parallelizable": true,
+      "priority": "P1",
+      "acceptance_criteria": [
+        "Mac CLI requests and displays an Android directory listing via the relay"
+      ],
+      "tests": [
+        "Integration test: listing a known test directory matches exactly on the Mac side"
+      ],
+      "components": [
+        "Android",
+        "VPS",
+        "Mac",
+        "Shared protocol",
+        "Tests"
+      ]
+    },
+    {
+      "id": "INT-2",
+      "name": "Device Discovery & Status Reporting",
+      "category": "integration",
+      "status": "PENDING",
+      "depends_on": [
+        "INT-1"
+      ],
+      "blocks": [
+        "TEST-2"
+      ],
+      "parallelizable": true,
+      "priority": "P2",
+      "acceptance_criteria": [
+        "Mac CLI shows accurate online/offline status for the authorized Android device"
+      ],
+      "tests": [
+        "Integration test: toggling Android connectivity updates Mac status within a defined latency bound"
+      ],
+      "components": [
+        "Android",
+        "VPS",
+        "Mac",
+        "Tests"
+      ]
+    },
+    {
+      "id": "INT-3",
+      "name": "End-to-End Connection Recovery",
+      "category": "integration",
+      "status": "PENDING",
+      "depends_on": [
+        "AND-8",
+        "VPS-6",
+        "MAC-3",
+        "INT-1"
+      ],
+      "blocks": [
+        "TEST-3"
+      ],
+      "parallelizable": true,
+      "priority": "P2",
+      "acceptance_criteria": [
+        "System recovers automatically from Android network loss, VPS restart, and Mac network loss without manual re-pairing"
+      ],
+      "tests": [
+        "Three scripted failure-injection scenarios each verified to recover within defined bounds"
+      ],
+      "components": [
+        "Android",
+        "VPS",
+        "Mac",
+        "Shared protocol",
+        "Tests"
+      ]
+    },
+    {
+      "id": "CAM-4",
+      "name": "Mac Camera Viewer Client",
+      "category": "camera",
+      "status": "PENDING",
+      "depends_on": [
+        "CAM-3",
+        "MAC-4"
+      ],
+      "blocks": [
+        "TEST-2"
+      ],
+      "parallelizable": true,
+      "priority": "P1",
+      "acceptance_criteria": [
+        "Viewer displays incoming frames when active and a clear inactive state otherwise"
+      ],
+      "tests": [
+        "Manual test: live frames shown during an authorized session; inactive state shown otherwise"
+      ],
+      "components": [
+        "Mac",
+        "Tests"
+      ]
+    },
+    {
+      "id": "FILE-3",
+      "name": "Secure File Download",
+      "category": "files",
+      "status": "PENDING",
+      "depends_on": [
+        "FILE-2",
+        "VPS-4"
+      ],
+      "blocks": [
+        "SEC-1",
+        "TEST-2"
+      ],
+      "parallelizable": true,
+      "priority": "P1",
+      "acceptance_criteria": [
+        "Files download through the relay with checksum verification",
+        "Interrupted large-file transfers resume or fail cleanly"
+      ],
+      "tests": [
+        "Small- and large-file (>100MB) download with checksum match",
+        "Mid-transfer interruption test"
+      ],
+      "components": [
+        "Android",
+        "VPS",
+        "Mac",
+        "Shared protocol",
+        "Tests"
+      ]
+    },
+    {
+      "id": "FILE-4",
+      "name": "Secure File Upload",
+      "category": "files",
+      "status": "PENDING",
+      "depends_on": [
+        "FILE-2",
+        "VPS-4"
+      ],
+      "blocks": [
+        "SEC-1",
+        "TEST-2"
+      ],
+      "parallelizable": true,
+      "priority": "P1",
+      "acceptance_criteria": [
+        "Files upload through the relay with checksum verification",
+        "Android-side storage permission scope enforced"
+      ],
+      "tests": [
+        "Mirror of FILE-3 tests in the upload direction",
+        "Write-outside-permitted-directory attempt is rejected"
+      ],
+      "components": [
+        "Android",
+        "VPS",
+        "Mac",
+        "Shared protocol",
+        "Tests"
+      ]
+    },
+    {
+      "id": "FILE-5",
+      "name": "Scoped Remote Action System",
+      "category": "files",
+      "status": "PENDING",
+      "depends_on": [
+        "FILE-2",
+        "ARCH-4"
+      ],
+      "blocks": [
+        "SEC-2",
+        "TEST-2"
+      ],
+      "parallelizable": true,
+      "priority": "P2",
+      "acceptance_criteria": [
+        "Fixed, build-time allowlist of remote actions only, no arbitrary command or shell execution exists anywhere",
+        "Each action independently permission-gated and user-visible on the Android side"
+      ],
+      "tests": [
+        "Security test: no code path accepts an arbitrary command string",
+        "Each allowlisted action verified to produce its user-visible effect"
+      ],
+      "components": [
+        "Android",
+        "VPS",
+        "Mac",
+        "Shared protocol",
+        "Tests"
+      ]
+    },
+    {
+      "id": "SEC-1",
+      "name": "Cross-Component Security Hardening Pass",
+      "category": "security",
+      "status": "PENDING",
+      "depends_on": [
+        "INT-1",
+        "FILE-3",
+        "FILE-4",
+        "CAM-3",
+        "VPS-5"
+      ],
+      "blocks": [
+        "SEC-2"
+      ],
+      "parallelizable": true,
+      "priority": "P1",
+      "acceptance_criteria": [
+        "Cert/key pinning applied where relevant",
+        "Replay-attack protection (nonces/timestamps) in place",
+        "Dependency scan clean of high/critical issues"
+      ],
+      "tests": [
+        "Replay-attack simulation rejected",
+        "Malformed/fuzzed message inputs handled without crash",
+        "Dependency vulnerability scan run with no unresolved high/critical findings"
+      ],
+      "components": [
+        "Android",
+        "VPS",
+        "Mac",
+        "Shared protocol",
+        "Tests"
+      ]
+    },
+    {
+      "id": "TEST-2",
+      "name": "Cross-Component Integration Test Suite",
+      "category": "testing",
+      "status": "PENDING",
+      "depends_on": [
+        "TEST-1",
+        "INT-2",
+        "FILE-3",
+        "FILE-4",
+        "FILE-5",
+        "CAM-4"
+      ],
+      "blocks": [
+        "TEST-3",
+        "TEST-4",
+        "REL-3",
+        "DOC-1"
+      ],
+      "parallelizable": true,
+      "priority": "P1",
+      "acceptance_criteria": [
+        "Scripted suite exercises auth, discovery, files, remote actions, and camera against staging VPS + real/emulated clients"
+      ],
+      "tests": [
+        "Full suite passes twice consecutively (flakiness check)",
+        "Suite fails clearly on an intentionally introduced regression"
+      ],
+      "components": [
+        "Android",
+        "VPS",
+        "Mac",
+        "Tests"
+      ]
+    },
+    {
+      "id": "SEC-2",
+      "name": "Security Validation & Penetration Testing",
+      "category": "security",
+      "status": "PENDING",
+      "depends_on": [
+        "SEC-1",
+        "VPS-7",
+        "CAM-1",
+        "FILE-5"
+      ],
+      "blocks": [
+        "REL-1",
+        "REL-2",
+        "REL-3",
+        "DOC-1"
+      ],
+      "parallelizable": true,
+      "priority": "P0",
+      "acceptance_criteria": [
+        "Self-pentest against the ARCH-4 threat model completed",
+        "Camera/file/remote-action authorization gates verified un-bypassable via raw protocol manipulation"
+      ],
+      "tests": [
+        "Attempted camera activation, file access, and remote action via crafted raw messages all rejected; results documented"
+      ],
+      "components": [
+        "Android",
+        "VPS",
+        "Mac",
+        "Shared protocol",
+        "Documentation",
+        "Tests"
+      ]
+    },
+    {
+      "id": "TEST-3",
+      "name": "Network Failure & Chaos Testing",
+      "category": "testing",
+      "status": "PENDING",
+      "depends_on": [
+        "TEST-2",
+        "INT-3"
+      ],
+      "blocks": [
+        "REL-1"
+      ],
+      "parallelizable": true,
+      "priority": "P2",
+      "acceptance_criteria": [
+        "Packet loss, latency injection, VPS restart, and client network loss all produce defined, safe behavior"
+      ],
+      "tests": [
+        "Each chaos scenario scripted/executed with pass/fail recorded against INT-3 recovery-time bounds"
+      ],
+      "components": [
+        "Android",
+        "VPS",
+        "Mac",
+        "Tests"
+      ]
+    },
+    {
+      "id": "TEST-4",
+      "name": "Android Compatibility Matrix Testing",
+      "category": "testing",
+      "status": "PENDING",
+      "depends_on": [
+        "TEST-2",
+        "AND-9"
+      ],
+      "blocks": [
+        "REL-2"
+      ],
+      "parallelizable": true,
+      "priority": "P2",
+      "acceptance_criteria": [
+        "Core flows verified across 3+ real devices spanning 2+ OEMs and 2+ supported Android versions"
+      ],
+      "tests": [
+        "Matrix execution log with pass/fail per device/OS combination for each core flow"
+      ],
+      "components": [
+        "Android",
+        "Tests"
+      ]
+    },
+    {
+      "id": "DOC-1",
+      "name": "Consolidated Documentation & Setup Guide",
+      "category": "documentation",
+      "status": "PENDING",
+      "depends_on": [
+        "SEC-2",
+        "TEST-2"
+      ],
+      "blocks": [
+        "FINAL-1"
+      ],
+      "parallelizable": true,
+      "priority": "P2",
+      "acceptance_criteria": [
+        "Setup guide, architecture summary, threat-model summary, troubleshooting guide, and privacy/consent statement all present"
+      ],
+      "tests": [
+        "Dogfood test: following only the docs produces a working paired setup"
+      ],
+      "components": [
+        "Documentation"
+      ]
+    },
+    {
+      "id": "REL-1",
+      "name": "VPS Production Deployment",
+      "category": "release",
+      "status": "PENDING",
+      "depends_on": [
+        "SEC-2",
+        "TEST-3",
+        "VPS-7"
+      ],
+      "blocks": [
+        "FINAL-1"
+      ],
+      "parallelizable": true,
+      "priority": "P1",
+      "acceptance_criteria": [
+        "Production VPS deployed via the same reproducible process as VPS-1, with monitoring active",
+        "Documented rollback procedure"
+      ],
+      "tests": [
+        "Fresh deployment succeeds from a clean environment",
+        "Rollback procedure executed successfully in a drill"
+      ],
+      "components": [
+        "VPS",
+        "Documentation",
+        "Tests"
+      ]
+    },
+    {
+      "id": "REL-2",
+      "name": "Android Release Build & Signing",
+      "category": "release",
+      "status": "PENDING",
+      "depends_on": [
+        "SEC-2",
+        "TEST-4"
+      ],
+      "blocks": [
+        "FINAL-1"
+      ],
+      "parallelizable": true,
+      "priority": "P1",
+      "acceptance_criteria": [
+        "Signed release APK/AAB produced via a repeatable process",
+        "Obfuscation/minification applied without breaking functionality"
+      ],
+      "tests": [
+        "Signed build installs and passes a smoke-test subset of TEST-2 on a real device"
+      ],
+      "components": [
+        "Android",
+        "Tests"
+      ]
+    },
+    {
+      "id": "REL-3",
+      "name": "Mac Release Build & Packaging",
+      "category": "release",
+      "status": "PENDING",
+      "depends_on": [
+        "SEC-2",
+        "TEST-2"
+      ],
+      "blocks": [
+        "FINAL-1"
+      ],
+      "parallelizable": true,
+      "priority": "P1",
+      "acceptance_criteria": [
+        "Signed (and notarized, if distributed outside a controlled environment) build produced via a repeatable process"
+      ],
+      "tests": [
+        "Fresh install from the packaged build passes a smoke-test subset of TEST-2"
+      ],
+      "components": [
+        "Mac",
+        "Tests"
+      ]
+    },
+    {
+      "id": "FINAL-1",
+      "name": "Final Acceptance Testing & Release Readiness",
+      "category": "final_acceptance",
+      "status": "PENDING",
+      "depends_on": [
+        "REL-1",
+        "REL-2",
+        "REL-3",
+        "DOC-1"
+      ],
+      "blocks": [],
+      "parallelizable": false,
+      "priority": "P0",
+      "acceptance_criteria": [
+        "All Level-1 subsystems complete",
+        "TEST-2/3/4 green and SEC-2 findings resolved",
+        "Fresh-environment end-to-end dry run succeeds"
+      ],
+      "tests": [
+        "Full fresh-environment dry run (new phone + new Mac + production VPS) executed and recorded"
+      ],
+      "components": [
+        "Android",
+        "VPS",
+        "Mac",
+        "Documentation",
+        "Tests"
+      ]
+    }
+  ]
+}
