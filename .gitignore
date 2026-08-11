@@ -1,0 +1,35 @@
+# macOS
+.DS_Store
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+
+# Android / Gradle
+.gradle/
+**/build/
+local.properties
+captures/
+.externalNativeBuild/
+.cxx/
+
+# macOS build artifacts
+DerivedData/
+*.xcuserstate
+xcuserdata/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# Logs / temporary files
+*.log
+*.tmp
+*.swp
