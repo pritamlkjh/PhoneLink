@@ -7,7 +7,7 @@
       "id": "REQ-1",
       "name": "Requirements, Scope & Threat Boundary",
       "category": "requirements",
-      "status": "TESTING",
+      "status": "COMPLETE",
       "depends_on": [],
       "blocks": [
         "ARCH-1",
