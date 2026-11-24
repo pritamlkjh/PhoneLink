@@ -117,9 +117,13 @@ run_step "INT-3 End-to-End Connection Recovery" \
 run_step "AND-9 Android Boot-Persistence & Reboot Recovery" \
     "$REPO_ROOT/tests/test_and9_boot.sh"
 
+# 22. TEST-3 Network Failure & Chaos Testing
+run_step "TEST-3 Network Failure & Chaos Testing" \
+    "$REPO_ROOT/tests/test_test3_chaos.sh"
+
 echo "=========================================================="
 if [ $FAILURES -eq 0 ]; then
-    echo "   ALL REGRESSION SUITES PASSED (21/21)"
+    echo "   ALL REGRESSION SUITES PASSED (22/22)"
     echo "=========================================================="
     exit 0
 else

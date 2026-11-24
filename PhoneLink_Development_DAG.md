@@ -992,7 +992,7 @@ Format per node: Purpose → Dependencies/Blocks/Parallelizable → Inputs/Outpu
 ---
 
 #### `TEST-3` — Network Failure & Chaos Testing
-**Category:** Testing · **Priority:** P2
+**Category:** Testing · **Priority:** P2 · **Status:** COMPLETE
 
 **Purpose:** Verify defined, safe behavior under packet loss, latency, VPS restart, and client network loss — reconnect or clean error, never silent corruption.
 
