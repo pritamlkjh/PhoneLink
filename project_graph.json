@@ -1212,7 +1212,7 @@
       "id": "SEC-2",
       "name": "Security Validation & Penetration Testing",
       "category": "security",
-      "status": "PENDING",
+      "status": "COMPLETE",
       "depends_on": [
         "SEC-1",
         "VPS-7",
