@@ -441,7 +441,7 @@
       "id": "VPS-2",
       "name": "VPS Device Authentication & Identity Registry",
       "category": "vps",
-      "status": "PENDING",
+      "status": "COMPLETE",
       "depends_on": [
         "VPS-1",
         "VPS-5",
