@@ -27,6 +27,10 @@ android {
                 storePassword = System.getenv("KEYSTORE_PASSWORD") ?: "phonelink_release_2026"
                 keyAlias = System.getenv("KEY_ALIAS") ?: "phonelink_release"
                 keyPassword = System.getenv("KEY_PASSWORD") ?: "phonelink_release_2026"
+                enableV1Signing = true
+                enableV2Signing = true
+                enableV3Signing = true
+                enableV4Signing = false
             }
         }
     }
