@@ -326,7 +326,7 @@
       "id": "VPS-5",
       "name": "VPS Platform Security Hardening",
       "category": "vps",
-      "status": "PENDING",
+      "status": "COMPLETE",
       "depends_on": [
         "VPS-1"
       ],
