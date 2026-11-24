@@ -924,7 +924,7 @@ Format per node: Purpose → Dependencies/Blocks/Parallelizable → Inputs/Outpu
 
 ### 4.9 Security
 
-#### `SEC-1` — Cross-Component Security Hardening Pass
+#### `SEC-1` — Cross-Component Security Hardening Pass [STATUS: COMPLETE]
 **Category:** Security · **Priority:** P1
 
 **Purpose:** Once core functionality is integrated end-to-end, harden it: pinning, replay protection, input validation, dependency scanning.

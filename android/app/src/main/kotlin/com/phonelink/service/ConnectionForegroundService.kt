@@ -64,6 +64,7 @@ class ConnectionForegroundService : Service() {
     private lateinit var remoteActionRegistry: com.phonelink.actions.RemoteActionRegistry
     private lateinit var cameraAuthGate: com.phonelink.camera.CameraAuthorizationGate
     private lateinit var cameraCaptureModule: com.phonelink.camera.CameraCaptureModule
+    private var replayFilter = com.phonelink.security.ReplayProtectionFilter()
     private var peerSession: com.phonelink.crypto.E2EPeerSession? = null
     private var isRunning = false
 
@@ -143,9 +144,14 @@ class ConnectionForegroundService : Service() {
         peerSession = com.phonelink.crypto.E2EPeerSession(
             sendFunction = { bytes -> currentTransport.send(bytes) },
             messageDispatcher = { plaintext, sendAppMsg ->
-                cameraCaptureModule.processApplicationMessage(plaintext, sendAppMsg)
-                    ?: fileOperationHandler.processApplicationMessage(plaintext, sendAppMsg)
-                    ?: remoteActionRegistry.processApplicationMessage(plaintext)
+                val validation = replayFilter.validateMessage(plaintext)
+                if (validation is com.phonelink.security.ReplayProtectionFilter.ValidationResult.Rejected) {
+                    replayFilter.buildErrorResponse(validation.status, validation.message)
+                } else {
+                    cameraCaptureModule.processApplicationMessage(plaintext, sendAppMsg)
+                        ?: fileOperationHandler.processApplicationMessage(plaintext, sendAppMsg)
+                        ?: remoteActionRegistry.processApplicationMessage(plaintext)
+                }
             }
         )
 
@@ -157,6 +163,7 @@ class ConnectionForegroundService : Service() {
                     is NetworkTransport.ConnectionState.Reconnecting -> "Reconnecting (attempt ${newState.attempt})..."
                     is NetworkTransport.ConnectionState.Disconnected -> {
                         cameraCaptureModule.stopCapture("disconnected", "transport_disconnected")
+                        replayFilter.reset()
                         peerSession?.reset()
                         "Disconnected"
                     }

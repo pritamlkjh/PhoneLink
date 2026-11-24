@@ -85,9 +85,13 @@ run_step "CAM-3 Camera Frame Streaming Protocol Test" \
 run_step "CAM-4 Mac Camera Viewer Client Test" \
     "$REPO_ROOT/tests/test_cam4_viewer.sh"
 
+# 14. SEC-1 Cross-Component Security Hardening Integration Tests
+run_step "SEC-1 Cross-Component Security Hardening Test" \
+    "$REPO_ROOT/tests/test_sec1_hardening.sh"
+
 echo "=========================================================="
 if [ $FAILURES -eq 0 ]; then
-    echo "   ALL REGRESSION SUITES PASSED (13/13)"
+    echo "   ALL REGRESSION SUITES PASSED (14/14)"
     echo "=========================================================="
     exit 0
 else

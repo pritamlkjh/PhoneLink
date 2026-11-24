@@ -674,5 +674,86 @@ let inactiveCanvas = CameraTerminalRenderer.renderAsciiCanvas(
 assertTrue(inactiveCanvas.contains("STREAM INACTIVE"))
 print("PASS: testCameraTerminalRendererCanvasOutput")
 
-print(">>> ALL MAC CLIENT UNIT TESTS PASSED (34/34) <<<")
+// Test 35: SEC-1 ReplayProtectionFilter Fresh Message Acceptance
+let fixedNow: Int64 = 1_700_000_000_000
+let replayFilter = ReplayProtectionFilter(maxClockSkewMs: 60_000, timeProvider: { fixedNow })
+
+func makeAppMessage(id: String, timestamp: Int64, action: String = "ping") -> Data {
+    let dict: [String: Any] = [
+        "message_id": id,
+        "timestamp": timestamp,
+        "action": action
+    ]
+    return try! JSONSerialization.data(withJSONObject: dict)
+}
+
+let freshMsg = makeAppMessage(id: "msg-001", timestamp: fixedNow - 5_000)
+let freshResult = replayFilter.validateMessage(data: freshMsg)
+assertEqual(freshResult, .valid, "Fresh message within clock skew must be accepted")
+print("PASS: testReplayProtectionFreshMessage")
+
+// Test 36: SEC-1 ReplayProtectionFilter Duplicate Message Rejection
+let duplicateResult = replayFilter.validateMessage(data: freshMsg)
+assertEqual(
+    duplicateResult,
+    .rejected(status: ReplayProtectionFilter.statusReplayDetected, message: "Duplicate message_id 'msg-001' rejected by replay protection"),
+    "Duplicate message_id must be rejected"
+)
+print("PASS: testReplayProtectionDuplicateRejection")
+
+// Test 37: SEC-1 ReplayProtectionFilter Clock Skew Rejection
+let pastExpiredMsg = makeAppMessage(id: "msg-past-expired", timestamp: fixedNow - 65_000)
+let pastResult = replayFilter.validateMessage(data: pastExpiredMsg)
+switch pastResult {
+case .rejected(let status, _):
+    assertEqual(status, ReplayProtectionFilter.statusMessageExpired, "Past message exceeding max skew must be expired")
+case .valid:
+    print("FAIL: Expected expired rejection for past message")
+    exit(1)
+}
+
+let futureExpiredMsg = makeAppMessage(id: "msg-future-expired", timestamp: fixedNow + 65_000)
+let futureResult = replayFilter.validateMessage(data: futureExpiredMsg)
+switch futureResult {
+case .rejected(let status, _):
+    assertEqual(status, ReplayProtectionFilter.statusMessageExpired, "Future message exceeding max skew must be expired")
+case .valid:
+    print("FAIL: Expected expired rejection for future message")
+    exit(1)
+}
+print("PASS: testReplayProtectionClockSkewRejection")
+
+// Test 38: SEC-1 ReplayProtectionFilter Malformed JSON & Missing Fields
+let invalidJson = "not-json-at-all".data(using: .utf8)!
+let invalidResult = replayFilter.validateMessage(data: invalidJson)
+switch invalidResult {
+case .rejected(let status, _):
+    assertEqual(status, ReplayProtectionFilter.statusMalformedMessage, "Invalid JSON must be rejected as malformed")
+case .valid:
+    print("FAIL: Expected malformed rejection for invalid JSON")
+    exit(1)
+}
+
+let missingIdMsg = try! JSONSerialization.data(withJSONObject: ["timestamp": fixedNow])
+let missingIdResult = replayFilter.validateMessage(data: missingIdMsg)
+switch missingIdResult {
+case .rejected(let status, _):
+    assertEqual(status, ReplayProtectionFilter.statusMalformedMessage, "Missing message_id must be rejected as malformed")
+case .valid:
+    print("FAIL: Expected malformed rejection for missing message_id")
+    exit(1)
+}
+
+let missingTimestampMsg = try! JSONSerialization.data(withJSONObject: ["message_id": "test-no-ts"])
+let missingTsResult = replayFilter.validateMessage(data: missingTimestampMsg)
+switch missingTsResult {
+case .rejected(let status, _):
+    assertEqual(status, ReplayProtectionFilter.statusMalformedMessage, "Missing timestamp must be rejected as malformed")
+case .valid:
+    print("FAIL: Expected malformed rejection for missing timestamp")
+    exit(1)
+}
+print("PASS: testReplayProtectionMalformedMessage")
+
+print(">>> ALL MAC CLIENT UNIT TESTS PASSED (38/38) <<<")
 exit(0)

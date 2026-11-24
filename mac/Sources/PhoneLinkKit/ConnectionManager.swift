@@ -1,7 +1,9 @@
 import Foundation
+import Security
+import CryptoKit
 
-/// MAC-3: Mac Connection Manager
-/// Owns the connect/disconnect/reconnect lifecycle, WebSocket transport, and status reporting.
+/// MAC-3 / SEC-1: Mac Connection Manager with Certificate Pinning Support
+/// Owns the connect/disconnect/reconnect lifecycle, WebSocket transport, certificate pinning, and status reporting.
 public final class ConnectionManager: @unchecked Sendable {
     public enum State: Equatable, Sendable {
         case disconnected
@@ -194,5 +196,46 @@ public final class ConnectionManager: @unchecked Sendable {
 
         task?.cancel(with: .normalClosure, reason: nil)
         transition(to: .disconnected)
+    }
+}
+
+/// SEC-1: TLS Certificate Pinning Delegate
+public final class PinnedURLSessionDelegate: NSObject, URLSessionDelegate, Sendable {
+    public let pinnedSHA256: String?
+
+    public init(pinnedSHA256: String? = nil) {
+        self.pinnedSHA256 = pinnedSHA256
+    }
+
+    public func urlSession(
+        _ session: URLSession,
+        didReceive challenge: URLAuthenticationChallenge,
+        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+    ) {
+        guard let serverTrust = challenge.protectionSpace.serverTrust else {
+            completionHandler(.cancelAuthenticationChallenge, nil)
+            return
+        }
+
+        guard let expectedPin = pinnedSHA256, !expectedPin.isEmpty else {
+            completionHandler(.performDefaultHandling, nil)
+            return
+        }
+
+        let count = SecTrustGetCertificateCount(serverTrust)
+        for i in 0..<count {
+            if let cert = SecTrustGetCertificateAtIndex(serverTrust, i) {
+                let certData = SecCertificateCopyData(cert) as Data
+                let hash = SHA256.hash(data: certData)
+                let hashHex = hash.map { String(format: "%02x", $0) }.joined()
+                let hashB64 = Data(hash).base64EncodedString()
+                if hashHex.caseInsensitiveCompare(expectedPin) == .orderedSame || hashB64 == expectedPin {
+                    completionHandler(.useCredential, URLCredential(trust: serverTrust))
+                    return
+                }
+            }
+        }
+
+        completionHandler(.cancelAuthenticationChallenge, nil)
     }
 }
