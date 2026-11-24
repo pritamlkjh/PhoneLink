@@ -129,9 +129,58 @@ class AuthClient(
                 } else {
                     val respJson = JSONObject(resp.body?.string() ?: "{}")
                     val sessionToken = respJson.getString("session_token")
+                    val resumptionToken = respJson.optString("resumption_token", "")
+                    val ttlSeconds = respJson.optLong("resumption_ttl_seconds", 300L)
 
-                    // Step 4: Persist session token in secure storage (AND-4)
+                    // Step 4: Persist session & resumption token in secure storage (AND-4, AND-8)
                     secureStorage.saveSessionToken(sessionToken)
+                    if (resumptionToken.isNotEmpty()) {
+                        secureStorage.saveResumptionToken(resumptionToken, System.currentTimeMillis() + ttlSeconds * 1000L)
+                    }
+                    Result.success(sessionToken)
+                }
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Attempts fast session resumption using a bounded-validity resumption token (AND-8 / VPS-6).
+     * Rotates the token upon success.
+     */
+    fun resumeSession(
+        vpsBaseUrl: String,
+        deviceId: String,
+        resumptionToken: String
+    ): Result<String> {
+        val reqJson = JSONObject().apply {
+            put("device_id", deviceId)
+            put("resumption_token", resumptionToken)
+        }
+
+        val request = Request.Builder()
+            .url("$vpsBaseUrl/api/v1/auth/resume")
+            .post(reqJson.toString().toRequestBody(JSON_MEDIA_TYPE))
+            .build()
+
+        return try {
+            val response = okHttpClient.newCall(request).execute()
+            response.use { resp ->
+                if (!resp.isSuccessful) {
+                    val body = resp.body?.string() ?: ""
+                    secureStorage.clearResumptionToken()
+                    Result.failure(AuthenticationException("Resume failed (HTTP ${resp.code}): $body"))
+                } else {
+                    val respJson = JSONObject(resp.body?.string() ?: "{}")
+                    val sessionToken = respJson.getString("session_token")
+                    val newResumptionToken = respJson.optString("resumption_token", "")
+                    val ttlSeconds = respJson.optLong("resumption_ttl_seconds", 300L)
+
+                    secureStorage.saveSessionToken(sessionToken)
+                    if (newResumptionToken.isNotEmpty()) {
+                        secureStorage.saveResumptionToken(newResumptionToken, System.currentTimeMillis() + ttlSeconds * 1000L)
+                    }
                     Result.success(sessionToken)
                 }
             }

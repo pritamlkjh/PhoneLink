@@ -760,7 +760,7 @@
       "id": "AND-8",
       "name": "Android Reconnection & Network-Change Handling",
       "category": "android",
-      "status": "PENDING",
+      "status": "COMPLETE",
       "depends_on": [
         "AND-6",
         "AND-7"

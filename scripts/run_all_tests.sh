@@ -105,9 +105,13 @@ run_step "SEC-2 Security Validation & Penetration Testing Suite" \
 run_step "VPS-6 VPS Session Resumption & Reconnection" \
     "$REPO_ROOT/tests/test_vps6_resumption.sh"
 
+# 19. AND-8 Android Reconnection & Network-Change Handling
+run_step "AND-8 Android Reconnection & Network-Change Handling" \
+    "$REPO_ROOT/tests/test_and8_reconnection.sh"
+
 echo "=========================================================="
 if [ $FAILURES -eq 0 ]; then
-    echo "   ALL REGRESSION SUITES PASSED (18/18)"
+    echo "   ALL REGRESSION SUITES PASSED (19/19)"
     echo "=========================================================="
     exit 0
 else
