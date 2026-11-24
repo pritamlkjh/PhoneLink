@@ -994,7 +994,7 @@
       "id": "INT-3",
       "name": "End-to-End Connection Recovery",
       "category": "integration",
-      "status": "PENDING",
+      "status": "COMPLETE",
       "depends_on": [
         "AND-8",
         "VPS-6",

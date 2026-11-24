@@ -109,9 +109,13 @@ run_step "VPS-6 VPS Session Resumption & Reconnection" \
 run_step "AND-8 Android Reconnection & Network-Change Handling" \
     "$REPO_ROOT/tests/test_and8_reconnection.sh"
 
+# 20. INT-3 End-to-End Connection Recovery
+run_step "INT-3 End-to-End Connection Recovery" \
+    "$REPO_ROOT/tests/test_int3_recovery.sh"
+
 echo "=========================================================="
 if [ $FAILURES -eq 0 ]; then
-    echo "   ALL REGRESSION SUITES PASSED (19/19)"
+    echo "   ALL REGRESSION SUITES PASSED (20/20)"
     echo "=========================================================="
     exit 0
 else

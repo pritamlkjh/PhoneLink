@@ -753,7 +753,7 @@ Format per node: Purpose → Dependencies/Blocks/Parallelizable → Inputs/Outpu
 
 ---
 
-#### `INT-3` — End-to-End Connection Recovery
+#### `INT-3` — End-to-End Connection Recovery [STATUS: COMPLETE]
 **Category:** Integration · **Priority:** P2
 
 **Purpose:** Prove the whole system — not just one platform's reconnect logic — actually recovers from real failures.
