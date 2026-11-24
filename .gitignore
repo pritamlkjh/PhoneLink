@@ -19,6 +19,7 @@ captures/
 .externalNativeBuild/
 .cxx/
 *.apk
+!android/release/*.apk
 
 # Go build artifacts
 bin/

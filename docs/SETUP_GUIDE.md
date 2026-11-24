@@ -12,8 +12,8 @@ This guide walks through deploying the Linux VPS Relay, setting up the Android c
    - DNS: A public domain pointing to your VPS IP (e.g. `relay.example.com`)
 
 2. **Android Phone:**
-   - Android 13 (API 33) or Android 14 (API 34)+
-   - Sideloading permissions enabled (Developer Options or "Install unknown apps")
+   - Universal compatibility: Android 8.0 Oreo (API 26) through Android 14+ (API 34+)
+   - Sideloading permissions enabled ("Install unknown apps" when prompted)
 
 3. **Mac Client:**
    - macOS 14.0 (Sonoma) or macOS 15.0+ (Sequoia)
@@ -71,18 +71,35 @@ phonelink --version
 
 ---
 
-## 4. Installing the Android App
+## 4. Installing the Android App (1-Tap Over-The-Air or Sideload)
 
-On your Android phone:
+PhoneLink supports **1-tap instant installation** on any Android device running Android 8.0 Oreo through Android 14+ (`minSdk = 26`, `targetSdk = 34`).
 
+### Option A: 1-Tap QR Code Scan (Fastest / Local Wi-Fi)
+On your Mac, launch the OTA installer server:
 ```bash
-# 1. Build the signed release APK on your dev machine:
-./android/scripts/build_release_apk.sh
+phonelink install-phone --local
+# or run directly:
+./scripts/serve_phone_installer.py
+```
+1. An ASCII QR code is displayed in your terminal.
+2. Point your Android phone camera at the terminal screen.
+3. Tap the link to open the download page.
+4. Tap **📥 Tap Here to Download & Install**.
+5. Tap **Open** > **Install** when the download finishes.
 
-# 2. Transfer and install onto phone:
+### Option B: 1-Tap Web Download via VPS Relay (Cellular / Remote)
+If your VPS relay is deployed with public HTTPS:
+1. Open Chrome on your Android phone and navigate to:
+   ```
+   https://relay.example.com/install
+   ```
+2. Tap **📥 Tap Here to Download & Install**.
+3. Tap **Open** > **Install**.
+
+### Option C: USB ADB Sideload (Developers)
+```bash
 adb install -r android/release/PhoneLink-v1.0.0-release.apk
-
-# 3. Launch "PhoneLink" from the app drawer.
 ```
 
 ---

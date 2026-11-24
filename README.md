@@ -52,13 +52,21 @@ sudo cp mac/release/PhoneLink-v1.0.0-macos-arm64/bin/phonelink /usr/local/bin/
 phonelink --version
 ```
 
-### 2. Pair with Phone
+### 2. 1-Tap Install on Any Android Phone (Android 8.0 to 14+)
+Run the OTA phone installer server on your Mac:
+```bash
+phonelink install-phone --local
+```
+- A QR code will display in your terminal. Scan it with your phone's camera, tap download, and install!
+- Alternatively, if your VPS relay is running, open `https://<relay-domain>/install` in Chrome on your phone.
+
+### 3. Pair with Phone
 ```bash
 phonelink pair --relay https://relay.example.com
 # Enter the generated 6-digit code into your Android PhoneLink app
 ```
 
-### 3. Core Commands
+### 4. Core Commands
 ```bash
 # Check device status & battery
 phonelink status

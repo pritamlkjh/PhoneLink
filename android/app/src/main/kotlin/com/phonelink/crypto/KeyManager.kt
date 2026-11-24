@@ -159,6 +159,14 @@ class KeyManager(
     companion object {
         fun createSoftware(): KeyManager = KeyManager(SoftwareEcKeySigner())
 
+        fun fromContext(context: android.content.Context): KeyManager {
+            return try {
+                KeyManager(AndroidKeyStoreSigner())
+            } catch (_: Exception) {
+                createSoftware()
+            }
+        }
+
         fun verifyExternal(publicKey: PublicKey, data: ByteArray, signature: ByteArray): Boolean {
             return try {
                 val sig = Signature.getInstance("SHA256withECDSA")

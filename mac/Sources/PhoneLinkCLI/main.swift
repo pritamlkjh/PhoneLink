@@ -28,6 +28,7 @@ func printUsage() {
       wipe          Wipe stored credentials and reset Mac device identity
       files         Browse and transfer files (FILE-2, FILE-3, FILE-4)
       camera        Live camera streaming and capture (CAM-3, CAM-4)
+      install-phone 1-tap OTA phone installation URL & local Wi-Fi QR server
       version       Show PhoneLink version information
       help          Show help information
     
@@ -947,6 +948,83 @@ func handleCamera(args: [String], identity: DeviceIdentityManager, client: AuthC
     }
 }
 
+func handleInstallPhone(args: [String]) {
+    let isJSON = parseFlag("--json", in: args)
+    let vps = parseOption("--vps", in: args) ?? Config.defaultRelayURL
+    let portStr = parseOption("--port", in: args) ?? "8080"
+    
+    // Construct install URL on VPS
+    var vpsInstallUrl = vps.replacingOccurrences(of: "ws://", with: "http://")
+        .replacingOccurrences(of: "wss://", with: "https://")
+    if let wsIdx = vpsInstallUrl.range(of: "/ws/") {
+        vpsInstallUrl = String(vpsInstallUrl[..<wsIdx.lowerBound])
+    }
+    vpsInstallUrl = vpsInstallUrl.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/install"
+
+    if parseFlag("--serve", in: args) || parseFlag("--local", in: args) {
+        let scriptCandidates = [
+            "./scripts/serve_phone_installer.py",
+            "../scripts/serve_phone_installer.py",
+            "../../scripts/serve_phone_installer.py",
+            "/opt/phonelink/scripts/serve_phone_installer.py"
+        ]
+        var targetScript: String? = nil
+        for s in scriptCandidates {
+            if FileManager.default.fileExists(atPath: s) {
+                targetScript = s
+                break
+            }
+        }
+
+        if let script = targetScript {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+            process.arguments = [script, "--port", portStr]
+            do {
+                try process.run()
+                process.waitUntilExit()
+                exit(process.terminationStatus)
+            } catch {
+                fputs("Failed to launch installer server: \(error.localizedDescription)\n", stderr)
+                exit(1)
+            }
+        }
+    }
+
+    if isJSON {
+        let dict: [String: Any] = [
+            "vps_install_url": vpsInstallUrl,
+            "min_sdk": 26,
+            "target_sdk": 34,
+            "supported_os": "Android 8.0 Oreo through Android 14+",
+            "apk_download_endpoint": "/download/PhoneLink.apk"
+        ]
+        let data = try! JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted])
+        print(String(data: data, encoding: .utf8)!)
+        exit(0)
+    }
+
+    print("""
+    ================================================================================
+      📱 PhoneLink 1-Tap Over-The-Air (OTA) Phone Installer
+    ================================================================================
+    Universal Android Build (minSdk 26: Android 8.0 Oreo through Android 14+)
+
+    1. Via VPS Web Endpoint:
+       Open this link directly in Chrome on your phone to tap & install:
+       👉 \(vpsInstallUrl)
+
+    2. Via Local Wi-Fi (No Internet / LAN):
+       Run with '--local' to spin up a local web server with a terminal QR code:
+       👉 phonelink install-phone --local
+
+    3. Direct APK File:
+       ./android/release/PhoneLink-v1.0.0-release.apk (2.1 MB)
+    ================================================================================
+    """)
+    exit(0)
+}
+
 // MARK: - Main Execution
 
 let args = CommandLine.arguments
@@ -993,6 +1071,9 @@ case "files":
 
 case "camera":
     await handleCamera(args: subArgs, identity: identity, client: client)
+
+case "install", "install-phone":
+    handleInstallPhone(args: subArgs)
 
 default:
     fputs("ERROR: Unknown subcommand '\(command)'. Run 'phonelink --help' for usage.\n", stderr)

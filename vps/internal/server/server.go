@@ -143,6 +143,10 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("POST /api/v1/auth/resume", s.handleAuthResume)
 	s.mux.HandleFunc("POST /api/v1/pairing/create", s.handlePairingCreate)
 	s.mux.HandleFunc("POST /api/v1/pairing/claim", s.handlePairingClaim)
+
+	// Web Distribution endpoints (1-tap OTA phone installation)
+	s.mux.HandleFunc("GET /install", s.handleInstallPage)
+	s.mux.HandleFunc("GET /download/PhoneLink.apk", s.handleDownloadApk)
 }
 
 func (s *Server) handleHealthz(w http.ResponseWriter, r *http.Request) {
@@ -633,6 +637,175 @@ func (s *Server) handleDeviceStatus(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+const installPageHTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Install PhoneLink on Android</title>
+    <style>
+        :root {
+            --primary: #1a73e8;
+            --primary-dark: #1557b0;
+            --bg: #f8f9fa;
+            --card-bg: #ffffff;
+            --text-main: #202124;
+            --text-sub: #5f6368;
+            --border: #dadce0;
+        }
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --primary: #8ab4f8;
+                --primary-dark: #669df6;
+                --bg: #121212;
+                --card-bg: #1e1e1e;
+                --text-main: #e8eaed;
+                --text-sub: #9aa0a6;
+                --border: #3c4043;
+            }
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg);
+            color: var(--text-main);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            width: 100%;
+            max-width: 440px;
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 28px 24px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+            text-align: center;
+        }
+        .app-icon { font-size: 56px; margin-bottom: 12px; display: inline-block; }
+        h1 { font-size: 24px; font-weight: 700; color: var(--primary); margin-bottom: 6px; }
+        .subtitle { font-size: 14px; color: var(--text-sub); margin-bottom: 20px; }
+        .badge {
+            display: inline-block;
+            background: rgba(26, 115, 232, 0.12);
+            color: var(--primary);
+            font-size: 12px;
+            font-weight: 600;
+            padding: 4px 10px;
+            border-radius: 12px;
+            margin-bottom: 24px;
+        }
+        .btn-install {
+            display: block;
+            width: 100%;
+            background: var(--primary);
+            color: #ffffff !important;
+            text-decoration: none;
+            font-size: 17px;
+            font-weight: 600;
+            padding: 16px;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(26, 115, 232, 0.3);
+            margin-bottom: 16px;
+        }
+        .meta-info { font-size: 12px; color: var(--text-sub); margin-bottom: 28px; }
+        .steps-card {
+            text-align: left;
+            background: var(--bg);
+            border-radius: 12px;
+            padding: 16px 18px;
+            margin-bottom: 20px;
+        }
+        .steps-title { font-size: 14px; font-weight: 600; margin-bottom: 12px; color: var(--text-main); }
+        .step { display: flex; align-items: flex-start; margin-bottom: 12px; font-size: 13px; line-height: 1.4; color: var(--text-sub); }
+        .step:last-child { margin-bottom: 0; }
+        .step-num {
+            background: var(--primary);
+            color: #ffffff;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            font-weight: 700;
+            margin-right: 10px;
+            flex-shrink: 0;
+            margin-top: 1px;
+        }
+        .step-text strong { color: var(--text-main); }
+        .security-footer { font-size: 11px; color: var(--text-sub); border-top: 1px solid var(--border); padding-top: 16px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="app-icon">📱</div>
+        <h1>PhoneLink</h1>
+        <div class="subtitle">Personal Authorized Remote Access</div>
+        <div class="badge">Universal Build • Android 8.0 to 14+</div>
+        <a href="/download/PhoneLink.apk" class="btn-install">📥 Tap Here to Download &amp; Install</a>
+        <div class="meta-info">Package: <strong>PhoneLink-v1.0.0.apk</strong> (~2.1 MB)</div>
+        <div class="steps-card">
+            <div class="steps-title">🚀 3-Step Setup Guide:</div>
+            <div class="step">
+                <div class="step-num">1</div>
+                <div class="step-text"><strong>Tap Download:</strong> Tap the blue button above. Chrome will download the package.</div>
+            </div>
+            <div class="step">
+                <div class="step-num">2</div>
+                <div class="step-text"><strong>Tap Open &amp; Install:</strong> If prompted <em>"File might be harmful"</em>, tap <strong>Download anyway</strong>, then tap <strong>Open</strong> &gt; <strong>Install</strong>.</div>
+            </div>
+            <div class="step">
+                <div class="step-num">3</div>
+                <div class="step-text"><strong>Pair with Mac:</strong> Open PhoneLink, enter the 6-digit code from running <code>phonelink pair</code> on your Mac, and tap <strong>Connect &amp; Pair</strong>.</div>
+            </div>
+        </div>
+        <div class="security-footer">
+            🔒 <strong>Zero Plaintext Leakage:</strong> Protected by end-to-end ECDH + AES-256-GCM encryption.
+        </div>
+    </div>
+</body>
+</html>`
+
+func (s *Server) handleInstallPage(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(installPageHTML))
+}
+
+func (s *Server) handleDownloadApk(w http.ResponseWriter, r *http.Request) {
+	candidates := []string{
+		"/opt/phonelink/relay/PhoneLink.apk",
+		"/opt/phonelink/relay/PhoneLink-v1.0.0-release.apk",
+		"./PhoneLink.apk",
+		"./android/release/PhoneLink-v1.0.0-release.apk",
+		"../android/release/PhoneLink-v1.0.0-release.apk",
+		"../../android/release/PhoneLink-v1.0.0-release.apk",
+	}
+
+	var apkPath string
+	for _, p := range candidates {
+		if fi, err := os.Stat(p); err == nil && !fi.IsDir() {
+			apkPath = p
+			break
+		}
+	}
+
+	if apkPath == "" {
+		http.Error(w, "APK package not deployed on server", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/vnd.android.package-archive")
+	w.Header().Set("Content-Disposition", "attachment; filename=\"PhoneLink.apk\"")
+	w.Header().Set("Cache-Control", "no-cache")
+	http.ServeFile(w, r, apkPath)
 }
 
 // Handler returns the underlying http.Handler for testing
