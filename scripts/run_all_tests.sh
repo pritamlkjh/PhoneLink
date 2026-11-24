@@ -129,9 +129,13 @@ run_step "TEST-4 Android Compatibility Matrix Testing" \
 run_step "REL-1 VPS Production Deployment & Rollback" \
     "$REPO_ROOT/tests/test_rel1_vps_deploy.sh"
 
+# 25. REL-2 Android Release Build & Signing
+run_step "REL-2 Android Release Build & Signing" \
+    "$REPO_ROOT/tests/test_rel2_android_release.sh"
+
 echo "=========================================================="
 if [ $FAILURES -eq 0 ]; then
-    echo "   ALL REGRESSION SUITES PASSED (24/24)"
+    echo "   ALL REGRESSION SUITES PASSED (25/25)"
     echo "=========================================================="
     exit 0
 else

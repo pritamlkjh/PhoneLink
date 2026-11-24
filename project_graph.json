@@ -1352,7 +1352,7 @@
       "id": "REL-2",
       "name": "Android Release Build & Signing",
       "category": "release",
-      "status": "PENDING",
+      "status": "COMPLETE",
       "depends_on": [
         "SEC-2",
         "TEST-4"
