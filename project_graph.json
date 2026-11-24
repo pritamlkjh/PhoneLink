@@ -851,7 +851,7 @@
       "id": "MAC-4",
       "name": "Mac CLI Command Framework",
       "category": "mac",
-      "status": "PENDING",
+      "status": "COMPLETE",
       "depends_on": [
         "MAC-1",
         "MAC-3"
