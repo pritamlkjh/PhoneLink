@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
+	"strings"
 	"testing"
 	"time"
 )
@@ -301,6 +302,17 @@ func TestPairingCeremonyAndRevocation(t *testing.T) {
 	// Token cannot be reused
 	if err := reg.ClaimPairing(token, andID); err != ErrPairingTokenNotFound {
 		t.Fatalf("pairing token reuse must fail, got: %v", err)
+	}
+
+	// Test short code claiming
+	_, macPub2, macID2 := generateTestEd25519Key(t)
+	_, andPub2, andID2 := generateTestECDSAKey(t)
+	_ = reg.RegisterDevice(DeviceRecord{DeviceID: macID2, DeviceType: DeviceTypeMac, PublicKey: macPub2, KeyAlgorithm: AlgorithmEd25519})
+	_ = reg.RegisterDevice(DeviceRecord{DeviceID: andID2, DeviceType: DeviceTypeAndroid, PublicKey: andPub2, KeyAlgorithm: AlgorithmECDSAP256})
+	token2, _ := reg.CreatePairingToken(macID2, 5*time.Minute)
+	shortCode := strings.ToUpper(token2[:8])
+	if err := reg.ClaimPairing(shortCode, andID2); err != nil {
+		t.Fatalf("failed to claim pairing with short code: %v", err)
 	}
 
 	// Revoke Mac -> Android can no longer access paired device

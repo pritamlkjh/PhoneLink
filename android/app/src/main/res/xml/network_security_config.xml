@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <!-- Base configuration: Enforce HTTPS/WSS and disallow cleartext traffic -->
-    <base-config cleartextTrafficPermitted="false">
+    <!-- Base configuration: Allow cleartext HTTP traffic for local Wi-Fi / IP testing -->
+    <base-config cleartextTrafficPermitted="true">
         <trust-anchors>
             <certificates src="system" />
             <certificates src="user" />
@@ -9,7 +9,7 @@
     </base-config>
 
     <!-- VPS Relay Domain Pinning Configuration -->
-    <domain-config cleartextTrafficPermitted="false">
+    <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="true">relay.phonelink.local</domain>
         <pin-set expiration="2030-01-01">
             <!-- Pinned SHA-256 SPKI fingerprint of the self-hosted PhoneLink relay cert -->

@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -406,8 +407,21 @@ func (r *Registry) ClaimPairing(token, claimantDeviceID string) error {
 		return ErrDeviceRevoked
 	}
 
-	pt, exists := r.pairingTokens[token]
-	if !exists || pt.Used || time.Now().After(pt.ExpiresAt) {
+	var pt *PairingTokenRecord
+	cleanToken := strings.ToLower(strings.TrimSpace(token))
+	if record, exists := r.pairingTokens[cleanToken]; exists {
+		pt = record
+	} else {
+		for _, record := range r.pairingTokens {
+			if strings.EqualFold(record.Token, cleanToken) ||
+				(len(cleanToken) >= 6 && strings.HasPrefix(strings.ToLower(record.Token), cleanToken)) {
+				pt = record
+				break
+			}
+		}
+	}
+
+	if pt == nil || pt.Used || time.Now().After(pt.ExpiresAt) {
 		return ErrPairingTokenNotFound
 	}
 
