@@ -223,4 +223,380 @@ public final class CameraClient: @unchecked Sendable {
             lens: lens
         )
     }
+
+    /// CAM-3: Streams camera frames through the VPS relay over an E2E-encrypted session.
+    public static func streamCamera(
+        vpsBaseURL: URL,
+        identity: DeviceIdentityManager,
+        client: AuthClient,
+        lens: CameraLens = .back,
+        targetFps: UInt32 = 2,
+        jpegQuality: UInt32 = 80,
+        maxWidth: UInt32 = 1280,
+        maxHeight: UInt32 = 720,
+        maxDurationSeconds: Double = 30.0,
+        maxFrames: UInt64? = nil,
+        onFrame: @escaping @Sendable (CameraFrame, CameraStreamStats) -> Void,
+        onStatusChange: (@Sendable (String) -> Void)? = nil
+    ) async throws -> CameraStreamSummary {
+        let manager = ConnectionManager(vpsBaseURL: vpsBaseURL, identity: identity, authClient: client)
+        onStatusChange?("Connecting to VPS relay...")
+        let presence = await manager.connectAndWaitForPresence(timeoutSeconds: 3.0)
+
+        guard case .peerOnline = presence else {
+            manager.disconnect()
+            throw AuthClientError.invalidResponse("Paired Android device is OFFLINE")
+        }
+
+        onStatusChange?("Establishing end-to-end encryption...")
+        let e2e = E2EEncryptionManager()
+        let sessionState = CameraStreamingSessionState()
+        let activeSessionId = UUID().uuidString
+        sessionState.setSessionId(activeSessionId)
+
+        return try await withCheckedThrowingContinuation { continuation in
+            let sendStopRequest: @Sendable (String) -> Void = { reason in
+                guard sessionState.markStopSent(reason: reason) else { return }
+                onStatusChange?("Stopping camera stream (\(reason))...")
+
+                guard let keys = sessionState.getKeys() else {
+                    manager.disconnect()
+                    _ = sessionState.terminateOnce()
+                    return
+                }
+
+                Task {
+                    do {
+                        let stopData = try buildCameraStopRequest(sessionId: activeSessionId, reason: reason)
+                        let encrypted = try E2EEncryptionManager.encryptAESGCM(key: keys.keyMacToAndroid, plaintext: stopData)
+                        let payloadJson: [String: Any] = [
+                            "type": "E2E_PAYLOAD",
+                            "ciphertext": encrypted.base64EncodedString()
+                        ]
+                        let outData = try JSONSerialization.data(withJSONObject: payloadJson)
+                        try await manager.send(data: outData)
+
+                        // Fallback watchdog: if stop response does not arrive within 2 seconds, force finish
+                        try? await Task.sleep(nanoseconds: 2_000_000_000)
+                        if sessionState.terminateOnce() {
+                            manager.disconnect()
+                            continuation.resume(returning: sessionState.buildSummary())
+                        }
+                    } catch {
+                        if sessionState.terminateOnce() {
+                            manager.disconnect()
+                            continuation.resume(throwing: error)
+                        }
+                    }
+                }
+            }
+
+            manager.onMessageReceived = { data in
+                guard !sessionState.isEnded() else { return }
+
+                guard let text = String(data: data, encoding: .utf8),
+                      let json = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
+                      let type = json["type"] as? String else {
+                    return
+                }
+
+                if type == "E2E_ACK" {
+                    guard let peerPubB64 = json["ephemeral_public_key"] as? String,
+                          let peerPubData = Data(base64Encoded: peerPubB64) else {
+                        return
+                    }
+
+                    do {
+                        let keys = try e2e.deriveSessionKeys(peerPublicKeyData: peerPubData)
+                        sessionState.setKeys(keys)
+                        onStatusChange?("Starting camera stream on Android...")
+
+                        let reqData = try buildCameraStartRequest(
+                            sessionId: activeSessionId,
+                            lens: lens,
+                            targetFps: targetFps,
+                            jpegQuality: jpegQuality,
+                            maxWidth: maxWidth,
+                            maxHeight: maxHeight
+                        )
+                        let encrypted = try E2EEncryptionManager.encryptAESGCM(key: keys.keyMacToAndroid, plaintext: reqData)
+
+                        let payloadJson: [String: Any] = [
+                            "type": "E2E_PAYLOAD",
+                            "ciphertext": encrypted.base64EncodedString()
+                        ]
+                        let outData = try JSONSerialization.data(withJSONObject: payloadJson)
+                        Task {
+                            do {
+                                try await manager.send(data: outData)
+                            } catch {
+                                if sessionState.terminateOnce() {
+                                    manager.disconnect()
+                                    continuation.resume(throwing: error)
+                                }
+                            }
+                        }
+                    } catch {
+                        if sessionState.terminateOnce() {
+                            manager.disconnect()
+                            continuation.resume(throwing: error)
+                        }
+                    }
+                } else if type == "E2E_PAYLOAD" {
+                    guard let keys = sessionState.getKeys(),
+                          let ctB64 = json["ciphertext"] as? String,
+                          let ct = Data(base64Encoded: ctB64) else {
+                        return
+                    }
+
+                    do {
+                        let decrypted = try E2EEncryptionManager.decryptAESGCM(key: keys.keyAndroidToMac, payload: ct)
+
+                        guard let payloadObj = try JSONSerialization.jsonObject(with: decrypted) as? [String: Any] else {
+                            return
+                        }
+
+                        if payloadObj["camera_start_resp"] != nil {
+                            let startResp = try parseCameraStartResponse(data: decrypted)
+                            if startResp.status != "STATUS_OK" {
+                                let errMsg = startResp.errorMessage ?? startResp.status
+                                if sessionState.terminateOnce() {
+                                    manager.disconnect()
+                                    continuation.resume(throwing: AuthClientError.invalidResponse("Camera start rejected: \(startResp.status) - \(errMsg)"))
+                                }
+                                return
+                            }
+                            sessionState.markStarted()
+                            onStatusChange?("Camera streaming active at \(startResp.actualFps) FPS")
+
+                            // If maxDurationSeconds is configured, schedule automatic stream stop
+                            if maxDurationSeconds > 0 {
+                                Task {
+                                    let nanoseconds = UInt64(maxDurationSeconds * 1_000_000_000)
+                                    try? await Task.sleep(nanoseconds: nanoseconds)
+                                    sendStopRequest("duration_completed")
+                                }
+                            }
+                        } else if payloadObj["camera_frame"] != nil {
+                            let frame = try parseCameraFrame(data: decrypted)
+                            let (stats, count) = sessionState.recordFrame(frame: frame)
+                            onFrame(frame, stats)
+
+                            if let maxF = maxFrames, count >= maxF {
+                                sendStopRequest("max_frames_reached")
+                            }
+                        } else if payloadObj["camera_stop_resp"] != nil {
+                            _ = try parseCameraStopResponse(data: decrypted)
+                            if sessionState.terminateOnce() {
+                                manager.disconnect()
+                                continuation.resume(returning: sessionState.buildSummary())
+                            }
+                        }
+                    } catch {
+                        if sessionState.terminateOnce() {
+                            manager.disconnect()
+                            continuation.resume(throwing: error)
+                        }
+                    }
+                }
+            }
+
+            // Start handshake with E2E_INIT
+            Task {
+                do {
+                    let initJson: [String: Any] = [
+                        "type": "E2E_INIT",
+                        "ephemeral_public_key": e2e.publicKeyRaw.base64EncodedString()
+                    ]
+                    let initData = try JSONSerialization.data(withJSONObject: initJson)
+                    try await manager.send(data: initData)
+                } catch {
+                    if sessionState.terminateOnce() {
+                        manager.disconnect()
+                        continuation.resume(throwing: error)
+                    }
+                }
+            }
+        }
+    }
+}
+
+public struct CameraStreamStats: Sendable {
+    public let framesReceived: UInt64
+    public let framesDropped: UInt64
+    public let lastLatencyMs: Int64
+    public let averageLatencyMs: Double
+    public let currentFps: Double
+    public let elapsedSeconds: Double
+
+    public init(
+        framesReceived: UInt64,
+        framesDropped: UInt64,
+        lastLatencyMs: Int64,
+        averageLatencyMs: Double,
+        currentFps: Double,
+        elapsedSeconds: Double
+    ) {
+        self.framesReceived = framesReceived
+        self.framesDropped = framesDropped
+        self.lastLatencyMs = lastLatencyMs
+        self.averageLatencyMs = averageLatencyMs
+        self.currentFps = currentFps
+        self.elapsedSeconds = elapsedSeconds
+    }
+}
+
+public struct CameraStreamSummary: Codable, Sendable {
+    public let sessionId: String
+    public let totalFrames: UInt64
+    public let droppedFrames: UInt64
+    public let averageLatencyMs: Double
+    public let averageFps: Double
+    public let durationSeconds: Double
+    public let stopReason: String
+
+    public init(
+        sessionId: String,
+        totalFrames: UInt64,
+        droppedFrames: UInt64,
+        averageLatencyMs: Double,
+        averageFps: Double,
+        durationSeconds: Double,
+        stopReason: String
+    ) {
+        self.sessionId = sessionId
+        self.totalFrames = totalFrames
+        self.droppedFrames = droppedFrames
+        self.averageLatencyMs = averageLatencyMs
+        self.averageFps = averageFps
+        self.durationSeconds = durationSeconds
+        self.stopReason = stopReason
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case sessionId = "session_id"
+        case totalFrames = "total_frames"
+        case droppedFrames = "dropped_frames"
+        case averageLatencyMs = "average_latency_ms"
+        case averageFps = "average_fps"
+        case durationSeconds = "duration_seconds"
+        case stopReason = "stop_reason"
+    }
+}
+
+private final class CameraStreamingSessionState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var keys: E2EEncryptionManager.SessionKeys?
+    private var isTerminated: Bool = false
+    private var sessionId: String?
+    private var isStopSent: Bool = false
+    private var startTime: Date?
+    private var framesReceived: UInt64 = 0
+    private var droppedFrames: UInt64 = 0
+    private var totalLatencyMs: Int64 = 0
+    private var expectedNextFrame: UInt64 = 1
+    private var stopReason: String = "completed"
+
+    func setKeys(_ k: E2EEncryptionManager.SessionKeys) {
+        lock.lock()
+        defer { lock.unlock() }
+        keys = k
+    }
+
+    func getKeys() -> E2EEncryptionManager.SessionKeys? {
+        lock.lock()
+        defer { lock.unlock() }
+        return keys
+    }
+
+    func setSessionId(_ id: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        sessionId = id
+    }
+
+    func getSessionId() -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        return sessionId
+    }
+
+    func markStarted() {
+        lock.lock()
+        defer { lock.unlock() }
+        if startTime == nil {
+            startTime = Date()
+        }
+    }
+
+    func recordFrame(frame: CameraFrame) -> (CameraStreamStats, UInt64) {
+        lock.lock()
+        defer { lock.unlock() }
+        if startTime == nil {
+            startTime = Date()
+        }
+        let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+        let latencyMs = max(0, nowMs - frame.timestampMs)
+        totalLatencyMs += latencyMs
+
+        if frame.frameNumber > expectedNextFrame {
+            droppedFrames += (frame.frameNumber - expectedNextFrame)
+        }
+        expectedNextFrame = frame.frameNumber + 1
+        framesReceived += 1
+
+        let elapsed = Date().timeIntervalSince(startTime!)
+        let avgLatency = framesReceived > 0 ? Double(totalLatencyMs) / Double(framesReceived) : 0
+        let currentFps = elapsed > 0 ? Double(framesReceived) / elapsed : 0
+
+        let stats = CameraStreamStats(
+            framesReceived: framesReceived,
+            framesDropped: droppedFrames,
+            lastLatencyMs: latencyMs,
+            averageLatencyMs: avgLatency,
+            currentFps: currentFps,
+            elapsedSeconds: elapsed
+        )
+        return (stats, framesReceived)
+    }
+
+    func markStopSent(reason: String) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if isStopSent { return false }
+        isStopSent = true
+        stopReason = reason
+        return true
+    }
+
+    func terminateOnce() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if isTerminated { return false }
+        isTerminated = true
+        return true
+    }
+
+    func isEnded() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return isTerminated
+    }
+
+    func buildSummary() -> CameraStreamSummary {
+        lock.lock()
+        defer { lock.unlock() }
+        let elapsed = startTime != nil ? Date().timeIntervalSince(startTime!) : 0
+        let avgLatency = framesReceived > 0 ? Double(totalLatencyMs) / Double(framesReceived) : 0
+        let avgFps = elapsed > 0 ? Double(framesReceived) / elapsed : 0
+        return CameraStreamSummary(
+            sessionId: sessionId ?? "",
+            totalFrames: framesReceived,
+            droppedFrames: droppedFrames,
+            averageLatencyMs: avgLatency,
+            averageFps: avgFps,
+            durationSeconds: elapsed,
+            stopReason: stopReason
+        )
+    }
 }

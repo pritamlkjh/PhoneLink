@@ -906,7 +906,7 @@
       "id": "CAM-3",
       "name": "Camera Frame Streaming Protocol & Transport",
       "category": "camera",
-      "status": "PENDING",
+      "status": "COMPLETED",
       "depends_on": [
         "CAM-2",
         "VPS-4",

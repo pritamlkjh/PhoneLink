@@ -768,6 +768,120 @@ func handleFilesList(args: [String], identity: DeviceIdentityManager, client: Au
     }
 }
 
+// MARK: - Camera Stream Command (CAM-3 / CAM-4)
+
+func handleCamera(args: [String], identity: DeviceIdentityManager, client: AuthClient) async {
+    let isJSON = parseFlag("--json", in: args)
+    let isHelp = parseFlag("-h", in: args) || parseFlag("--help", in: args)
+
+    if isHelp {
+        print("""
+        Usage: phonelink camera [stream] [options]
+
+        Streams live camera preview frames from the paired Android device.
+
+        OPTIONS:
+          --lens <front|back>   Select camera lens (default: back)
+          --fps <1-5>           Target frame rate (default: 2)
+          --quality <10-100>    JPEG compression quality (default: 80)
+          --duration <sec>      Maximum streaming duration (default: 10s)
+          --max-frames <n>      Stop after receiving n frames
+          --vps <url>           VPS relay URL override
+          --json                Output stream stats in JSON format
+        """)
+        exit(0)
+    }
+
+    let vpsStr = parseOption("--vps", in: args) ?? Config.defaultRelayURL
+    guard let vpsURL = URL(string: vpsStr) else {
+        fputs("ERROR: Invalid VPS relay URL: \(vpsStr)\n", stderr)
+        exit(2)
+    }
+
+    var lens: CameraLens = .back
+    if let lensStr = parseOption("--lens", in: args)?.lowercased() {
+        if lensStr == "front" {
+            lens = .front
+        } else {
+            lens = .back
+        }
+    }
+
+    let fpsVal = UInt32(parseOption("--fps", in: args) ?? "2") ?? 2
+    let targetFps = min(max(fpsVal, 1), 5)
+
+    let qVal = UInt32(parseOption("--quality", in: args) ?? "80") ?? 80
+    let jpegQuality = min(max(qVal, 10), 100)
+
+    let dVal = Double(parseOption("--duration", in: args) ?? "10.0") ?? 10.0
+    let durationSeconds = max(dVal, 1.0)
+
+    var maxFrames: UInt64? = nil
+    if let mfStr = parseOption("--max-frames", in: args), let mfVal = UInt64(mfStr) {
+        maxFrames = mfVal
+    }
+
+    let maxWidth: UInt32 = 1280
+    let maxHeight: UInt32 = 720
+
+    if !isJSON {
+        print(">> Initializing camera stream [Lens: \(lens.rawValue), Target FPS: \(targetFps)]...")
+    }
+
+    do {
+        let summary = try await CameraClient.streamCamera(
+            vpsBaseURL: vpsURL,
+            identity: identity,
+            client: client,
+            lens: lens,
+            targetFps: targetFps,
+            jpegQuality: jpegQuality,
+            maxWidth: maxWidth,
+            maxHeight: maxHeight,
+            maxDurationSeconds: durationSeconds,
+            maxFrames: maxFrames,
+            onFrame: { frame, stats in
+                if !isJSON {
+                    let sizeKB = Double(frame.jpegData.count) / 1024.0
+                    print(String(format: "[Frame #%llu] %ux%u (%.1f KB) | Latency: %lld ms | Rate: %.1f FPS",
+                                 frame.frameNumber, frame.width, frame.height, sizeKB, stats.lastLatencyMs, stats.currentFps))
+                }
+            },
+            onStatusChange: { status in
+                if !isJSON {
+                    print(">> \(status)")
+                }
+            }
+        )
+
+        if isJSON {
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.prettyPrinted]
+            let data = try encoder.encode(summary)
+            print(String(data: data, encoding: .utf8)!)
+        } else {
+            print("--------------------------------------------------------------------------------")
+            print("Stream summary: \(summary.totalFrames) frames received, \(summary.droppedFrames) dropped")
+            print(String(format: "Average Latency: %.1f ms | Average Rate: %.1f FPS | Duration: %.2f s",
+                         summary.averageLatencyMs, summary.averageFps, summary.durationSeconds))
+            print("Status: \(summary.stopReason)")
+        }
+        exit(0)
+    } catch {
+        if isJSON {
+            let dict: [String: Any] = [
+                "status": "ERROR",
+                "error": error.localizedDescription
+            ]
+            let data = try! JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted])
+            print(String(data: data, encoding: .utf8)!)
+        } else {
+            fputs("ERROR: \(error.localizedDescription)\n", stderr)
+        }
+        exit(1)
+    }
+}
+
 // MARK: - Main Execution
 
 let args = CommandLine.arguments
@@ -813,8 +927,7 @@ case "files":
     await handleFiles(args: subArgs, identity: identity, client: client)
 
 case "camera":
-    print("Camera subcommand reserved for CAM-3/CAM-4.")
-    exit(0)
+    await handleCamera(args: subArgs, identity: identity, client: client)
 
 default:
     fputs("ERROR: Unknown subcommand '\(command)'. Run 'phonelink --help' for usage.\n", stderr)

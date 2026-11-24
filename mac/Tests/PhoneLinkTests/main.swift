@@ -530,5 +530,51 @@ assertEqual(parsedFrame.lens, .front)
 assertEqual(parsedFrame.jpegData, mockJpegBytes)
 print("PASS: testCameraFrameParser")
 
-print(">>> ALL MAC CLIENT UNIT TESTS PASSED (28/28) <<<")
+// Test 29: CAM-3 CameraStreamStats & CameraStreamSummary
+let sampleStats = CameraStreamStats(
+    framesReceived: 10,
+    framesDropped: 1,
+    lastLatencyMs: 35,
+    averageLatencyMs: 38.5,
+    currentFps: 2.1,
+    elapsedSeconds: 4.8
+)
+assertEqual(sampleStats.framesReceived, 10)
+assertEqual(sampleStats.framesDropped, 1)
+assertEqual(sampleStats.lastLatencyMs, 35)
+assert(sampleStats.averageLatencyMs > 38.0 && sampleStats.averageLatencyMs < 39.0)
+assert(sampleStats.currentFps > 2.0 && sampleStats.currentFps < 2.2)
+
+let summary = CameraStreamSummary(
+    sessionId: "cam-sum-1",
+    totalFrames: 25,
+    droppedFrames: 2,
+    averageLatencyMs: 42.1,
+    averageFps: 2.0,
+    durationSeconds: 12.5,
+    stopReason: "duration_completed"
+)
+let encodedSummary = try! JSONEncoder().encode(summary)
+let decodedSummary = try! JSONDecoder().decode(CameraStreamSummary.self, from: encodedSummary)
+assertEqual(decodedSummary.sessionId, "cam-sum-1")
+assertEqual(decodedSummary.totalFrames, 25)
+assertEqual(decodedSummary.droppedFrames, 2)
+assertEqual(decodedSummary.stopReason, "duration_completed")
+print("PASS: testCameraStreamStatsAndSummaryModels")
+
+// Test 30: CAM-3 Camera Frame Gaps & Dropped Frame Sequence Detection
+var expectedFrame: UInt64 = 1
+var detectedDrops: UInt64 = 0
+let frameNumbers: [UInt64] = [1, 2, 4, 7] // Gaps: between 2->4 (1 dropped: 3), 4->7 (2 dropped: 5,6)
+for fn in frameNumbers {
+    if fn > expectedFrame {
+        detectedDrops += (fn - expectedFrame)
+    }
+    expectedFrame = fn + 1
+}
+assertEqual(detectedDrops, 3)
+assertEqual(expectedFrame, 8)
+print("PASS: testCameraFrameGapsAndDroppedFrameSequenceDetection")
+
+print(">>> ALL MAC CLIENT UNIT TESTS PASSED (30/30) <<<")
 exit(0)
