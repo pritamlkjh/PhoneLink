@@ -448,7 +448,7 @@ Format per node: Purpose → Dependencies/Blocks/Parallelizable → Inputs/Outpu
 
 ---
 
-#### `AND-8` — Android Reconnection & Network-Change Handling
+#### `AND-8` — Android Reconnection & Network-Change Handling [STATUS: COMPLETE]
 **Category:** Android · **Priority:** P2
 
 **Purpose:** Detect connectivity loss/handoff and reconnect automatically without user intervention.

@@ -36,6 +36,9 @@ class SecureStorage(
         const val KEY_CAMERA_ALLOWED = "camera_allowed_toggle" // Defaults to false
         const val KEY_REMOTE_PING_ALLOWED = "remote_ping_allowed_toggle" // Defaults to true
         const val KEY_REMOTE_INFO_ALLOWED = "remote_info_allowed_toggle" // Defaults to true
+        const val KEY_RESUMPTION_TOKEN = "resumption_token"
+        const val KEY_RESUMPTION_EXPIRES_AT = "resumption_expires_at"
+        const val KEY_AUTO_START_ON_BOOT = "auto_start_on_boot"
 
         private fun getOrCreateMasterKey(prefs: SharedPreferences): SecretKey {
             val encodedKey = prefs.getString(PREF_KEY_MASTER_KEY, null)
@@ -210,5 +213,47 @@ class SecureStorage(
 
     fun setRemoteInfoAllowed(allowed: Boolean) {
         saveString(KEY_REMOTE_INFO_ALLOWED, allowed.toString())
+    }
+
+    /**
+     * Session Resumption Token Storage (AND-8 / VPS-6).
+     * Bounded validity window.
+     */
+    fun saveResumptionToken(token: String?, expiresAtMillis: Long) {
+        if (token == null) {
+            preferences.edit()
+                .remove(KEY_RESUMPTION_TOKEN)
+                .remove(KEY_RESUMPTION_EXPIRES_AT)
+                .apply()
+        } else {
+            saveString(KEY_RESUMPTION_TOKEN, token)
+            preferences.edit().putLong(KEY_RESUMPTION_EXPIRES_AT, expiresAtMillis).apply()
+        }
+    }
+
+    fun getResumptionToken(): String? {
+        val token = getString(KEY_RESUMPTION_TOKEN) ?: return null
+        val expiresAt = preferences.getLong(KEY_RESUMPTION_EXPIRES_AT, 0L)
+        if (System.currentTimeMillis() >= expiresAt) {
+            clearResumptionToken()
+            return null
+        }
+        return token
+    }
+
+    fun clearResumptionToken() {
+        saveResumptionToken(null, 0L)
+    }
+
+    /**
+     * Boot Auto-Start Setting (AND-9).
+     * Defaults to true.
+     */
+    fun isAutoStartOnBoot(): Boolean {
+        return preferences.getBoolean(KEY_AUTO_START_ON_BOOT, true)
+    }
+
+    fun setAutoStartOnBoot(enabled: Boolean) {
+        preferences.edit().putBoolean(KEY_AUTO_START_ON_BOOT, enabled).apply()
     }
 }

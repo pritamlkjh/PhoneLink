@@ -58,6 +58,7 @@ class ConnectionForegroundService : Service() {
     }
 
     private var transport: NetworkTransport? = null
+    private var reconnectionManager: com.phonelink.transport.ReconnectionManager? = null
     private lateinit var secureStorage: SecureStorage
     private lateinit var storageAccessLayer: StorageAccessLayer
     private lateinit var fileOperationHandler: FileOperationHandler
@@ -155,24 +156,62 @@ class ConnectionForegroundService : Service() {
             }
         )
 
+        // Initialize AND-8 ReconnectionManager
+        val vpsBaseHttpUrl = relayUrl.substringBefore("/ws/").replace("wss://", "https://").replace("ws://", "http://")
+        val identityMgr = com.phonelink.identity.DeviceIdentityManager.fromContext(this)
+        val keyMgr = try {
+            com.phonelink.crypto.KeyManager(com.phonelink.crypto.AndroidKeyStoreSigner())
+        } catch (_: Throwable) {
+            com.phonelink.crypto.KeyManager.createSoftware()
+        }
+
+        val mgr = com.phonelink.transport.ReconnectionManager(
+            authClient = com.phonelink.auth.AuthClient(secureStorage = secureStorage),
+            secureStorage = secureStorage,
+            identityManager = identityMgr,
+            keyManager = keyMgr,
+            networkStateProvider = com.phonelink.transport.ReconnectionManager.AndroidNetworkStateProvider(this)
+        ).also { reconnectionManager = it }
+
+        mgr.addListener(object : com.phonelink.transport.ReconnectionManager.Listener {
+            override fun onReconnectionStateChanged(newState: com.phonelink.transport.ReconnectionManager.State) {
+                val statusText = when (newState) {
+                    is com.phonelink.transport.ReconnectionManager.State.WaitingForNetwork -> "Waiting for network connectivity..."
+                    is com.phonelink.transport.ReconnectionManager.State.BackingOff -> "Reconnecting in ${newState.delayMillis / 1000}s (attempt ${newState.attempt})..."
+                    is com.phonelink.transport.ReconnectionManager.State.Connecting -> if (newState.isResuming) "Resuming VPS session..." else "Authenticating with VPS..."
+                    is com.phonelink.transport.ReconnectionManager.State.Connected -> "Connected to VPS relay"
+                    is com.phonelink.transport.ReconnectionManager.State.Failed -> "Connection failed: ${newState.cause.message}"
+                    is com.phonelink.transport.ReconnectionManager.State.Idle -> "Disconnected"
+                }
+                updateNotification(statusText)
+            }
+
+            override fun onReconnectionSucceeded(sessionToken: String, wasResumed: Boolean) {
+                val wsUrl = if (relayUrl.contains("?")) "$relayUrl&token=$sessionToken" else "$relayUrl?token=$sessionToken"
+                currentTransport.connect(wsUrl)
+            }
+        })
+
         currentTransport.addListener(object : NetworkTransport.Listener {
             override fun onStateChanged(newState: NetworkTransport.ConnectionState) {
-                val statusText = when (newState) {
-                    is NetworkTransport.ConnectionState.Connected -> "Connected to VPS relay"
-                    is NetworkTransport.ConnectionState.Connecting -> "Connecting to VPS relay..."
-                    is NetworkTransport.ConnectionState.Reconnecting -> "Reconnecting (attempt ${newState.attempt})..."
+                when (newState) {
+                    is NetworkTransport.ConnectionState.Connected -> {
+                        updateNotification("Connected to VPS relay")
+                    }
                     is NetworkTransport.ConnectionState.Disconnected -> {
                         cameraCaptureModule.stopCapture("disconnected", "transport_disconnected")
                         replayFilter.reset()
                         peerSession?.reset()
-                        "Disconnected"
+                        updateNotification("Disconnected. Reconnecting...")
+                        reconnectionManager?.onConnectionLost()
                     }
                     is NetworkTransport.ConnectionState.Error -> {
                         cameraCaptureModule.stopCapture("error", "transport_error")
-                        "Connection error: ${newState.cause.message}"
+                        updateNotification("Connection error: ${newState.cause.message}")
+                        reconnectionManager?.onConnectionLost(newState.cause)
                     }
+                    else -> {}
                 }
-                updateNotification(statusText)
             }
 
             override fun onMessageReceived(text: String) {
@@ -188,7 +227,9 @@ class ConnectionForegroundService : Service() {
                 peerSession?.handleIncomingMessage(bytes)
             }
         })
-        currentTransport.connect(relayUrl)
+
+        // Start ReconnectionManager (handles initial connect and subsequent resilience)
+        mgr.start(vpsBaseHttpUrl)
     }
 
     internal fun handleControlMessage(text: String) {
@@ -215,6 +256,8 @@ class ConnectionForegroundService : Service() {
         try {
             cameraCaptureModule.stopCapture("service_stopped", "service_stopped")
         } catch (_: Exception) {}
+        reconnectionManager?.stop()
+        reconnectionManager = null
         transport?.disconnect()
         transport = null
         stopForeground(STOP_FOREGROUND_REMOVE)
