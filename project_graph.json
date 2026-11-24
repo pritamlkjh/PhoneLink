@@ -1274,7 +1274,7 @@
       "id": "TEST-4",
       "name": "Android Compatibility Matrix Testing",
       "category": "testing",
-      "status": "PENDING",
+      "status": "COMPLETE",
       "depends_on": [
         "TEST-2",
         "AND-9"
