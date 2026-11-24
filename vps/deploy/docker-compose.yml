@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  relay:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    container_name: phonelink-relay
+    restart: unless-stopped
+    ports:
+      - "${PHONELINK_PORT:-8443}:8443"
+    environment:
+      - PHONELINK_HOST=0.0.0.0
+      - PHONELINK_PORT=8443
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8443/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

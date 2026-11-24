@@ -183,7 +183,7 @@
       "id": "VPS-1",
       "name": "VPS Base Infrastructure & Deployment Skeleton",
       "category": "vps",
-      "status": "PENDING",
+      "status": "COMPLETE",
       "depends_on": [
         "ARCH-1"
       ],

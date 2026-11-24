@@ -19,6 +19,11 @@ captures/
 .externalNativeBuild/
 .cxx/
 
+# Go build artifacts
+bin/
+vps/bin/
+*.exe
+
 # macOS build artifacts
 DerivedData/
 *.xcuserstate
