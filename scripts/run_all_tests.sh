@@ -33,7 +33,11 @@ run_step() {
 run_step "Shared Protobuf Schema Validation & Round-Trip" \
     "$REPO_ROOT/tests/test_schema_roundtrip.sh"
 
-# 2. Mac Client Unit Tests
+# 2. Secret & Credential Scanning
+run_step "Automated Secret & Key Scanning" \
+    "$REPO_ROOT/scripts/scan_secrets.sh"
+
+# 3. Mac Client Unit Tests
 run_step "Mac Client (Swift) Tests" \
     "cd $REPO_ROOT/mac && swift build && swift run PhoneLinkTests"
 
