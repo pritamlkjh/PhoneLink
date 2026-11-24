@@ -14,6 +14,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/pritamlkjh/phonelink/vps/internal/auth"
 	"github.com/pritamlkjh/phonelink/vps/internal/coordinator"
+	"github.com/pritamlkjh/phonelink/vps/internal/logging"
 )
 
 const (
@@ -47,6 +48,7 @@ type Server struct {
 	httpServer  *http.Server
 	mux         *http.ServeMux
 	logger      *slog.Logger
+	auditLogger *logging.AuditLogger
 	startTime   time.Time
 	registry    *auth.Registry
 	tracker     *auth.ChallengeTracker
@@ -71,10 +73,12 @@ func NewServer(cfg Config, logger *slog.Logger) *Server {
 
 	mux := http.NewServeMux()
 	reg := auth.NewRegistry()
+	auditLogger := logging.NewAuditLogger(logger, logging.NewAuthFailureMonitor(5, 1*time.Minute, nil))
 	s := &Server{
 		cfg:         cfg,
 		mux:         mux,
 		logger:      logger,
+		auditLogger: auditLogger,
 		startTime:   time.Now(),
 		registry:    reg,
 		tracker:     auth.NewChallengeTracker(),
@@ -116,6 +120,11 @@ func (s *Server) Tracker() *auth.ChallengeTracker {
 // Coordinator returns the underlying coordinator.Coordinator instance
 func (s *Server) Coordinator() *coordinator.Coordinator {
 	return s.coordinator
+}
+
+// AuditLogger returns the underlying logging.AuditLogger instance
+func (s *Server) AuditLogger() *logging.AuditLogger {
+	return s.auditLogger
 }
 
 // registerRoutes configures all HTTP and WebSocket endpoints
@@ -183,6 +192,8 @@ func (s *Server) handleWebSocketConnect(w http.ResponseWriter, r *http.Request) 
 	}
 	defer conn.Close()
 
+	s.auditLogger.LogConnection(r.RemoteAddr, deviceID)
+
 	sendChan := make(chan []byte, 64)
 	sess, err := s.coordinator.ConnectSession(deviceID, sendChan, func() {
 		_ = conn.Close()
@@ -221,9 +232,12 @@ func (s *Server) handleWebSocketConnect(w http.ResponseWriter, r *http.Request) 
 			break
 		}
 		if messageType == websocket.BinaryMessage || messageType == websocket.TextMessage {
+			s.auditLogger.LogRelayForward(deviceID, sess.PeerDeviceID, len(payload))
 			_ = s.coordinator.ForwardPayload(deviceID, sess.PeerDeviceID, payload)
 		}
 	}
+
+	s.auditLogger.LogDisconnect(r.RemoteAddr, deviceID, "connection_closed")
 
 	// Trigger disconnect immediately upon client socket close
 	s.coordinator.DisconnectSession(deviceID)
@@ -325,13 +339,17 @@ func (s *Server) handleAuthChallenge(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.auditLogger.LogAuthAttempt(r.RemoteAddr, req.DeviceID)
+
 	if !s.registry.IsAuthorized(req.DeviceID) {
+		s.auditLogger.LogAuthFailure(r.RemoteAddr, req.DeviceID, "unregistered_or_revoked_device")
 		http.Error(w, `{"error":"unregistered or revoked device"}`, http.StatusUnauthorized)
 		return
 	}
 
 	nonce, ts, err := s.tracker.GenerateChallenge(req.DeviceID)
 	if err != nil {
+		s.auditLogger.LogError("generate_challenge", err, map[string]interface{}{"device_id": req.DeviceID})
 		http.Error(w, `{"error":"failed to generate challenge"}`, http.StatusInternalServerError)
 		return
 	}
@@ -356,35 +374,41 @@ type AuthVerifyRequest struct {
 func (s *Server) handleAuthVerify(w http.ResponseWriter, r *http.Request) {
 	var req AuthVerifyRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		s.auditLogger.LogAuthFailure(r.RemoteAddr, "", "invalid_json_request")
 		http.Error(w, `{"error":"invalid JSON request"}`, http.StatusBadRequest)
 		return
 	}
 
 	if !s.registry.IsAuthorized(req.DeviceID) {
+		s.auditLogger.LogAuthFailure(r.RemoteAddr, req.DeviceID, "unregistered_or_revoked_device")
 		http.Error(w, `{"error":"unregistered or revoked device"}`, http.StatusUnauthorized)
 		return
 	}
 
 	serverNonceBytes, err := base64.StdEncoding.DecodeString(req.ServerNonce)
 	if err != nil || len(serverNonceBytes) != auth.NonceSize {
+		s.auditLogger.LogAuthFailure(r.RemoteAddr, req.DeviceID, "invalid_server_nonce")
 		http.Error(w, `{"error":"invalid server nonce"}`, http.StatusBadRequest)
 		return
 	}
 
 	clientNonceBytes, err := base64.StdEncoding.DecodeString(req.ClientNonce)
 	if err != nil || len(clientNonceBytes) == 0 {
+		s.auditLogger.LogAuthFailure(r.RemoteAddr, req.DeviceID, "invalid_client_nonce")
 		http.Error(w, `{"error":"invalid client nonce"}`, http.StatusBadRequest)
 		return
 	}
 
 	sigBytes, err := base64.StdEncoding.DecodeString(req.Signature)
 	if err != nil || len(sigBytes) == 0 {
+		s.auditLogger.LogAuthFailure(r.RemoteAddr, req.DeviceID, "invalid_signature_encoding")
 		http.Error(w, `{"error":"invalid signature"}`, http.StatusBadRequest)
 		return
 	}
 
 	// 1. Consume and validate challenge nonce + clock skew
 	if err := s.tracker.ValidateAndConsumeChallenge(req.DeviceID, serverNonceBytes, req.Timestamp); err != nil {
+		s.auditLogger.LogAuthFailure(r.RemoteAddr, req.DeviceID, err.Error())
 		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusBadRequest)
 		return
 	}
@@ -392,6 +416,7 @@ func (s *Server) handleAuthVerify(w http.ResponseWriter, r *http.Request) {
 	// 2. Fetch device public key
 	dev, err := s.registry.GetDevice(req.DeviceID)
 	if err != nil {
+		s.auditLogger.LogAuthFailure(r.RemoteAddr, req.DeviceID, "device_not_found")
 		http.Error(w, `{"error":"device not found"}`, http.StatusUnauthorized)
 		return
 	}
@@ -399,6 +424,7 @@ func (s *Server) handleAuthVerify(w http.ResponseWriter, r *http.Request) {
 	// 3. Verify cryptographic signature
 	challengeData := auth.BuildChallengeData(serverNonceBytes, clientNonceBytes, req.Timestamp)
 	if err := auth.VerifySignature(dev.PublicKey, dev.KeyAlgorithm, challengeData, sigBytes); err != nil {
+		s.auditLogger.LogAuthFailure(r.RemoteAddr, req.DeviceID, "signature_verification_failed")
 		http.Error(w, `{"error":"invalid signature"}`, http.StatusUnauthorized)
 		return
 	}
@@ -406,9 +432,12 @@ func (s *Server) handleAuthVerify(w http.ResponseWriter, r *http.Request) {
 	// 4. Create session token
 	sessionToken, err := s.registry.CreateSession(req.DeviceID, auth.DefaultSessionTTL)
 	if err != nil {
+		s.auditLogger.LogError("create_session", err, map[string]interface{}{"device_id": req.DeviceID})
 		http.Error(w, `{"error":"failed to create session"}`, http.StatusInternalServerError)
 		return
 	}
+
+	s.auditLogger.LogAuthSuccess(r.RemoteAddr, req.DeviceID)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)

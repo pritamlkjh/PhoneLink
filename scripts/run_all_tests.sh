@@ -93,9 +93,13 @@ run_step "SEC-1 Cross-Component Security Hardening Test" \
 run_step "TEST-2 Cross-Component Integration Suite (2x & Regression Check)" \
     "$REPO_ROOT/tests/test_test2_cross_component.sh"
 
+# 16. VPS-7 VPS Logging & Monitoring Integration Tests
+run_step "VPS-7 VPS Logging & Monitoring Test" \
+    "$REPO_ROOT/tests/test_vps7_logging.sh"
+
 echo "=========================================================="
 if [ $FAILURES -eq 0 ]; then
-    echo "   ALL REGRESSION SUITES PASSED (15/15)"
+    echo "   ALL REGRESSION SUITES PASSED (16/16)"
     echo "=========================================================="
     exit 0
 else

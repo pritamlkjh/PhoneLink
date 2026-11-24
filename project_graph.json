@@ -354,7 +354,7 @@
       "id": "VPS-7",
       "name": "VPS Logging & Monitoring",
       "category": "vps",
-      "status": "PENDING",
+      "status": "COMPLETE",
       "depends_on": [
         "VPS-1"
       ],
