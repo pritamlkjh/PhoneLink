@@ -528,7 +528,7 @@
       "id": "MAC-2",
       "name": "Mac Authentication & Identity",
       "category": "mac",
-      "status": "PENDING",
+      "status": "COMPLETE",
       "depends_on": [
         "MAC-1",
         "ARCH-2",
@@ -674,7 +674,7 @@
       "id": "MAC-3",
       "name": "Mac Connection Manager",
       "category": "mac",
-      "status": "PENDING",
+      "status": "COMPLETE",
       "depends_on": [
         "MAC-2"
       ],
