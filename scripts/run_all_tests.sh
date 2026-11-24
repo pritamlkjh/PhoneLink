@@ -141,9 +141,13 @@ run_step "REL-3 Mac Release Build & Packaging" \
 run_step "DOC-1 Consolidated Documentation & Setup Guide" \
     "$REPO_ROOT/tests/test_doc1_docs.sh"
 
+# 28. VPS-8 VPS Direct-Connection Optimization
+run_step "VPS-8 VPS Direct-Connection Optimization" \
+    "$REPO_ROOT/tests/test_vps8_direct.sh"
+
 echo "=========================================================="
 if [ $FAILURES -eq 0 ]; then
-    echo "   ALL REGRESSION SUITES PASSED (27/27)"
+    echo "   ALL REGRESSION SUITES PASSED (28/28)"
     echo "=========================================================="
     exit 0
 else
