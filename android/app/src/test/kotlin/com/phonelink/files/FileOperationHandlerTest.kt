@@ -272,4 +272,139 @@ class FileOperationHandlerTest {
         val expectedSlice = sampleData.copyOfRange(startOffset.toInt(), 100_000)
         assertTrue(expectedSlice.contentEquals(chunkData))
     }
+
+    @Test
+    fun testHandleFileUploadInitSuccess() {
+        val initResp = fileHandler.handleFileUploadInit(
+            transferId = "up-tx-001",
+            destinationPath = "Uploads",
+            fileName = "uploaded.bin",
+            totalSizeBytes = 1024L,
+            sha256Checksum = "dummy-sha",
+            expectedChunkSize = 65536
+        )
+
+        assertEquals("up-tx-001", initResp.transferId)
+        assertEquals(FileOperationHandler.STATUS_OK, initResp.status)
+        assertEquals(0L, initResp.resumeOffset)
+        assertEquals(65536, initResp.expectedChunkSize)
+        assertEquals("", initResp.errorMessage)
+    }
+
+    @Test
+    fun testHandleFileUploadInitTraversalRejection() {
+        val initResp1 = fileHandler.handleFileUploadInit(
+            transferId = "up-tx-trav-1",
+            destinationPath = "../../../etc",
+            fileName = "passwd",
+            totalSizeBytes = 100L,
+            sha256Checksum = "dummy"
+        )
+        assertEquals(FileOperationHandler.STATUS_STORAGE_ACCESS_DENIED, initResp1.status)
+        assertTrue(initResp1.errorMessage.contains("traversal", ignoreCase = true))
+
+        val initResp2 = fileHandler.handleFileUploadInit(
+            transferId = "up-tx-trav-2",
+            destinationPath = "Uploads",
+            fileName = "../../evil.sh",
+            totalSizeBytes = 100L,
+            sha256Checksum = "dummy"
+        )
+        assertEquals(FileOperationHandler.STATUS_STORAGE_ACCESS_DENIED, initResp2.status)
+        assertTrue(initResp2.errorMessage.contains("Security violation", ignoreCase = true))
+    }
+
+    @Test
+    fun testHandleFileUploadInitSensitiveRejection() {
+        val initResp = fileHandler.handleFileUploadInit(
+            transferId = "up-tx-sens",
+            destinationPath = "keystore",
+            fileName = "keys.db",
+            totalSizeBytes = 100L,
+            sha256Checksum = "dummy"
+        )
+        assertEquals(FileOperationHandler.STATUS_STORAGE_ACCESS_DENIED, initResp.status)
+        assertTrue(initResp.errorMessage.contains("forbidden", ignoreCase = true) || initResp.errorMessage.contains("sensitive", ignoreCase = true))
+    }
+
+    @Test
+    fun testHandleFileUploadChunkCompleteFlow() {
+        val testData = ByteArray(100_000) { (it % 127).toByte() }
+        val testSha = FileOperationHandler.computeChunkSha256(testData)
+
+        // 1. Init
+        val initResp = fileHandler.handleFileUploadInit(
+            transferId = "up-full-01",
+            destinationPath = "Received",
+            fileName = "data.bin",
+            totalSizeBytes = 100_000L,
+            sha256Checksum = testSha,
+            expectedChunkSize = 65536
+        )
+        assertEquals(FileOperationHandler.STATUS_OK, initResp.status)
+
+        // 2. Chunk 0 (65536 bytes)
+        val chunk0Data = testData.copyOfRange(0, 65536)
+        val chunk0Sha = FileOperationHandler.computeChunkSha256(chunk0Data)
+        val ack0 = fileHandler.handleFileUploadChunk(
+            transferId = "up-full-01",
+            chunkIndex = 0L,
+            offset = 0L,
+            dataBase64 = java.util.Base64.getEncoder().encodeToString(chunk0Data),
+            chunkSha256 = chunk0Sha,
+            isFinalChunk = false
+        )
+        assertEquals(FileOperationHandler.STATUS_OK, ack0.status)
+
+        // 3. Chunk 1 (34464 bytes, final)
+        val chunk1Data = testData.copyOfRange(65536, 100_000)
+        val chunk1Sha = FileOperationHandler.computeChunkSha256(chunk1Data)
+        val ack1 = fileHandler.handleFileUploadChunk(
+            transferId = "up-full-01",
+            chunkIndex = 1L,
+            offset = 65536L,
+            dataBase64 = java.util.Base64.getEncoder().encodeToString(chunk1Data),
+            chunkSha256 = chunk1Sha,
+            isFinalChunk = true
+        )
+        assertEquals(FileOperationHandler.STATUS_OK, ack1.status)
+
+        // 4. Verify file committed to scoped storage
+        val finalFile = File(tempRoot, "Received/data.bin")
+        assertTrue(finalFile.exists(), "Final uploaded file must exist")
+        assertEquals(100_000L, finalFile.length())
+        assertTrue(testData.contentEquals(finalFile.readBytes()))
+        assertEquals(testSha, FileOperationHandler.computeFileSha256(finalFile))
+
+        // .part file should be cleaned up
+        val partFile = File(tempRoot, "Received/data.bin.part")
+        assertFalse(partFile.exists(), ".part file must be removed after successful commit")
+    }
+
+    @Test
+    fun testHandleFileUploadChunkTamperedRejection() {
+        val testData = "Original Valid Chunk Content".toByteArray()
+        val testSha = FileOperationHandler.computeChunkSha256(testData)
+
+        fileHandler.handleFileUploadInit(
+            transferId = "up-tamper-01",
+            destinationPath = "Received",
+            fileName = "tamper.txt",
+            totalSizeBytes = testData.size.toLong(),
+            sha256Checksum = testSha
+        )
+
+        val tamperedData = "Tampered Corrupted Content".toByteArray()
+        val ack = fileHandler.handleFileUploadChunk(
+            transferId = "up-tamper-01",
+            chunkIndex = 0L,
+            offset = 0L,
+            dataBase64 = java.util.Base64.getEncoder().encodeToString(tamperedData),
+            chunkSha256 = testSha, // mismatch with tamperedData
+            isFinalChunk = true
+        )
+
+        assertEquals(FileOperationHandler.STATUS_INTEGRITY_MISMATCH, ack.status)
+        assertTrue(ack.errorMessage.contains("STATUS_INTEGRITY_MISMATCH", ignoreCase = true))
+    }
 }

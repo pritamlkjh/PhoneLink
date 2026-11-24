@@ -283,6 +283,8 @@ func printFilesUsage() {
       phonelink files ls --json
       phonelink files get Documents/report.pdf
       phonelink files get Documents/report.pdf ./my_report.pdf
+      phonelink files put ./local_file.pdf Documents
+      phonelink files put ./photo.jpg
     """)
 }
 
@@ -303,9 +305,125 @@ func handleFiles(args: [String], identity: DeviceIdentityManager, client: AuthCl
         await handleFilesList(args: remainingArgs, identity: identity, client: client, isJSON: isJSON)
     case "get", "download":
         await handleFilesGet(args: remainingArgs, identity: identity, client: client, isJSON: isJSON)
+    case "put", "upload":
+        await handleFilesPut(args: remainingArgs, identity: identity, client: client, isJSON: isJSON)
     default:
         fputs("ERROR: Unknown files subcommand '\(fileSubcommand)'. Run 'phonelink files --help' for usage.\n", stderr)
         exit(2)
+    }
+}
+
+func handleFilesPut(args: [String], identity: DeviceIdentityManager, client: AuthClient, isJSON: Bool) async {
+    let vpsStr = parseOption("--vps", in: args) ?? Config.defaultRelayURL
+    guard let vpsURL = URL(string: vpsStr) else {
+        fputs("ERROR: Invalid VPS relay URL: \(vpsStr)\n", stderr)
+        exit(2)
+    }
+
+    let timeoutStr = parseOption("--timeout", in: args)
+    let timeout = Double(timeoutStr ?? "60.0") ?? 60.0
+
+    // Positional arguments: <local_path> [remote_destination_directory]
+    var positionalArgs: [String] = []
+    var i = 0
+    while i < args.count {
+        let arg = args[i]
+        if arg == "--vps" || arg == "--timeout" {
+            i += 2
+            continue
+        }
+        if arg.hasPrefix("-") {
+            i += 1
+            continue
+        }
+        positionalArgs.append(arg)
+        i += 1
+    }
+
+    guard let localPath = positionalArgs.first, !localPath.isEmpty else {
+        fputs("ERROR: Missing required <local_path> argument. Run 'phonelink files put <local_path> [remote_directory]'\n", stderr)
+        exit(2)
+    }
+
+    let localURL = URL(fileURLWithPath: localPath)
+    guard FileManager.default.fileExists(atPath: localURL.path) else {
+        fputs("ERROR: Local source file does not exist: \(localURL.path)\n", stderr)
+        exit(1)
+    }
+
+    let remoteDirectory = positionalArgs.count > 1 ? positionalArgs[1] : ""
+    let fileName = localURL.lastPathComponent
+
+    if !isJSON {
+        print("Connecting to Android device via relay...")
+        print("Uploading: \(localURL.path) -> Android:/\(remoteDirectory)/\(fileName)")
+    }
+
+    let startTime = Date()
+    do {
+        let result = try await FileClient.uploadLocalFile(
+            vpsBaseURL: vpsURL,
+            identity: identity,
+            client: client,
+            localSourceURL: localURL,
+            remoteDestinationDirectory: remoteDirectory,
+            remoteFileName: fileName,
+            timeoutSeconds: timeout,
+            progressHandler: { progress in
+                if !isJSON {
+                    let pct = progress.totalBytes > 0 ? (Double(progress.bytesTransferred) / Double(progress.totalBytes)) * 100.0 : 100.0
+                    let transferredStr = FileClient.formatByteSize(progress.bytesTransferred)
+                    let totalStr = FileClient.formatByteSize(progress.totalBytes)
+                    let speedStr = FileClient.formatByteSize(UInt64(max(0, progress.bytesPerSecond))) + "/s"
+                    let barWidth = 30
+                    let completedChars = Int((pct / 100.0) * Double(barWidth))
+                    let bar = String(repeating: "=", count: max(0, min(barWidth, completedChars))) +
+                              (completedChars < barWidth ? ">" : "") +
+                              String(repeating: " ", count: max(0, barWidth - completedChars - 1))
+                    let line = String(format: "\r[%@] %5.1f%% (%@ / %@) %@", bar, pct, transferredStr, totalStr, speedStr)
+                    fputs(line, stdout)
+                    fflush(stdout)
+                }
+            }
+        )
+
+        let elapsed = max(0.001, Date().timeIntervalSince(startTime))
+        if !isJSON {
+            print("\n--------------------------------------------------")
+            print("SUCCESS: File upload complete.")
+            print("Remote File:      \(remoteDirectory.isEmpty ? "" : remoteDirectory + "/")\(fileName)")
+            print("Size:             \(FileClient.formatByteSize(result.bytesTransferred)) (\(result.bytesTransferred) bytes)")
+            print("Verified SHA-256: \(result.sha256)")
+            print(String(format: "Elapsed Time:     %.2f s", elapsed))
+        } else {
+            let dict: [String: Any] = [
+                "status": "OK",
+                "local_path": localURL.path,
+                "remote_directory": remoteDirectory,
+                "file_name": fileName,
+                "bytes_transferred": result.bytesTransferred,
+                "size_formatted": FileClient.formatByteSize(result.bytesTransferred),
+                "sha256": result.sha256,
+                "elapsed_seconds": (Double(Int(elapsed * 1000)) / 1000.0)
+            ]
+            let data = try JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted, .sortedKeys])
+            print(String(data: data, encoding: .utf8)!)
+        }
+        exit(0)
+    } catch {
+        if !isJSON {
+            fputs("\nERROR: Upload failed: \(error.localizedDescription)\n", stderr)
+        } else {
+            let dict: [String: Any] = [
+                "status": "ERROR",
+                "local_path": localURL.path,
+                "error_message": error.localizedDescription
+            ]
+            if let data = try? JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted]) {
+                print(String(data: data, encoding: .utf8)!)
+            }
+        }
+        exit(1)
     }
 }
 

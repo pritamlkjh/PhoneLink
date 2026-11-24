@@ -821,18 +821,18 @@ Format per node: Purpose → Dependencies/Blocks/Parallelizable → Inputs/Outpu
 ---
 
 #### `FILE-4` — Secure File Upload
-**Category:** Files · **Priority:** P1
+**Category:** Files · **Priority:** P1 · **Status:** COMPLETE
 
 **Purpose:** Mirror of `FILE-3` in the upload direction, with Android-side write-scope enforcement.
 
 **Dependencies:** FILE-2, VPS-4 · **Blocks:** SEC-1, TEST-2 · **Parallelizable:** Yes — alongside `FILE-3`.
 
 **Tasks:** Implement chunked upload with checksum verification; enforce that writes stay within `FILE-1`'s granted scope.
-**Acceptance Criteria:** Files upload through the relay with checksum verification · Android-side storage permission scope enforced.
-**Tests:** Mirror of FILE-3 tests in the upload direction · Write-outside-permitted-directory attempt is rejected.
+**Acceptance Criteria:** Files upload through the relay with checksum verification · Android-side storage permission scope enforced. (VERIFIED)
+**Tests:** Small- and large-file upload (>200KB, multi-chunk) with whole-file and per-chunk SHA-256 match; mid-transfer interruption and resumption from resume_offset; path traversal and sensitive directory write rejection; tampered chunk detection; zero plaintext leakage verified over relay (`TestFILE4SecureFileUpload`).
 **Failure Conditions:** A crafted upload path escapes the permitted directory.
 **Affected Components:** Android, VPS, Mac, Shared protocol, Tests
-**Artifacts:** File-transfer module (upload direction)
+**Artifacts:** File-transfer module (upload direction) (`StorageAccessLayer.kt`, `FileOperationHandler.kt`, `FileClient.swift`, `phonelink files put`, `file4_test.go`, `test_file4_upload.sh`)
 
 ---
 

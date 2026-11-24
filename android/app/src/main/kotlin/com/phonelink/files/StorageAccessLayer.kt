@@ -156,4 +156,72 @@ class StorageAccessLayer(
             Result.failure(e)
         }
     }
+
+    /**
+     * Resolves and prepares a file for writing within the scoped root directory.
+     * Ensures parent directories exist within the scoped root and verifies scope safety.
+     */
+    fun prepareOutputFile(relativePath: String): Result<File> {
+        val pathResult = resolveAndValidatePath(relativePath)
+        if (pathResult.isFailure) return pathResult
+
+        val targetFile = pathResult.getOrThrow()
+        if (targetFile.exists() && targetFile.isDirectory) {
+            return Result.failure(StorageAccessException("Target path is an existing directory, cannot overwrite: $relativePath"))
+        }
+
+        val parentDir = targetFile.parentFile
+        if (parentDir != null && !parentDir.exists()) {
+            val created = parentDir.mkdirs()
+            if (!created && !parentDir.exists()) {
+                return Result.failure(StorageAccessException("Failed to create parent directory for: $relativePath"))
+            }
+        }
+
+        return Result.success(targetFile)
+    }
+
+    /**
+     * Writes chunk data at specified byte offset using random access.
+     */
+    fun writeChunk(targetFile: File, offset: Long, data: ByteArray): Result<Unit> {
+        return try {
+            val rootCanonical = scopedRootDirectory.canonicalPath
+            val targetCanonical = targetFile.canonicalPath
+            if (!targetCanonical.startsWith(rootCanonical)) {
+                return Result.failure(StorageAccessException("Security violation: attempt to write outside scoped root"))
+            }
+
+            java.io.RandomAccessFile(targetFile, "rw").use { raf ->
+                raf.seek(offset)
+                raf.write(data)
+            }
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Atomically moves a staged part file to its final destination after verification.
+     */
+    fun commitPartFile(partFile: File, finalFile: File): Result<File> {
+        return try {
+            val rootCanonical = scopedRootDirectory.canonicalPath
+            if (!finalFile.canonicalPath.startsWith(rootCanonical) || !partFile.canonicalPath.startsWith(rootCanonical)) {
+                return Result.failure(StorageAccessException("Security violation: commit target outside scoped root"))
+            }
+            if (finalFile.exists()) {
+                finalFile.delete()
+            }
+            val success = partFile.renameTo(finalFile)
+            if (!success) {
+                partFile.copyTo(finalFile, overwrite = true)
+                partFile.delete()
+            }
+            Result.success(finalFile)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
 }

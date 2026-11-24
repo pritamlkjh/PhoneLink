@@ -101,6 +101,33 @@ class FileOperationHandler(
         val isFinalChunk: Boolean
     )
 
+    data class FileUploadInitResponseDto(
+        val transferId: String,
+        val status: String,
+        val resumeOffset: Long,
+        val expectedChunkSize: Int,
+        val errorMessage: String = ""
+    )
+
+    data class FileChunkAckDto(
+        val transferId: String,
+        val chunkIndex: Long,
+        val status: String,
+        val errorMessage: String = ""
+    )
+
+    data class ActiveUploadState(
+        val transferId: String,
+        val finalFile: File,
+        val partFile: File,
+        val totalSizeBytes: Long,
+        val expectedSha256: String,
+        val chunkSizeBytes: Int,
+        var bytesWritten: Long
+    )
+
+    private val activeUploads = java.util.concurrent.ConcurrentHashMap<String, ActiveUploadState>()
+
     /**
      * Executes directory listing against StorageAccessLayer.
      */
@@ -322,6 +349,201 @@ class FileOperationHandler(
     }
 
     /**
+     * Initializes a file upload operation (FILE-4).
+     * Strictly verifies write scope, path traversal protection, and checks for resumption offset.
+     */
+    fun handleFileUploadInit(
+        transferId: String,
+        destinationPath: String,
+        fileName: String,
+        totalSizeBytes: Long,
+        sha256Checksum: String,
+        expectedChunkSize: Int = DEFAULT_CHUNK_SIZE
+    ): FileUploadInitResponseDto {
+        // Enforce strict filename validation (must be bare filename without traversal or path separators)
+        if (fileName.contains("/") || fileName.contains("\\") || fileName.contains("..")) {
+            return FileUploadInitResponseDto(
+                transferId = transferId,
+                status = STATUS_STORAGE_ACCESS_DENIED,
+                resumeOffset = 0L,
+                expectedChunkSize = expectedChunkSize,
+                errorMessage = "Security violation: filename contains invalid path separators or '..'"
+            )
+        }
+
+        val combinedRelPath = if (destinationPath.trim().isEmpty()) {
+            fileName.trim()
+        } else {
+            "${destinationPath.trim().trimEnd('/', '\\')}/$fileName"
+        }
+
+        val prepResult = storageAccessLayer.prepareOutputFile(combinedRelPath)
+        if (prepResult.isFailure) {
+            val ex = prepResult.exceptionOrNull()
+            val msg = ex?.message ?: "Unknown storage error"
+            val status = if (msg.contains("Access denied", ignoreCase = true) ||
+                msg.contains("traversal", ignoreCase = true) ||
+                msg.contains("Security violation", ignoreCase = true) ||
+                msg.contains("forbidden", ignoreCase = true)
+            ) {
+                STATUS_STORAGE_ACCESS_DENIED
+            } else {
+                STATUS_ERROR_UNKNOWN
+            }
+            return FileUploadInitResponseDto(
+                transferId = transferId,
+                status = status,
+                resumeOffset = 0L,
+                expectedChunkSize = expectedChunkSize,
+                errorMessage = msg
+            )
+        }
+
+        val finalFile = prepResult.getOrThrow()
+        val partFile = File(finalFile.parentFile, "${finalFile.name}.part")
+
+        // Check if partial file exists for resumption
+        var resumeOffset = 0L
+        if (partFile.exists()) {
+            val existingLen = partFile.length()
+            if (existingLen in 1 until totalSizeBytes) {
+                resumeOffset = existingLen
+            } else if (existingLen >= totalSizeBytes && totalSizeBytes > 0) {
+                partFile.delete()
+                resumeOffset = 0L
+            }
+        } else {
+            partFile.createNewFile()
+        }
+
+        val uploadState = ActiveUploadState(
+            transferId = transferId,
+            finalFile = finalFile,
+            partFile = partFile,
+            totalSizeBytes = totalSizeBytes,
+            expectedSha256 = sha256Checksum,
+            chunkSizeBytes = expectedChunkSize,
+            bytesWritten = resumeOffset
+        )
+        activeUploads[transferId] = uploadState
+
+        // Handle 0-byte file immediately
+        if (totalSizeBytes == 0L) {
+            val emptySha = computeChunkSha256(ByteArray(0))
+            if (sha256Checksum.isNotEmpty() && !sha256Checksum.equals(emptySha, ignoreCase = true)) {
+                return FileUploadInitResponseDto(
+                    transferId = transferId,
+                    status = STATUS_INTEGRITY_MISMATCH,
+                    resumeOffset = 0L,
+                    expectedChunkSize = expectedChunkSize,
+                    errorMessage = "Checksum mismatch for 0-byte file"
+                )
+            }
+            storageAccessLayer.commitPartFile(partFile, finalFile)
+            activeUploads.remove(transferId)
+        }
+
+        return FileUploadInitResponseDto(
+            transferId = transferId,
+            status = STATUS_OK,
+            resumeOffset = resumeOffset,
+            expectedChunkSize = expectedChunkSize,
+            errorMessage = ""
+        )
+    }
+
+    /**
+     * Handles an incoming uploaded chunk (FILE-4).
+     * Verifies chunk SHA-256, writes chunk at offset, and verifies whole-file SHA-256 on final chunk.
+     */
+    fun handleFileUploadChunk(
+        transferId: String,
+        chunkIndex: Long,
+        offset: Long,
+        dataBase64: String,
+        chunkSha256: String,
+        isFinalChunk: Boolean
+    ): FileChunkAckDto {
+        val state = activeUploads[transferId]
+        if (state == null) {
+            return FileChunkAckDto(
+                transferId = transferId,
+                chunkIndex = chunkIndex,
+                status = STATUS_NOT_FOUND,
+                errorMessage = "No active upload session found for transfer: $transferId"
+            )
+        }
+
+        val chunkBytes = try {
+            Base64.getDecoder().decode(dataBase64)
+        } catch (_: Exception) {
+            return FileChunkAckDto(
+                transferId = transferId,
+                chunkIndex = chunkIndex,
+                status = STATUS_ERROR_UNKNOWN,
+                errorMessage = "Invalid base64 chunk payload"
+            )
+        }
+
+        // Verify per-chunk SHA-256
+        val actualChunkSha = computeChunkSha256(chunkBytes)
+        if (!actualChunkSha.equals(chunkSha256, ignoreCase = true)) {
+            return FileChunkAckDto(
+                transferId = transferId,
+                chunkIndex = chunkIndex,
+                status = STATUS_INTEGRITY_MISMATCH,
+                errorMessage = "STATUS_INTEGRITY_MISMATCH: Chunk $chunkIndex SHA-256 mismatch"
+            )
+        }
+
+        // Write chunk data
+        val writeResult = storageAccessLayer.writeChunk(state.partFile, offset, chunkBytes)
+        if (writeResult.isFailure) {
+            return FileChunkAckDto(
+                transferId = transferId,
+                chunkIndex = chunkIndex,
+                status = STATUS_STORAGE_ACCESS_DENIED,
+                errorMessage = writeResult.exceptionOrNull()?.message ?: "Write failure"
+            )
+        }
+
+        state.bytesWritten = maxOf(state.bytesWritten, offset + chunkBytes.size)
+
+        if (isFinalChunk) {
+            // Verify whole-file SHA-256
+            val finalSha = computeFileSha256(state.partFile)
+            if (state.expectedSha256.isNotEmpty() && !finalSha.equals(state.expectedSha256, ignoreCase = true)) {
+                return FileChunkAckDto(
+                    transferId = transferId,
+                    chunkIndex = chunkIndex,
+                    status = STATUS_INTEGRITY_MISMATCH,
+                    errorMessage = "STATUS_INTEGRITY_MISMATCH: Whole-file SHA-256 mismatch (expected ${state.expectedSha256}, got $finalSha)"
+                )
+            }
+
+            // Commit part file to final file
+            val commitResult = storageAccessLayer.commitPartFile(state.partFile, state.finalFile)
+            activeUploads.remove(transferId)
+
+            if (commitResult.isFailure) {
+                return FileChunkAckDto(
+                    transferId = transferId,
+                    chunkIndex = chunkIndex,
+                    status = STATUS_ERROR_UNKNOWN,
+                    errorMessage = "Failed to commit uploaded file: ${commitResult.exceptionOrNull()?.message}"
+                )
+            }
+        }
+
+        return FileChunkAckDto(
+            transferId = transferId,
+            chunkIndex = chunkIndex,
+            status = STATUS_OK,
+            errorMessage = ""
+        )
+    }
+
+    /**
      * Processes a decrypted ApplicationMessage JSON payload.
      * Returns serialized response bytes if message is a recognized file request.
      * If sendAppMessage is provided, streaming file operations (like download) can emit chunk frames.
@@ -369,6 +591,31 @@ class FileOperationHandler(
             }
 
             return initResponseBytes
+        }
+
+        if (json.has("file_upload_req")) {
+            val req = json.getJSONObject("file_upload_req")
+            val transferId = req.optString("transfer_id", UUID.randomUUID().toString())
+            val destPath = req.optString("destination_path", "")
+            val fileName = req.optString("file_name", "")
+            val totalSize = req.optLong("total_size_bytes", 0L)
+            val sha256 = req.optString("sha256_checksum", "")
+
+            val initDto = handleFileUploadInit(transferId, destPath, fileName, totalSize, sha256)
+            return serializeFileUploadInitResponse(initDto)
+        }
+
+        if (json.has("file_chunk")) {
+            val chunk = json.getJSONObject("file_chunk")
+            val transferId = chunk.optString("transfer_id", "")
+            val chunkIndex = chunk.optLong("chunk_index", 0L)
+            val offset = chunk.optLong("offset", 0L)
+            val dataBase64 = chunk.optString("data", "")
+            val chunkSha = chunk.optString("chunk_sha256", "")
+            val isFinal = chunk.optBoolean("is_final_chunk", false)
+
+            val ackDto = handleFileUploadChunk(transferId, chunkIndex, offset, dataBase64, chunkSha, isFinal)
+            return serializeFileChunkAck(ackDto)
         }
 
         return null
@@ -451,6 +698,51 @@ class FileOperationHandler(
                 put("is_final_chunk", dto.isFinalChunk)
             }
             put("file_chunk", chunkObj)
+        }
+
+        return root.toString().toByteArray(Charsets.UTF_8)
+    }
+
+    /**
+     * Serializes FileUploadInitResponseDto into standard ApplicationMessage JSON.
+     */
+    fun serializeFileUploadInitResponse(dto: FileUploadInitResponseDto): ByteArray {
+        val root = JSONObject().apply {
+            put("schema_version", SCHEMA_VERSION)
+            put("message_id", UUID.randomUUID().toString())
+            put("timestamp", System.currentTimeMillis())
+
+            val respObj = JSONObject().apply {
+                put("transfer_id", dto.transferId)
+                put("status", dto.status)
+                put("resume_offset", dto.resumeOffset)
+                put("expected_chunk_size", dto.expectedChunkSize)
+                put("error_message", dto.errorMessage)
+            }
+            put("file_upload_init_resp", respObj)
+        }
+
+        return root.toString().toByteArray(Charsets.UTF_8)
+    }
+
+    /**
+     * Serializes FileChunkAckDto into standard ApplicationMessage JSON.
+     */
+    fun serializeFileChunkAck(dto: FileChunkAckDto): ByteArray {
+        val root = JSONObject().apply {
+            put("schema_version", SCHEMA_VERSION)
+            put("message_id", UUID.randomUUID().toString())
+            put("timestamp", System.currentTimeMillis())
+
+            val ackObj = JSONObject().apply {
+                put("transfer_id", dto.transferId)
+                put("chunk_index", dto.chunkIndex)
+                put("status", dto.status)
+                if (dto.errorMessage.isNotEmpty()) {
+                    put("error_message", dto.errorMessage)
+                }
+            }
+            put("file_chunk_ack", ackObj)
         }
 
         return root.toString().toByteArray(Charsets.UTF_8)

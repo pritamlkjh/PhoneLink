@@ -1080,7 +1080,7 @@
       "id": "FILE-4",
       "name": "Secure File Upload",
       "category": "files",
-      "status": "PENDING",
+      "status": "COMPLETE",
       "depends_on": [
         "FILE-2",
         "VPS-4"

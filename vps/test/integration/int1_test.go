@@ -271,8 +271,11 @@ func registerDevice(t *testing.T, baseURL, deviceID, devType, pubKeyB64, alg str
 		"key_algorithm": alg,
 	})
 	resp, err := http.Post(baseURL+"/api/v1/devices/register", "application/json", bytes.NewReader(body))
-	if err != nil || (resp.StatusCode != 201 && resp.StatusCode != 409) {
-		t.Fatalf("failed to register device %s: status=%d, err=%v", deviceID, resp.StatusCode, err)
+	if err != nil {
+		t.Fatalf("failed to register device %s: %v", deviceID, err)
+	}
+	if resp.StatusCode != 201 && resp.StatusCode != 409 {
+		t.Fatalf("failed to register device %s: status=%d", deviceID, resp.StatusCode)
 	}
 	_ = resp.Body.Close()
 }
@@ -281,8 +284,11 @@ func createPairingToken(t *testing.T, baseURL, deviceID string) string {
 	t.Helper()
 	body, _ := json.Marshal(map[string]string{"device_id": deviceID})
 	resp, err := http.Post(baseURL+"/api/v1/pairing/create", "application/json", bytes.NewReader(body))
-	if err != nil || resp.StatusCode != 200 {
+	if err != nil {
 		t.Fatalf("failed to create pairing token: %v", err)
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("failed to create pairing token: status=%d", resp.StatusCode)
 	}
 	defer resp.Body.Close()
 	var res map[string]string

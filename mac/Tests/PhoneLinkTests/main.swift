@@ -280,5 +280,82 @@ let computedFileSha = try! FileClient.computeFileSHA256Hex(at: tempFile)
 assertEqual(computedFileSha, sampleChunkSha)
 print("PASS: testFileSHA256HexOnDisk")
 
-print(">>> ALL MAC CLIENT UNIT TESTS PASSED (17/17) <<<")
+// Test 18: FILE-4 FileUploadRequest Builder
+let upReqData = try! FileClient.buildFileUploadRequest(
+    destinationPath: "Uploads",
+    fileName: "upload_doc.pdf",
+    totalSizeBytes: 204800,
+    sha256Checksum: "abc123sha256hex",
+    transferId: "up-tx-999"
+)
+let upReqJson = try! JSONSerialization.jsonObject(with: upReqData) as! [String: Any]
+assertEqual(upReqJson["schema_version"] as! Int, 1)
+let upSubReq = upReqJson["file_upload_req"] as! [String: Any]
+assertEqual(upSubReq["transfer_id"] as! String, "up-tx-999")
+assertEqual(upSubReq["destination_path"] as! String, "Uploads")
+assertEqual(upSubReq["file_name"] as! String, "upload_doc.pdf")
+assertEqual((upSubReq["total_size_bytes"] as! NSNumber).uint64Value, 204800)
+assertEqual(upSubReq["sha256_checksum"] as! String, "abc123sha256hex")
+print("PASS: testFileUploadRequestBuilder")
+
+// Test 19: FILE-4 FileUploadInitResponse Parser
+let sampleUpInitJSON = """
+{
+    "schema_version": 1,
+    "message_id": "msg-up-init",
+    "timestamp": 1774426502000,
+    "file_upload_init_resp": {
+        "transfer_id": "up-tx-999",
+        "status": "STATUS_OK",
+        "resume_offset": 65536,
+        "expected_chunk_size": 65536,
+        "error_message": ""
+    }
+}
+""".data(using: .utf8)!
+
+let parsedUpInit = try! FileClient.parseFileUploadInitResponse(data: sampleUpInitJSON)
+assertEqual(parsedUpInit.transferId, "up-tx-999")
+assertEqual(parsedUpInit.status, "STATUS_OK")
+assertEqual(parsedUpInit.resumeOffset, 65536)
+assertEqual(parsedUpInit.expectedChunkSize, 65536)
+print("PASS: testFileUploadInitResponseParser")
+
+// Test 20: FILE-4 buildFileChunk for Upload and parseFileChunkAck
+let testChunkData = Data("Upload Chunk Content Payload".utf8)
+let builtChunkData = try! FileClient.buildFileChunk(
+    transferId: "up-tx-999",
+    chunkIndex: 1,
+    offset: 65536,
+    chunkData: testChunkData,
+    isFinalChunk: true
+)
+let builtChunkParsed = try! FileClient.parseFileChunk(data: builtChunkData)
+assertEqual(builtChunkParsed.transferId, "up-tx-999")
+assertEqual(builtChunkParsed.chunkIndex, 1)
+assertEqual(builtChunkParsed.offset, 65536)
+assertTrue(builtChunkParsed.isFinalChunk)
+let decodedUploadedChunk = Data(base64Encoded: builtChunkParsed.dataBase64)!
+assertEqual(decodedUploadedChunk, testChunkData)
+
+let sampleAckJSON = """
+{
+    "schema_version": 1,
+    "message_id": "msg-ack-1",
+    "timestamp": 1774426503000,
+    "file_chunk_ack": {
+        "transfer_id": "up-tx-999",
+        "chunk_index": 1,
+        "status": "STATUS_OK"
+    }
+}
+""".data(using: .utf8)!
+
+let parsedAck = try! FileClient.parseFileChunkAck(data: sampleAckJSON)
+assertEqual(parsedAck.transferId, "up-tx-999")
+assertEqual(parsedAck.chunkIndex, 1)
+assertEqual(parsedAck.status, "STATUS_OK")
+print("PASS: testFileChunkUploadAndAckParser")
+
+print(">>> ALL MAC CLIENT UNIT TESTS PASSED (20/20) <<<")
 exit(0)
