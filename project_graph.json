@@ -502,7 +502,7 @@
       "id": "AND-9",
       "name": "Android Boot-Persistence & Reboot Recovery",
       "category": "android",
-      "status": "PENDING",
+      "status": "COMPLETE",
       "depends_on": [
         "AND-7"
       ],
