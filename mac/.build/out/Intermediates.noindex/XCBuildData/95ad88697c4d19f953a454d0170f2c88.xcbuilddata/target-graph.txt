@@ -1,0 +1,13 @@
+Target dependency graph (5 targets)
+Target 'AllExcludingTests' in project 'Aggregate'
+➜ Explicit dependency on target 'phonelink-product' in project 'PhoneLinkMac'
+➜ Explicit dependency on target 'PhoneLinkKit-product' in project 'PhoneLinkMac'
+➜ Explicit dependency on target 'PhoneLinkTests-product' in project 'PhoneLinkMac'
+➜ Explicit dependency on target 'PhoneLinkKit' in project 'PhoneLinkMac'
+Target 'PhoneLinkTests-product' in project 'PhoneLinkMac'
+➜ Explicit dependency on target 'PhoneLinkKit' in project 'PhoneLinkMac'
+Target 'PhoneLinkKit-product' in project 'PhoneLinkMac'
+➜ Explicit dependency on target 'PhoneLinkKit' in project 'PhoneLinkMac'
+Target 'phonelink-product' in project 'PhoneLinkMac'
+➜ Explicit dependency on target 'PhoneLinkKit' in project 'PhoneLinkMac'
+Target 'PhoneLinkKit' in project 'PhoneLinkMac' (no dependencies)

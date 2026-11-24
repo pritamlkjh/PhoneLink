@@ -155,7 +155,7 @@
       "id": "MAC-1",
       "name": "Mac Client Project Foundation",
       "category": "mac",
-      "status": "PENDING",
+      "status": "COMPLETE",
       "depends_on": [
         "ARCH-1"
       ],
