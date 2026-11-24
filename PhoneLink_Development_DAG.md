@@ -469,7 +469,7 @@ Format per node: Purpose → Dependencies/Blocks/Parallelizable → Inputs/Outpu
 
 ---
 
-#### `AND-9` — Android Boot-Persistence & Reboot Recovery
+#### `AND-9` — Android Boot-Persistence & Reboot Recovery [STATUS: COMPLETE]
 **Category:** Android · **Priority:** P2
 
 **Purpose:** Resume connectivity after device reboot, within what Android and the OEM actually permit — and degrade visibly rather than silently when they don't.
