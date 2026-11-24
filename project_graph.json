@@ -32,7 +32,7 @@
       "id": "ARCH-1",
       "name": "High-Level System Architecture",
       "category": "architecture",
-      "status": "PENDING",
+      "status": "COMPLETE",
       "depends_on": [
         "REQ-1"
       ],
@@ -62,7 +62,7 @@
       "id": "ARCH-4",
       "name": "Threat Model & Abuse-Case Analysis",
       "category": "architecture",
-      "status": "PENDING",
+      "status": "COMPLETE",
       "depends_on": [
         "REQ-1"
       ],
@@ -124,7 +124,7 @@
       "id": "ARCH-2",
       "name": "Transport & Session Protocol Design",
       "category": "architecture",
-      "status": "PENDING",
+      "status": "COMPLETE",
       "depends_on": [
         "ARCH-1",
         "ARCH-4"
@@ -268,7 +268,7 @@
       "id": "ARCH-3",
       "name": "Application Message Schema & API Contract",
       "category": "architecture",
-      "status": "PENDING",
+      "status": "COMPLETE",
       "depends_on": [
         "ARCH-2"
       ],

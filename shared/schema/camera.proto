@@ -1,0 +1,51 @@
+syntax = "proto3";
+
+package phonelink.camera;
+
+import "common.proto";
+
+option go_package = "github.com/pritamlkjh/phonelink/vps/pkg/proto/camera";
+option java_package = "com.phonelink.proto.camera";
+option java_multiple_files = true;
+
+enum CameraLens {
+  LENS_BACK = 0;
+  LENS_FRONT = 1;
+}
+
+message CameraStartRequest {
+  string session_id = 1;
+  CameraLens lens = 2;
+  uint32 target_fps = 3;         // 1 to 5 FPS target
+  uint32 jpeg_quality = 4;       // 10 to 100
+  uint32 max_width = 5;          // e.g. 1280
+  uint32 max_height = 6;         // e.g. 720
+}
+
+message CameraStartResponse {
+  string session_id = 1;
+  phonelink.common.StatusCode status = 2;
+  string error_message = 3;
+  uint32 actual_fps = 4;
+}
+
+message CameraStopRequest {
+  string session_id = 1;
+  string reason = 2;
+}
+
+message CameraStopResponse {
+  string session_id = 1;
+  phonelink.common.StatusCode status = 2;
+}
+
+// Streamed frame message
+message CameraFrame {
+  string session_id = 1;
+  uint64 frame_number = 2;
+  int64 timestamp_ms = 3;
+  bytes jpeg_data = 4;           // Single encoded JPEG frame
+  uint32 width = 5;
+  uint32 height = 6;
+  CameraLens lens = 7;
+}

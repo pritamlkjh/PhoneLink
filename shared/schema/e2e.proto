@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package phonelink.e2e;
+
+option go_package = "github.com/pritamlkjh/phonelink/vps/pkg/proto/e2e";
+option java_package = "com.phonelink.proto.e2e";
+option java_multiple_files = true;
+
+// E2E Session Handshake messages exchanged through the relay
+message E2EHandshakeInit {
+  uint32 protocol_version = 1;
+  bytes ephemeral_public_key = 2; // 32-byte X25519 public key
+  int64 timestamp = 3;
+  bytes signature = 4;           // Ed25519 signature over (ephemeral_public_key || timestamp)
+}
+
+message E2EHandshakeAck {
+  uint32 protocol_version = 1;
+  bytes ephemeral_public_key = 2; // 32-byte X25519 public key
+  int64 timestamp = 3;
+  bytes signature = 4;           // Ed25519 signature over (ephemeral_public_key || initiator_eph_pub || timestamp)
+}
+
+// Container for E2E-encrypted application payloads
+message EncryptedContainer {
+  bytes nonce = 1;               // 12 or 24 bytes AEAD nonce
+  bytes ciphertext = 2;          // Encrypted serialized ApplicationPayload
+  bytes tag = 3;                 // 16 bytes authentication tag (if not appended to ciphertext)
+  uint64 sequence_number = 4;
+}

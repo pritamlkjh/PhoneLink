@@ -1,0 +1,82 @@
+syntax = "proto3";
+
+package phonelink.file;
+
+import "common.proto";
+
+option go_package = "github.com/pritamlkjh/phonelink/vps/pkg/proto/file";
+option java_package = "com.phonelink.proto.file";
+option java_multiple_files = true;
+
+// File Metadata
+message FileItem {
+  string path = 1;               // Relative or scoped identifier
+  string name = 2;
+  bool is_directory = 3;
+  uint64 size_bytes = 4;
+  int64 modified_time = 5;       // Milliseconds epoch
+  string mime_type = 6;
+}
+
+// 1. Directory Listing
+message FileListRequest {
+  string request_id = 1;
+  string target_directory = 2;   // Scoped path (e.g., "", "Downloads", "Documents")
+}
+
+message FileListResponse {
+  string request_id = 1;
+  phonelink.common.StatusCode status = 2;
+  string current_directory = 3;
+  repeated FileItem items = 4;
+  string error_message = 5;
+}
+
+// 2. File Download (Android -> Mac)
+message FileDownloadRequest {
+  string transfer_id = 1;
+  string file_path = 2;
+  uint64 start_offset = 3;       // For resuming interrupted transfers
+}
+
+message FileDownloadInitResponse {
+  string transfer_id = 1;
+  phonelink.common.StatusCode status = 2;
+  string file_path = 3;
+  uint64 total_size_bytes = 4;
+  uint32 chunk_size_bytes = 5;
+  string sha256_checksum = 6;    // Whole-file checksum
+  string error_message = 7;
+}
+
+message FileChunk {
+  string transfer_id = 1;
+  uint64 chunk_index = 2;
+  uint64 offset = 3;
+  bytes data = 4;                // Up to 1 MB payload
+  string chunk_sha256 = 5;       // Per-chunk verification
+  bool is_final_chunk = 6;
+}
+
+message FileChunkAck {
+  string transfer_id = 1;
+  uint64 chunk_index = 2;
+  phonelink.common.StatusCode status = 3;
+}
+
+// 3. File Upload (Mac -> Android)
+message FileUploadRequest {
+  string transfer_id = 1;
+  string destination_path = 2;
+  string file_name = 3;
+  uint64 total_size_bytes = 4;
+  string sha256_checksum = 5;
+}
+
+message FileUploadInitResponse {
+  string transfer_id = 1;
+  phonelink.common.StatusCode status = 2;
+  uint64 resume_offset = 3;
+  uint32 expected_chunk_size = 4;
+  string error_message = 5;
+}

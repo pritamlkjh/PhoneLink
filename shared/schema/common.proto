@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package phonelink.common;
+
+option go_package = "github.com/pritamlkjh/phonelink/vps/pkg/proto/common";
+option java_package = "com.phonelink.proto.common";
+option java_multiple_files = true;
+
+// Standard status and error codes across all operations
+enum StatusCode {
+  STATUS_OK = 0;
+  STATUS_ERROR_UNKNOWN = 1;
+  STATUS_UNAUTHORIZED = 2;
+  STATUS_FORBIDDEN = 3;
+  STATUS_NOT_FOUND = 4;
+  STATUS_PEER_OFFLINE = 5;
+  STATUS_TIMEOUT = 6;
+  STATUS_RATE_LIMITED = 7;
+  STATUS_INVALID_ARGUMENT = 8;
+  STATUS_SESSION_EXPIRED = 9;
+  STATUS_CAMERA_PERMISSION_DENIED = 10;
+  STATUS_CAMERA_TOGGLE_DISABLED = 11;
+  STATUS_STORAGE_ACCESS_DENIED = 12;
+  STATUS_INTEGRITY_MISMATCH = 13;
+  STATUS_ACTION_NOT_PERMITTED = 14;
+}
+
+message ErrorDetails {
+  StatusCode code = 1;
+  string message = 2;
+  int64 timestamp = 3;
+}
