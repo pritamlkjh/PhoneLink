@@ -382,7 +382,7 @@
       "id": "AND-3",
       "name": "Android Cryptographic Key Management",
       "category": "android",
-      "status": "PENDING",
+      "status": "COMPLETE",
       "depends_on": [
         "AND-2",
         "ARCH-4"
