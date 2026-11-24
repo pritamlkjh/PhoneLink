@@ -891,7 +891,7 @@ Format per node: Purpose → Dependencies/Blocks/Parallelizable → Inputs/Outpu
 ---
 
 #### `CAM-3` — Camera Frame Streaming Protocol & Transport
-**Category:** Camera · **Priority:** P1
+**Category:** Camera · **Priority:** P1 · **Status:** COMPLETED
 
 **Purpose:** Get captured frames to the Mac through the relay at a rate/latency acceptable for a preview use case — deliberately not scoped as real-time video-call quality.
 
@@ -902,7 +902,7 @@ Format per node: Purpose → Dependencies/Blocks/Parallelizable → Inputs/Outpu
 **Tests:** Integration test measures end-to-end latency/frame rate under defined network conditions · Stream-stop test after camera deactivation.
 **Failure Conditions:** Stream continues after `CAM-2` reports deactivation.
 **Affected Components:** Android, VPS, Shared protocol, Tests
-**Artifacts:** Camera streaming protocol handler
+**Artifacts:** Camera streaming protocol handler (`CameraCaptureModule.kt`, `CameraClient.swift`, `cam3_test.go`, `test_cam3_streaming.sh`)
 
 ---
 

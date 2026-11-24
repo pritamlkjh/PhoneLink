@@ -344,4 +344,181 @@ class CameraCaptureModuleTest {
         assertEquals(CameraCaptureModule.STATUS_OK, stopRespBody.getString("status"))
         assertFalse(module.isCapturing())
     }
+
+    @Test
+    fun testCameraStreamingRatePacingAndDrop() {
+        osPermissionGranted = true
+        storage.setCameraAllowed(true)
+
+        val deliveredList = mutableListOf<CameraCaptureModule.CameraFrameDto>()
+        val req = CameraCaptureModule.CameraStartRequestDto(
+            sessionId = "sess-pacing",
+            lens = CameraCaptureModule.CameraLens.LENS_BACK,
+            targetFps = 2, // 2 FPS -> interval is ~500ms
+            jpegQuality = 80,
+            maxWidth = 1280,
+            maxHeight = 720
+        )
+
+        val resp = module.startCapture(req) { frame ->
+            deliveredList.add(frame)
+        }
+        assertEquals(CameraCaptureModule.STATUS_OK, resp.status)
+        assertEquals(1, deliveredList.size) // First frame emitted on open
+
+        // Rapidly invoke frame emitter (simulating 30 FPS camera sensor burst)
+        val mockBytes = byteArrayOf(0x01, 0x02)
+        testCameraSource.frameEmitter?.invoke(mockBytes, 1280, 720)
+        testCameraSource.frameEmitter?.invoke(mockBytes, 1280, 720)
+        testCameraSource.frameEmitter?.invoke(mockBytes, 1280, 720)
+
+        // Frames within minIntervalMs (<480ms) should be dropped by rate pacing
+        assertEquals(1, deliveredList.size)
+        assertEquals(3L, module.getDroppedFrames())
+        assertEquals(1L, module.getDeliveredFrames())
+
+        module.stopCapture("sess-pacing")
+    }
+
+    @Test
+    fun testCameraStreamingBackpressureFrameDrop() {
+        osPermissionGranted = true
+        storage.setCameraAllowed(true)
+
+        val inFlightLatch = CountDownLatch(1)
+        val releaseLatch = CountDownLatch(1)
+        val deliveredCount = AtomicInteger(0)
+
+        val req = CameraCaptureModule.CameraStartRequestDto(
+            sessionId = "sess-backpressure",
+            lens = CameraCaptureModule.CameraLens.LENS_BACK,
+            targetFps = 5,
+            jpegQuality = 80,
+            maxWidth = 1280,
+            maxHeight = 720
+        )
+
+        val resp = module.startCapture(req) { _ ->
+            val count = deliveredCount.incrementAndGet()
+            if (count == 2) {
+                // Second frame blocks inside callback
+                inFlightLatch.countDown()
+                releaseLatch.await(2, TimeUnit.SECONDS)
+            }
+        }
+        assertEquals(CameraCaptureModule.STATUS_OK, resp.status)
+        assertEquals(1, deliveredCount.get())
+
+        // Wait past minInterval (so rate-pacing doesn't drop it)
+        Thread.sleep(250)
+
+        // Spawn a background thread to deliver the second frame (which will block in callback)
+        val executor = java.util.concurrent.Executors.newFixedThreadPool(2)
+        val mockBytes = byteArrayOf(0x01, 0x02)
+        executor.submit {
+            testCameraSource.frameEmitter?.invoke(mockBytes, 1280, 720)
+        }
+
+        // Wait until second frame has entered the callback and is holding isFrameInFlight
+        assertTrue(inFlightLatch.await(1, TimeUnit.SECONDS))
+
+        // Concurrently invoke frame emitter from another thread while frame 2 is in-flight
+        testCameraSource.frameEmitter?.invoke(mockBytes, 1280, 720)
+
+        // Release the blocking frame 2
+        releaseLatch.countDown()
+        executor.shutdown()
+        executor.awaitTermination(1, TimeUnit.SECONDS)
+
+        assertEquals(2, deliveredCount.get())
+        assertTrue(module.getDroppedFrames() >= 1L)
+
+        module.stopCapture("sess-backpressure")
+    }
+
+    @Test
+    fun testStreamStopHaltsFrameDeliveryImmediately() {
+        osPermissionGranted = true
+        storage.setCameraAllowed(true)
+
+        val deliveredList = mutableListOf<CameraCaptureModule.CameraFrameDto>()
+        val req = CameraCaptureModule.CameraStartRequestDto(
+            sessionId = "sess-stop-halt",
+            lens = CameraCaptureModule.CameraLens.LENS_BACK,
+            targetFps = 2,
+            jpegQuality = 80,
+            maxWidth = 1280,
+            maxHeight = 720
+        )
+
+        module.startCapture(req) { frame ->
+            deliveredList.add(frame)
+        }
+        assertEquals(1, deliveredList.size)
+
+        // Stop session
+        val stopResp = module.stopCapture("sess-stop-halt", "user_stopped")
+        assertEquals(CameraCaptureModule.STATUS_OK, stopResp.status)
+        assertFalse(module.isCapturing())
+
+        // Emitting after stop must be completely ignored
+        val mockBytes = byteArrayOf(0x01, 0x02)
+        testCameraSource.frameEmitter?.invoke(mockBytes, 1280, 720)
+
+        assertEquals(1, deliveredList.size) // No additional frames delivered
+    }
+
+    @Test
+    fun testCameraStreamingDefaultMockContinuous() {
+        osPermissionGranted = true
+        storage.setCameraAllowed(true)
+
+        val streamingSource = CameraCaptureModule.DefaultMockCameraSource(isStreaming = true)
+        val streamingModule = CameraCaptureModule(
+            cameraAuthGate = authGate,
+            cameraSource = streamingSource,
+            serviceController = testServiceController,
+            maxSessionDurationSeconds = 10
+        )
+
+        val frames = mutableListOf<CameraCaptureModule.CameraFrameDto>()
+        val req = CameraCaptureModule.CameraStartRequestDto(
+            sessionId = "sess-mock-stream",
+            lens = CameraCaptureModule.CameraLens.LENS_BACK,
+            targetFps = 5, // 5 FPS = every ~200ms
+            jpegQuality = 80,
+            maxWidth = 1280,
+            maxHeight = 720
+        )
+
+        val resp = streamingModule.startCapture(req) { frame ->
+            synchronized(frames) {
+                frames.add(frame)
+            }
+        }
+        assertEquals(CameraCaptureModule.STATUS_OK, resp.status)
+
+        // Wait ~550ms for periodic frames to arrive (should receive at least 2 frames)
+        Thread.sleep(550)
+
+        val countBeforeStop: Int
+        synchronized(frames) {
+            countBeforeStop = frames.size
+        }
+        assertTrue("Expected at least 2 frames but got $countBeforeStop", countBeforeStop >= 2)
+
+        // Stop capture
+        streamingModule.stopCapture("sess-mock-stream")
+        assertFalse(streamingModule.isCapturing())
+        assertFalse(streamingSource.isCapturing())
+
+        // Wait another 300ms to confirm no more frames are delivered
+        Thread.sleep(300)
+
+        val countAfterStop: Int
+        synchronized(frames) {
+            countAfterStop = frames.size
+        }
+        assertEquals("Frames must not increase after stop", countBeforeStop, countAfterStop)
+    }
 }

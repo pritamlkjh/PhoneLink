@@ -140,12 +140,27 @@ class CameraCaptureModule(
     private var activeLens: CameraLens = CameraLens.LENS_BACK
     private val frameSequence = AtomicLong(0)
 
+    // CAM-3: Rate pacing, backpressure and metrics
+    private val deliveredFrames = AtomicLong(0)
+    private val droppedFrames = AtomicLong(0)
+    private val lastFrameTimeMs = AtomicLong(0)
+    private val isFrameInFlight = AtomicBoolean(false)
+
     private val scheduler: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor()
     private var sessionTimeoutTask: ScheduledFuture<*>? = null
 
     fun isCapturing(): Boolean = isCapturing.get()
     fun getActiveSessionId(): String? = activeSessionId
     fun getActiveLens(): CameraLens = activeLens
+    fun getDeliveredFrames(): Long = deliveredFrames.get()
+    fun getDroppedFrames(): Long = droppedFrames.get()
+
+    fun resetMetrics() {
+        deliveredFrames.set(0)
+        droppedFrames.set(0)
+        lastFrameTimeMs.set(0)
+        isFrameInFlight.set(false)
+    }
 
     /**
      * Starts camera capture session with strict CAM-1 authorization check.
@@ -182,6 +197,7 @@ class CameraCaptureModule(
         val width = if (request.maxWidth > 0) request.maxWidth else DEFAULT_WIDTH
         val height = if (request.maxHeight > 0) request.maxHeight else DEFAULT_HEIGHT
 
+        resetMetrics()
         isCapturing.set(true)
         activeSessionId = request.sessionId
         activeLens = request.lens
@@ -196,18 +212,41 @@ class CameraCaptureModule(
             jpegQuality = clampedQuality,
             targetFps = clampedFps
         ) { jpegBytes, frameW, frameH ->
-            if (isCapturing.get()) {
+            if (!isCapturing.get()) {
+                return@open
+            }
+
+            val now = System.currentTimeMillis()
+            val minIntervalMs = (1000L / clampedFps) - 20L
+            val prevTime = lastFrameTimeMs.get()
+            if (prevTime > 0 && (now - prevTime) < minIntervalMs) {
+                // Rate pacing: drop frame if arrived too soon for targetFps
+                droppedFrames.incrementAndGet()
+                return@open
+            }
+
+            // Backpressure handling: drop frame if previous frame transmission is still in flight
+            if (!isFrameInFlight.compareAndSet(false, true)) {
+                droppedFrames.incrementAndGet()
+                return@open
+            }
+
+            try {
+                lastFrameTimeMs.set(now)
                 val frameNum = frameSequence.incrementAndGet()
                 val frame = CameraFrameDto(
                     sessionId = request.sessionId,
                     frameNumber = frameNum,
-                    timestampMs = System.currentTimeMillis(),
+                    timestampMs = now,
                     jpegData = jpegBytes,
                     width = frameW,
                     height = frameH,
                     lens = request.lens
                 )
                 onFrame(frame)
+                deliveredFrames.incrementAndGet()
+            } finally {
+                isFrameInFlight.set(false)
             }
         }
 
@@ -376,8 +415,12 @@ class CameraCaptureModule(
         return root.toString().toByteArray(Charsets.UTF_8)
     }
 
-    private class DefaultMockCameraSource : CameraSource {
+    open class DefaultMockCameraSource(
+        private val isStreaming: Boolean = false
+    ) : CameraSource {
         private val capturing = AtomicBoolean(false)
+        private var scheduledTask: ScheduledFuture<*>? = null
+        private val scheduler = Executors.newSingleThreadScheduledExecutor()
 
         override fun open(
             lens: CameraLens,
@@ -395,11 +438,22 @@ class CameraCaptureModule(
                 0x49.toByte(), 0x46.toByte(), 0x00.toByte(), 0x01.toByte()
             )
             onFrame(syntheticJpeg, width, height)
+
+            if (isStreaming) {
+                val intervalMs = (1000L / targetFps).coerceAtLeast(100L)
+                scheduledTask = scheduler.scheduleAtFixedRate({
+                    if (capturing.get()) {
+                        onFrame(syntheticJpeg, width, height)
+                    }
+                }, intervalMs, intervalMs, TimeUnit.MILLISECONDS)
+            }
             return Result.success(Unit)
         }
 
         override fun close() {
             capturing.set(false)
+            scheduledTask?.cancel(false)
+            scheduledTask = null
         }
 
         override fun isCapturing(): Boolean = capturing.get()
@@ -456,6 +510,10 @@ class AndroidCameraSource(private val context: Context) : CameraCaptureModule.Ca
             val reader = ImageReader.newInstance(width, height, ImageFormat.JPEG, 2)
             reader.setOnImageAvailableListener({ ir ->
                 val image = ir.acquireLatestImage() ?: return@setOnImageAvailableListener
+                if (!capturing.get()) {
+                    image.close()
+                    return@setOnImageAvailableListener
+                }
                 val planes = image.planes
                 if (planes.isNotEmpty()) {
                     val buffer = planes[0].buffer
