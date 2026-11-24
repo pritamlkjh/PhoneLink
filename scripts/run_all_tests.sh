@@ -133,9 +133,13 @@ run_step "REL-1 VPS Production Deployment & Rollback" \
 run_step "REL-2 Android Release Build & Signing" \
     "$REPO_ROOT/tests/test_rel2_android_release.sh"
 
+# 26. REL-3 Mac Release Build & Packaging
+run_step "REL-3 Mac Release Build & Packaging" \
+    "$REPO_ROOT/tests/test_rel3_mac_release.sh"
+
 echo "=========================================================="
 if [ $FAILURES -eq 0 ]; then
-    echo "   ALL REGRESSION SUITES PASSED (25/25)"
+    echo "   ALL REGRESSION SUITES PASSED (26/26)"
     echo "=========================================================="
     exit 0
 else

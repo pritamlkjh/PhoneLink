@@ -1058,7 +1058,7 @@ Format per node: Purpose → Dependencies/Blocks/Parallelizable → Inputs/Outpu
 ---
 
 #### `REL-3` — Mac Release Build & Packaging
-**Category:** Release · **Priority:** P1
+**Category:** Release · **Priority:** P1 · **Status:** COMPLETE
 
 **Purpose:** Signed (and notarized, if distributed outside a fully controlled environment) Mac build.
 
