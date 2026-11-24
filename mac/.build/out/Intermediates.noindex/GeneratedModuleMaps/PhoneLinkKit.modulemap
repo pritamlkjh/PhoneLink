@@ -1,4 +1,0 @@
-module PhoneLinkKit {
-header "PhoneLinkKit-Swift.h"
-export *
-}

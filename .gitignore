@@ -23,6 +23,9 @@ captures/
 DerivedData/
 *.xcuserstate
 xcuserdata/
+.build/
+**/.build/
+mac/.build/
 
 # IDE
 .idea/

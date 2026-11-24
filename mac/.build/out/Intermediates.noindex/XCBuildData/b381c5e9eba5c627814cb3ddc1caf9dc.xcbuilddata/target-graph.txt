@@ -1,4 +1,0 @@
-Target dependency graph (2 targets)
-Target 'phonelink-product' in project 'PhoneLinkMac'
-➜ Explicit dependency on target 'PhoneLinkKit' in project 'PhoneLinkMac'
-Target 'PhoneLinkKit' in project 'PhoneLinkMac' (no dependencies)
