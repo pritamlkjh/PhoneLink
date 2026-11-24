@@ -940,7 +940,7 @@ Format per node: Purpose → Dependencies/Blocks/Parallelizable → Inputs/Outpu
 
 ---
 
-#### `SEC-2` — Security Validation & Penetration Testing
+#### `SEC-2` — Security Validation & Penetration Testing [STATUS: COMPLETE]
 **Category:** Security · **Priority:** P0 *(critical path — gates all release nodes)*
 
 **Purpose:** Structured self-pentest against the `ARCH-4` threat model — specifically, prove the camera/file/remote-action authorization gates can't be bypassed by talking to the protocol directly, not just through the official clients.
