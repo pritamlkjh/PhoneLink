@@ -632,7 +632,7 @@ Format per node: Purpose → Dependencies/Blocks/Parallelizable → Inputs/Outpu
 ---
 
 #### `VPS-8` — VPS Direct-Connection Optimization *(Optional)*
-**Category:** VPS · **Priority:** P3
+**Category:** VPS · **Priority:** P3 · **Status:** COMPLETE
 
 **Purpose:** Reduce relay load by attempting a direct Android↔Mac path when NAT allows it, falling back to `VPS-4` otherwise. Deliberately optional and deferrable — always-relay is simpler, more reliable, and already satisfies every functional requirement.
 
