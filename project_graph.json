@@ -212,7 +212,7 @@
       "id": "AND-2",
       "name": "Android Device Identity Provisioning",
       "category": "android",
-      "status": "PENDING",
+      "status": "COMPLETE",
       "depends_on": [
         "AND-1",
         "ARCH-4"
