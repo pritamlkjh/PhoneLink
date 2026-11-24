@@ -121,9 +121,13 @@ run_step "AND-9 Android Boot-Persistence & Reboot Recovery" \
 run_step "TEST-3 Network Failure & Chaos Testing" \
     "$REPO_ROOT/tests/test_test3_chaos.sh"
 
+# 23. TEST-4 Android Compatibility Matrix Testing
+run_step "TEST-4 Android Compatibility Matrix Testing" \
+    "$REPO_ROOT/tests/test_test4_compatibility.sh"
+
 echo "=========================================================="
 if [ $FAILURES -eq 0 ]; then
-    echo "   ALL REGRESSION SUITES PASSED (22/22)"
+    echo "   ALL REGRESSION SUITES PASSED (23/23)"
     echo "=========================================================="
     exit 0
 else
