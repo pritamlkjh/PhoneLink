@@ -89,9 +89,13 @@ run_step "CAM-4 Mac Camera Viewer Client Test" \
 run_step "SEC-1 Cross-Component Security Hardening Test" \
     "$REPO_ROOT/tests/test_sec1_hardening.sh"
 
+# 15. TEST-2 Cross-Component Integration Test Suite
+run_step "TEST-2 Cross-Component Integration Suite (2x & Regression Check)" \
+    "$REPO_ROOT/tests/test_test2_cross_component.sh"
+
 echo "=========================================================="
 if [ $FAILURES -eq 0 ]; then
-    echo "   ALL REGRESSION SUITES PASSED (14/14)"
+    echo "   ALL REGRESSION SUITES PASSED (15/15)"
     echo "=========================================================="
     exit 0
 else

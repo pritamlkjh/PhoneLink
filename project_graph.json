@@ -1177,7 +1177,7 @@
       "id": "TEST-2",
       "name": "Cross-Component Integration Test Suite",
       "category": "testing",
-      "status": "PENDING",
+      "status": "COMPLETE",
       "depends_on": [
         "TEST-1",
         "INT-2",

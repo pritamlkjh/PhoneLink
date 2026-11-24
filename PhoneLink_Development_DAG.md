@@ -975,7 +975,7 @@ Format per node: Purpose → Dependencies/Blocks/Parallelizable → Inputs/Outpu
 
 ---
 
-#### `TEST-2` — Cross-Component Integration Test Suite
+#### `TEST-2` — Cross-Component Integration Test Suite [STATUS: COMPLETE]
 **Category:** Testing · **Priority:** P1
 
 **Purpose:** One scripted, repeatable suite exercising auth, discovery, files, remote actions, and camera together against a staging VPS.
