@@ -310,3 +310,122 @@ func TestDeviceStatusEndpoint(t *testing.T) {
 		t.Errorf("expected peer_online false after Android disconnected")
 	}
 }
+
+func TestAuthResumeEndpoint(t *testing.T) {
+	s := NewServer(DefaultConfig(), nil)
+
+	// Register test device with Ed25519
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("failed to generate key: %v", err)
+	}
+	deviceID := auth.DeriveDeviceID(pub)
+	pubB64 := base64.StdEncoding.EncodeToString(pub)
+
+	regReqBody, _ := json.Marshal(map[string]string{
+		"device_id":     deviceID,
+		"device_type":   auth.DeviceTypeAndroid,
+		"public_key":    pubB64,
+		"key_algorithm": auth.AlgorithmEd25519,
+	})
+	regReq := httptest.NewRequest(http.MethodPost, "/api/v1/devices/register", bytes.NewReader(regReqBody))
+	regRec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(regRec, regReq)
+	if regRec.Code != http.StatusCreated {
+		t.Fatalf("registration failed: %d", regRec.Code)
+	}
+
+	// 1. Initial Challenge & Verify flow
+	reqBody, _ := json.Marshal(map[string]string{"device_id": deviceID})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/challenge", bytes.NewReader(reqBody))
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("challenge failed: %d", rec.Code)
+	}
+
+	var chalResp map[string]interface{}
+	_ = json.NewDecoder(rec.Body).Decode(&chalResp)
+	serverNonceB64 := chalResp["server_nonce"].(string)
+	serverNonce, _ := base64.StdEncoding.DecodeString(serverNonceB64)
+	ts := int64(chalResp["timestamp"].(float64))
+
+	clientNonce := make([]byte, 32)
+	rand.Read(clientNonce)
+	clientNonceB64 := base64.StdEncoding.EncodeToString(clientNonce)
+
+	sigData := auth.BuildChallengeData(serverNonce, clientNonce, ts)
+	sig := ed25519.Sign(priv, sigData)
+	sigB64 := base64.StdEncoding.EncodeToString(sig)
+
+	verifyBody, _ := json.Marshal(AuthVerifyRequest{
+		DeviceID:    deviceID,
+		ServerNonce: serverNonceB64,
+		ClientNonce: clientNonceB64,
+		Timestamp:   ts,
+		Signature:   sigB64,
+	})
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/verify", bytes.NewReader(verifyBody))
+	rec = httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("verify failed: %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var verifyResp map[string]interface{}
+	_ = json.NewDecoder(rec.Body).Decode(&verifyResp)
+	sessionToken := verifyResp["session_token"].(string)
+	resumptionToken := verifyResp["resumption_token"].(string)
+
+	if sessionToken == "" || resumptionToken == "" {
+		t.Fatalf("expected non-empty session_token and resumption_token")
+	}
+
+	// 2. Resume session using valid resumption token (VPS-6)
+	resumeReqBody, _ := json.Marshal(AuthResumeRequest{
+		DeviceID:        deviceID,
+		ResumptionToken: resumptionToken,
+	})
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/resume", bytes.NewReader(resumeReqBody))
+	rec = httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for resume, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resumeResp map[string]interface{}
+	_ = json.NewDecoder(rec.Body).Decode(&resumeResp)
+	newSessionToken := resumeResp["session_token"].(string)
+	newResumptionToken := resumeResp["resumption_token"].(string)
+
+	if newSessionToken == "" || newResumptionToken == "" {
+		t.Fatalf("expected fresh session_token and rotated resumption_token")
+	}
+
+	// 3. Verify the new session token is valid in the registry
+	validatedID, err := s.Registry().ValidateSession(newSessionToken)
+	if err != nil || validatedID != deviceID {
+		t.Fatalf("new session token must be valid for device, err: %v", err)
+	}
+
+	// 4. Replay attack rejection: old resumption token must fail
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/resume", bytes.NewReader(resumeReqBody))
+	rec = httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 Unauthorized for replayed resumption token, got %d", rec.Code)
+	}
+
+	// 5. Device revocation: revoking device prevents resuming
+	_ = s.Registry().RevokeDevice(deviceID)
+	resumeReq2, _ := json.Marshal(AuthResumeRequest{
+		DeviceID:        deviceID,
+		ResumptionToken: newResumptionToken,
+	})
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/resume", bytes.NewReader(resumeReq2))
+	rec = httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 Unauthorized for revoked device on resume, got %d", rec.Code)
+	}
+}

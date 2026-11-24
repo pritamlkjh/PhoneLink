@@ -597,7 +597,7 @@ Format per node: Purpose → Dependencies/Blocks/Parallelizable → Inputs/Outpu
 
 ---
 
-#### `VPS-6` — VPS Session Resumption & Reconnection Handling
+#### `VPS-6` — VPS Session Resumption & Reconnection Handling [STATUS: COMPLETE]
 **Category:** VPS · **Priority:** P2
 
 **Purpose:** Let a briefly-disconnected client resume its session without a full re-auth round trip.

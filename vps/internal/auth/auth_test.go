@@ -310,3 +310,68 @@ func TestPairingCeremonyAndRevocation(t *testing.T) {
 		t.Fatalf("expected error getting paired peer when peer is revoked")
 	}
 }
+
+func TestResumptionTokenLifecycleAndValidation(t *testing.T) {
+	reg := NewRegistry()
+	_, pubDER, deviceID := generateTestECDSAKey(t)
+
+	_ = reg.RegisterDevice(DeviceRecord{
+		DeviceID:     deviceID,
+		DeviceType:   DeviceTypeAndroid,
+		PublicKey:    pubDER,
+		KeyAlgorithm: AlgorithmECDSAP256,
+	})
+
+	// 1. Create resumption token with 5-minute validity window
+	resToken, expiresAt, err := reg.CreateResumptionToken(deviceID, 5*time.Minute)
+	if err != nil {
+		t.Fatalf("failed to create resumption token: %v", err)
+	}
+	if len(resToken) != 64 {
+		t.Fatalf("expected 64-char hex token, got %d", len(resToken))
+	}
+	if time.Until(expiresAt) <= 0 || time.Until(expiresAt) > 5*time.Minute {
+		t.Fatalf("unexpected expiresAt: %v", expiresAt)
+	}
+
+	// 2. Consume valid resumption token successfully
+	if err := reg.ValidateAndConsumeResumptionToken(deviceID, resToken); err != nil {
+		t.Fatalf("expected valid consumption, got: %v", err)
+	}
+
+	// 3. Replay attack: reusing the same token must fail immediately
+	if err := reg.ValidateAndConsumeResumptionToken(deviceID, resToken); err != ErrResumptionTokenNotFound {
+		t.Fatalf("expected ErrResumptionTokenNotFound on reused token, got: %v", err)
+	}
+
+	// 4. Token expiration: expired token must be rejected
+	expiredToken, _, err := reg.CreateResumptionToken(deviceID, -1*time.Second)
+	if err != nil {
+		t.Fatalf("failed to create expired token: %v", err)
+	}
+	if err := reg.ValidateAndConsumeResumptionToken(deviceID, expiredToken); err != ErrResumptionTokenNotFound {
+		t.Fatalf("expected ErrResumptionTokenNotFound on expired token, got: %v", err)
+	}
+
+	// 5. Wrong device ID: another authorized device attempting to use this device's token must fail
+	_, pubDER2, deviceID2 := generateTestECDSAKey(t)
+	_ = reg.RegisterDevice(DeviceRecord{
+		DeviceID:     deviceID2,
+		DeviceType:   DeviceTypeAndroid,
+		PublicKey:    pubDER2,
+		KeyAlgorithm: AlgorithmECDSAP256,
+	})
+	token3, _, _ := reg.CreateResumptionToken(deviceID, 5*time.Minute)
+	if err := reg.ValidateAndConsumeResumptionToken(deviceID2, token3); err != ErrResumptionTokenNotFound {
+		t.Fatalf("expected ErrResumptionTokenNotFound for mismatched device, got: %v", err)
+	}
+
+	// 6. Revocation: revoking device invalidates all held resumption tokens
+	token4, _, _ := reg.CreateResumptionToken(deviceID, 5*time.Minute)
+	if err := reg.RevokeDevice(deviceID); err != nil {
+		t.Fatalf("failed to revoke device: %v", err)
+	}
+	if err := reg.ValidateAndConsumeResumptionToken(deviceID, token4); err != ErrDeviceRevoked {
+		t.Fatalf("expected ErrDeviceRevoked after device revocation, got: %v", err)
+	}
+}

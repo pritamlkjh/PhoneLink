@@ -735,7 +735,7 @@
       "id": "VPS-6",
       "name": "VPS Session Resumption & Reconnection Handling",
       "category": "vps",
-      "status": "PENDING",
+      "status": "COMPLETE",
       "depends_on": [
         "VPS-3"
       ],
