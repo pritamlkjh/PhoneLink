@@ -11,6 +11,8 @@ import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import com.phonelink.files.FileOperationHandler
+import com.phonelink.files.StorageAccessLayer
 import com.phonelink.storage.SecureStorage
 import com.phonelink.transport.NetworkTransport
 import com.phonelink.ui.MainActivity
@@ -57,11 +59,16 @@ class ConnectionForegroundService : Service() {
 
     private var transport: NetworkTransport? = null
     private lateinit var secureStorage: SecureStorage
+    private lateinit var storageAccessLayer: StorageAccessLayer
+    private lateinit var fileOperationHandler: FileOperationHandler
+    private var peerSession: com.phonelink.crypto.E2EPeerSession? = null
     private var isRunning = false
 
     override fun onCreate() {
         super.onCreate()
         secureStorage = SecureStorage.fromContext(this)
+        storageAccessLayer = StorageAccessLayer.fromContext(this)
+        fileOperationHandler = FileOperationHandler(storageAccessLayer)
         createNotificationChannel()
     }
 
@@ -97,32 +104,42 @@ class ConnectionForegroundService : Service() {
 
         // Initialize and connect transport
         val relayUrl = secureStorage.getRelayUrl()
-        transport = NetworkTransport().apply {
-            addListener(object : NetworkTransport.Listener {
-                override fun onStateChanged(newState: NetworkTransport.ConnectionState) {
-                    val statusText = when (newState) {
-                        is NetworkTransport.ConnectionState.Connected -> "Connected to VPS relay"
-                        is NetworkTransport.ConnectionState.Connecting -> "Connecting to VPS relay..."
-                        is NetworkTransport.ConnectionState.Reconnecting -> "Reconnecting (attempt ${newState.attempt})..."
-                        is NetworkTransport.ConnectionState.Disconnected -> "Disconnected"
-                        is NetworkTransport.ConnectionState.Error -> "Connection error: ${newState.cause.message}"
+        val currentTransport = NetworkTransport().also { transport = it }
+
+        peerSession = com.phonelink.crypto.E2EPeerSession(
+            sendFunction = { bytes -> currentTransport.send(bytes) },
+            messageDispatcher = { plaintext -> fileOperationHandler.processApplicationMessage(plaintext) }
+        )
+
+        currentTransport.addListener(object : NetworkTransport.Listener {
+            override fun onStateChanged(newState: NetworkTransport.ConnectionState) {
+                val statusText = when (newState) {
+                    is NetworkTransport.ConnectionState.Connected -> "Connected to VPS relay"
+                    is NetworkTransport.ConnectionState.Connecting -> "Connecting to VPS relay..."
+                    is NetworkTransport.ConnectionState.Reconnecting -> "Reconnecting (attempt ${newState.attempt})..."
+                    is NetworkTransport.ConnectionState.Disconnected -> {
+                        peerSession?.reset()
+                        "Disconnected"
                     }
-                    updateNotification(statusText)
+                    is NetworkTransport.ConnectionState.Error -> "Connection error: ${newState.cause.message}"
                 }
+                updateNotification(statusText)
+            }
 
-                override fun onMessageReceived(text: String) {
+            override fun onMessageReceived(text: String) {
+                handleControlMessage(text)
+                peerSession?.handleIncomingMessage(text.toByteArray(Charsets.UTF_8))
+            }
+
+            override fun onMessageReceived(bytes: ByteArray) {
+                try {
+                    val text = String(bytes, Charsets.UTF_8)
                     handleControlMessage(text)
-                }
-
-                override fun onMessageReceived(bytes: ByteArray) {
-                    try {
-                        val text = String(bytes, Charsets.UTF_8)
-                        handleControlMessage(text)
-                    } catch (_: Exception) {}
-                }
-            })
-            connect(relayUrl)
-        }
+                } catch (_: Exception) {}
+                peerSession?.handleIncomingMessage(bytes)
+            }
+        })
+        currentTransport.connect(relayUrl)
     }
 
     internal fun handleControlMessage(text: String) {

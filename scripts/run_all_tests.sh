@@ -57,9 +57,13 @@ run_step "INT-1 End-to-End Encrypted Relay Integration Test" \
 run_step "INT-2 Device Discovery & Status Reporting Test" \
     "$REPO_ROOT/tests/test_int2_status.sh"
 
+# 7. FILE-2 Remote File Listing Integration Tests
+run_step "FILE-2 Remote File Listing Test" \
+    "$REPO_ROOT/tests/test_file2_ls.sh"
+
 echo "=========================================================="
 if [ $FAILURES -eq 0 ]; then
-    echo "   ALL REGRESSION SUITES PASSED (6/6)"
+    echo "   ALL REGRESSION SUITES PASSED (7/7)"
     echo "=========================================================="
     exit 0
 else

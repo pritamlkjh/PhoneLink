@@ -789,18 +789,18 @@ Format per node: Purpose → Dependencies/Blocks/Parallelizable → Inputs/Outpu
 ---
 
 #### `FILE-2` — Remote File Listing
-**Category:** Files · **Priority:** P1
+**Category:** Files · **Priority:** P1 · **Status:** COMPLETE
 
 **Purpose:** First real file operation — Mac requests, Android answers, through the relay.
 
 **Dependencies:** FILE-1, ARCH-3, INT-1, MAC-4 · **Blocks:** FILE-3, FILE-4, FILE-5 · **Parallelizable:** Yes, relative to Camera work.
 
 **Tasks:** Implement the listing message per `ARCH-3`; implement Android-side handler respecting `FILE-1`'s scope; implement the Mac CLI command.
-**Acceptance Criteria:** Mac CLI requests and displays an Android directory listing via the relay.
-**Tests:** Integration test — listing a known test directory matches exactly on the Mac side.
+**Acceptance Criteria:** Mac CLI requests and displays an Android directory listing via the relay. (VERIFIED)
+**Tests:** Integration test — listing a known test directory matches exactly on the Mac side; path traversal attempts rejected; zero plaintext leakage verified over relay buffers (`TestFILE2RemoteFileListing`).
 **Failure Conditions:** Listing exposes paths outside the granted storage scope.
 **Affected Components:** Android, VPS, Mac, Shared protocol, Tests
-**Artifacts:** File-listing protocol handler (Android + Mac)
+**Artifacts:** File-listing protocol handler (`FileOperationHandler.kt`, `E2EPeerSession.kt`, `FileClient.swift`, `phonelink files ls`, `test_file2_ls.sh`)
 
 ---
 

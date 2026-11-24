@@ -936,7 +936,7 @@
       "id": "FILE-2",
       "name": "Remote File Listing",
       "category": "files",
-      "status": "PENDING",
+      "status": "COMPLETE",
       "depends_on": [
         "FILE-1",
         "ARCH-3",

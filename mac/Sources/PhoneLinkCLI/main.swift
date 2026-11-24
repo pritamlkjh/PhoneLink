@@ -263,6 +263,145 @@ func handlePing(args: [String], identity: DeviceIdentityManager, client: AuthCli
     exit(0)
 }
 
+func printFilesUsage() {
+    print("""
+    USAGE: phonelink files <subcommand> [options]
+
+    SUBCOMMANDS:
+      ls [path]       List files in the remote scoped directory (default: "")
+      get <path>      Download file from remote phone (FILE-3)
+      put <path>      Upload file to remote phone (FILE-4)
+
+    OPTIONS:
+      --vps <url>     Override VPS relay URL (default: \(Config.defaultRelayURL))
+      --json          Format output as JSON
+      -h, --help      Show help information
+
+    EXAMPLES:
+      phonelink files ls
+      phonelink files ls Documents
+      phonelink files ls --json
+    """)
+}
+
+func handleFiles(args: [String], identity: DeviceIdentityManager, client: AuthClient) async {
+    let isJSON = parseFlag("--json", in: args)
+    let isHelp = parseFlag("-h", in: args) || parseFlag("--help", in: args)
+
+    if args.isEmpty || isHelp {
+        printFilesUsage()
+        exit(0)
+    }
+
+    let fileSubcommand = args[0]
+    let remainingArgs = Array(args.dropFirst())
+
+    switch fileSubcommand {
+    case "ls", "list":
+        await handleFilesList(args: remainingArgs, identity: identity, client: client, isJSON: isJSON)
+    default:
+        fputs("ERROR: Unknown files subcommand '\(fileSubcommand)'. Run 'phonelink files --help' for usage.\n", stderr)
+        exit(2)
+    }
+}
+
+func handleFilesList(args: [String], identity: DeviceIdentityManager, client: AuthClient, isJSON: Bool) async {
+    let vpsStr = parseOption("--vps", in: args) ?? Config.defaultRelayURL
+    guard let vpsURL = URL(string: vpsStr) else {
+        fputs("ERROR: Invalid VPS relay URL: \(vpsStr)\n", stderr)
+        exit(2)
+    }
+
+    // Extract target directory path (first non-flag argument)
+    var targetPath = ""
+    for arg in args {
+        if !arg.hasPrefix("-") {
+            targetPath = arg
+            break
+        }
+    }
+
+    do {
+        let response = try await FileClient.listRemoteFiles(
+            vpsBaseURL: vpsURL,
+            identity: identity,
+            client: client,
+            targetDirectory: targetPath,
+            timeoutSeconds: 8.0
+        )
+
+        if response.status != "STATUS_OK" {
+            let errMsg = response.errorMessage ?? "Unknown remote error"
+            if isJSON {
+                let dict: [String: Any] = [
+                    "status": "ERROR",
+                    "error_code": response.status,
+                    "error_message": errMsg,
+                    "directory": targetPath
+                ]
+                let data = try JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted])
+                print(String(data: data, encoding: .utf8)!)
+            } else {
+                fputs("ERROR: Remote file listing failed (\(response.status)): \(errMsg)\n", stderr)
+            }
+            exit(1)
+        }
+
+        if isJSON {
+            let itemDicts: [[String: Any]] = response.items.map { item in
+                [
+                    "name": item.name,
+                    "path": item.path,
+                    "is_directory": item.isDirectory,
+                    "size_bytes": item.sizeBytes,
+                    "size_formatted": FileClient.formatByteSize(item.sizeBytes),
+                    "modified_time": item.modifiedTime,
+                    "modified_formatted": FileClient.formatDate(item.modifiedTime),
+                    "mime_type": item.mimeType
+                ]
+            }
+
+            let dict: [String: Any] = [
+                "status": "OK",
+                "current_directory": response.currentDirectory.isEmpty ? "/" : "/\(response.currentDirectory)",
+                "count": response.items.count,
+                "items": itemDicts
+            ]
+            let data = try JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted])
+            print(String(data: data, encoding: .utf8)!)
+        } else {
+            let dirDisplay = response.currentDirectory.isEmpty ? "/" : "/\(response.currentDirectory)"
+            print("Remote Directory: \(dirDisplay) (\(response.items.count) item\(response.items.count == 1 ? "" : "s"))")
+            print("--------------------------------------------------------------------------------")
+            print(String(format: "%-5s %-12s %-20s %@", "TYPE", "SIZE", "MODIFIED", "NAME"))
+            print("--------------------------------------------------------------------------------")
+
+            for item in response.items {
+                let typeStr = item.isDirectory ? "DIR" : "FILE"
+                let sizeStr = item.isDirectory ? "-" : FileClient.formatByteSize(item.sizeBytes)
+                let dateStr = FileClient.formatDate(item.modifiedTime)
+                let nameStr = item.isDirectory ? "\(item.name)/" : item.name
+
+                print(String(format: "%-5s %-12s %-20s %@", typeStr, sizeStr, dateStr, nameStr))
+            }
+            print("--------------------------------------------------------------------------------")
+        }
+        exit(0)
+    } catch {
+        if isJSON {
+            let dict: [String: Any] = [
+                "status": "ERROR",
+                "error": error.localizedDescription
+            ]
+            let data = try! JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted])
+            print(String(data: data, encoding: .utf8)!)
+        } else {
+            fputs("ERROR: \(error.localizedDescription)\n", stderr)
+        }
+        exit(1)
+    }
+}
+
 // MARK: - Main Execution
 
 let args = CommandLine.arguments
@@ -302,8 +441,7 @@ case "ping":
     await handlePing(args: subArgs, identity: identity, client: client)
 
 case "files":
-    print("Files subcommand reserved for FILE-2/FILE-3.")
-    exit(0)
+    await handleFiles(args: subArgs, identity: identity, client: client)
 
 case "camera":
     print("Camera subcommand reserved for CAM-3/CAM-4.")

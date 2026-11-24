@@ -144,5 +144,66 @@ assertEqual(onlineState, ConnectionManager.State.peerOnline(peerDeviceID: "andro
 assertFalse(onlineState == offlineState)
 print("PASS: testPeerOnlineAndOfflineStates")
 
-print(">>> ALL MAC CLIENT UNIT TESTS PASSED (10/10) <<<")
+// Test 11: FILE-2 FileListRequest Serialization
+let reqData = try! FileClient.buildFileListRequest(targetDirectory: "Documents", requestId: "req-101")
+let reqObj = try! JSONSerialization.jsonObject(with: reqData) as! [String: Any]
+assertEqual(reqObj["schema_version"] as! Int, 1)
+let fileListReq = reqObj["file_list_req"] as! [String: Any]
+assertEqual(fileListReq["request_id"] as! String, "req-101")
+assertEqual(fileListReq["target_directory"] as! String, "Documents")
+print("PASS: testFileListRequestBuilder")
+
+// Test 12: FILE-2 FileListResponse Parsing
+let sampleRespJSON = """
+{
+    "schema_version": 1,
+    "message_id": "msg-resp-999",
+    "timestamp": 1774426500000,
+    "file_list_resp": {
+        "request_id": "req-101",
+        "status": "STATUS_OK",
+        "current_directory": "Documents",
+        "items": [
+            {
+                "path": "Documents/report.pdf",
+                "name": "report.pdf",
+                "is_directory": false,
+                "size_bytes": 1048576,
+                "modified_time": 1774400000000,
+                "mime_type": "application/pdf"
+            },
+            {
+                "path": "Documents/Projects",
+                "name": "Projects",
+                "is_directory": true,
+                "size_bytes": 0,
+                "modified_time": 1774300000000,
+                "mime_type": "inode/directory"
+            }
+        ]
+    }
+}
+""".data(using: .utf8)!
+
+let parsedResp = try! FileClient.parseFileListResponse(data: sampleRespJSON)
+assertEqual(parsedResp.requestId, "req-101")
+assertEqual(parsedResp.status, "STATUS_OK")
+assertEqual(parsedResp.currentDirectory, "Documents")
+assertEqual(parsedResp.items.count, 2)
+assertEqual(parsedResp.items[0].name, "report.pdf")
+assertFalse(parsedResp.items[0].isDirectory)
+assertEqual(parsedResp.items[0].sizeBytes, 1048576)
+assertEqual(parsedResp.items[1].name, "Projects")
+assertTrue(parsedResp.items[1].isDirectory)
+print("PASS: testFileListResponseParser")
+
+// Test 13: FILE-2 Byte and Date Formatting Helpers
+assertEqual(FileClient.formatByteSize(0), "0 B")
+assertEqual(FileClient.formatByteSize(512), "512 B")
+assertEqual(FileClient.formatByteSize(1024), "1.0 KB")
+assertEqual(FileClient.formatByteSize(1048576), "1.0 MB")
+assertTrue(FileClient.formatDate(1774400000000).count >= 10)
+print("PASS: testByteAndDateFormatting")
+
+print(">>> ALL MAC CLIENT UNIT TESTS PASSED (13/13) <<<")
 exit(0)

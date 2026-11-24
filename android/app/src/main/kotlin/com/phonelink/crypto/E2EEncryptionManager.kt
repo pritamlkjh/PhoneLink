@@ -121,6 +121,29 @@ class E2EEncryptionManager(
 
             return cipher.doFinal(ciphertext)
         }
+
+        fun parsePublicKey(rawOrDer: ByteArray): PublicKey {
+            val kf = try {
+                java.security.KeyFactory.getInstance("X25519")
+            } catch (e: Exception) {
+                try {
+                    java.security.KeyFactory.getInstance("XDH")
+                } catch (e2: Exception) {
+                    java.security.KeyFactory.getInstance("EC")
+                }
+            }
+
+            val x509Header = byteArrayOf(
+                0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x6e, 0x03, 0x21, 0x00
+            )
+            val der = if (rawOrDer.size == 32) {
+                x509Header + rawOrDer
+            } else {
+                rawOrDer
+            }
+
+            return kf.generatePublic(java.security.spec.X509EncodedKeySpec(der))
+        }
     }
 
     data class SessionKeys(
@@ -129,6 +152,15 @@ class E2EEncryptionManager(
     )
 
     fun getPublicKeyEncoded(): ByteArray = ephemeralKeyPair.public.encoded
+
+    fun getRawPublicKey(): ByteArray {
+        val encoded = ephemeralKeyPair.public.encoded
+        return if (encoded.size == 44 && encoded[0] == 0x30.toByte()) {
+            encoded.copyOfRange(12, 44)
+        } else {
+            encoded
+        }
+    }
 
     /**
      * Completes ECDH with peer's ephemeral public key and derives directional keys.
