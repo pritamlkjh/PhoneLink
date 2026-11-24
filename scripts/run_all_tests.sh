@@ -101,9 +101,13 @@ run_step "VPS-7 VPS Logging & Monitoring Test" \
 run_step "SEC-2 Security Validation & Penetration Testing Suite" \
     "$REPO_ROOT/tests/test_sec2_pentest.sh"
 
+# 18. VPS-6 VPS Session Resumption & Reconnection
+run_step "VPS-6 VPS Session Resumption & Reconnection" \
+    "$REPO_ROOT/tests/test_vps6_resumption.sh"
+
 echo "=========================================================="
 if [ $FAILURES -eq 0 ]; then
-    echo "   ALL REGRESSION SUITES PASSED (17/17)"
+    echo "   ALL REGRESSION SUITES PASSED (18/18)"
     echo "=========================================================="
     exit 0
 else

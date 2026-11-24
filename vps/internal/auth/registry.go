@@ -17,6 +17,8 @@ var (
 	ErrInvalidPublicKey        = errors.New("invalid public key")
 	ErrSessionNotFound         = errors.New("session not found or expired")
 	ErrSessionRevoked          = errors.New("session has been revoked")
+	ErrResumptionTokenNotFound = errors.New("resumption token not found or expired")
+	ErrResumptionTokenUsed     = errors.New("resumption token already used")
 	ErrPairingTokenNotFound    = errors.New("pairing token not found or expired")
 	ErrCannotPairSelf          = errors.New("cannot pair device with itself")
 )
@@ -29,6 +31,7 @@ const (
 	DeviceTypeAndroid = "android"
 
 	DefaultSessionTTL      = 24 * time.Hour
+	DefaultResumptionTTL   = 5 * time.Minute
 	DefaultPairingTokenTTL = 5 * time.Minute
 )
 
@@ -63,22 +66,35 @@ type PairingTokenRecord struct {
 	Used              bool      `json:"used"`
 }
 
+// ResumptionTokenRecord holds bounded-validity session resumption tokens (VPS-6).
+type ResumptionTokenRecord struct {
+	Token     string    `json:"token"`
+	DeviceID  string    `json:"device_id"`
+	CreatedAt time.Time `json:"created_at"`
+	ExpiresAt time.Time `json:"expires_at"`
+	Used      bool      `json:"used"`
+}
+
 // Registry provides thread-safe management of authorized devices, sessions, and pairings.
 type Registry struct {
-	mu            sync.RWMutex
-	devices       map[string]*DeviceRecord
-	sessions      map[string]*SessionRecord        // token -> SessionRecord
-	deviceSessions map[string]map[string]struct{} // deviceID -> set of tokens
-	pairingTokens map[string]*PairingTokenRecord   // token -> PairingTokenRecord
+	mu                     sync.RWMutex
+	devices                map[string]*DeviceRecord
+	sessions               map[string]*SessionRecord               // token -> SessionRecord
+	deviceSessions         map[string]map[string]struct{}          // deviceID -> set of tokens
+	resumptionTokens       map[string]*ResumptionTokenRecord       // token -> ResumptionTokenRecord
+	deviceResumptionTokens map[string]map[string]struct{}          // deviceID -> set of resumption tokens
+	pairingTokens          map[string]*PairingTokenRecord          // token -> PairingTokenRecord
 }
 
 // NewRegistry initializes an empty Registry.
 func NewRegistry() *Registry {
 	return &Registry{
-		devices:        make(map[string]*DeviceRecord),
-		sessions:       make(map[string]*SessionRecord),
-		deviceSessions: make(map[string]map[string]struct{}),
-		pairingTokens:  make(map[string]*PairingTokenRecord),
+		devices:                make(map[string]*DeviceRecord),
+		sessions:               make(map[string]*SessionRecord),
+		deviceSessions:         make(map[string]map[string]struct{}),
+		resumptionTokens:       make(map[string]*ResumptionTokenRecord),
+		deviceResumptionTokens: make(map[string]map[string]struct{}),
+		pairingTokens:          make(map[string]*PairingTokenRecord),
 	}
 }
 
@@ -160,6 +176,17 @@ func (r *Registry) RevokeDevice(deviceID string) error {
 			delete(r.sessions, token)
 		}
 		delete(r.deviceSessions, deviceID)
+	}
+
+	// Revoke all resumption tokens immediately (VPS-6)
+	if tokens, ok := r.deviceResumptionTokens[deviceID]; ok {
+		for token := range tokens {
+			if res, resOk := r.resumptionTokens[token]; resOk {
+				res.Used = true
+			}
+			delete(r.resumptionTokens, token)
+		}
+		delete(r.deviceResumptionTokens, deviceID)
 	}
 
 	return nil
@@ -246,6 +273,88 @@ func (r *Registry) RevokeSession(token string) error {
 		delete(tokens, token)
 	}
 	delete(r.sessions, token)
+	return nil
+}
+
+// CreateResumptionToken generates a bounded-validity resumption token for an authorized device (VPS-6).
+func (r *Registry) CreateResumptionToken(deviceID string, ttl time.Duration) (string, time.Time, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	rec, exists := r.devices[deviceID]
+	if !exists {
+		return "", time.Time{}, ErrDeviceNotFound
+	}
+	if rec.Revoked {
+		return "", time.Time{}, ErrDeviceRevoked
+	}
+
+	if ttl == 0 {
+		ttl = DefaultResumptionTTL
+	}
+
+	tokenBytes := make([]byte, 32)
+	if _, err := rand.Read(tokenBytes); err != nil {
+		return "", time.Time{}, fmt.Errorf("failed to generate resumption token: %w", err)
+	}
+	token := hex.EncodeToString(tokenBytes)
+
+	now := time.Now()
+	expiresAt := now.Add(ttl)
+	res := &ResumptionTokenRecord{
+		Token:     token,
+		DeviceID:  deviceID,
+		CreatedAt: now,
+		ExpiresAt: expiresAt,
+		Used:      false,
+	}
+
+	r.resumptionTokens[token] = res
+	if r.deviceResumptionTokens[deviceID] == nil {
+		r.deviceResumptionTokens[deviceID] = make(map[string]struct{})
+	}
+	r.deviceResumptionTokens[deviceID][token] = struct{}{}
+
+	return token, expiresAt, nil
+}
+
+// ValidateAndConsumeResumptionToken verifies and consumes a single-use resumption token (VPS-6).
+func (r *Registry) ValidateAndConsumeResumptionToken(deviceID, token string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	rec, exists := r.devices[deviceID]
+	if !exists {
+		return ErrDeviceNotFound
+	}
+	if rec.Revoked {
+		return ErrDeviceRevoked
+	}
+
+	res, exists := r.resumptionTokens[token]
+	if !exists || res.DeviceID != deviceID {
+		return ErrResumptionTokenNotFound
+	}
+
+	if res.Used {
+		return ErrResumptionTokenUsed
+	}
+
+	if time.Now().After(res.ExpiresAt) {
+		delete(r.resumptionTokens, token)
+		if tokens, ok := r.deviceResumptionTokens[deviceID]; ok {
+			delete(tokens, token)
+		}
+		return ErrResumptionTokenNotFound
+	}
+
+	// Mark used and remove immediately to prevent token replay
+	res.Used = true
+	delete(r.resumptionTokens, token)
+	if tokens, ok := r.deviceResumptionTokens[deviceID]; ok {
+		delete(tokens, token)
+	}
+
 	return nil
 }
 

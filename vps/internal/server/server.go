@@ -140,6 +140,7 @@ func (s *Server) registerRoutes() {
 	s.mux.HandleFunc("GET /api/v1/devices/status", s.handleDeviceStatus)
 	s.mux.HandleFunc("POST /api/v1/auth/challenge", s.handleAuthChallenge)
 	s.mux.HandleFunc("POST /api/v1/auth/verify", s.handleAuthVerify)
+	s.mux.HandleFunc("POST /api/v1/auth/resume", s.handleAuthResume)
 	s.mux.HandleFunc("POST /api/v1/pairing/create", s.handlePairingCreate)
 	s.mux.HandleFunc("POST /api/v1/pairing/claim", s.handlePairingClaim)
 }
@@ -437,14 +438,87 @@ func (s *Server) handleAuthVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 5. Create resumption token (VPS-6)
+	resumptionToken, _, err := s.registry.CreateResumptionToken(req.DeviceID, auth.DefaultResumptionTTL)
+	if err != nil {
+		s.auditLogger.LogError("create_resumption_token", err, map[string]interface{}{"device_id": req.DeviceID})
+		http.Error(w, `{"error":"failed to create resumption token"}`, http.StatusInternalServerError)
+		return
+	}
+
 	s.auditLogger.LogAuthSuccess(r.RemoteAddr, req.DeviceID)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":        "OK",
-		"session_token": sessionToken,
-		"peer_online":   false,
+		"status":                 "OK",
+		"session_token":          sessionToken,
+		"resumption_token":       resumptionToken,
+		"resumption_ttl_seconds": int64(auth.DefaultResumptionTTL.Seconds()),
+		"peer_online":            false,
+	})
+}
+
+type AuthResumeRequest struct {
+	DeviceID        string `json:"device_id"`
+	ResumptionToken string `json:"resumption_token"`
+}
+
+func (s *Server) handleAuthResume(w http.ResponseWriter, r *http.Request) {
+	var req AuthResumeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.DeviceID == "" || req.ResumptionToken == "" {
+		s.auditLogger.LogAuthFailure(r.RemoteAddr, req.DeviceID, "invalid_resume_request")
+		http.Error(w, `{"error":"device_id and resumption_token are required"}`, http.StatusBadRequest)
+		return
+	}
+
+	s.auditLogger.LogAuthAttempt(r.RemoteAddr, req.DeviceID)
+
+	if !s.registry.IsAuthorized(req.DeviceID) {
+		s.auditLogger.LogAuthFailure(r.RemoteAddr, req.DeviceID, "unregistered_or_revoked_device")
+		http.Error(w, `{"error":"unregistered or revoked device"}`, http.StatusUnauthorized)
+		return
+	}
+
+	// 1. Validate and consume single-use resumption token (VPS-6)
+	if err := s.registry.ValidateAndConsumeResumptionToken(req.DeviceID, req.ResumptionToken); err != nil {
+		s.auditLogger.LogAuthFailure(r.RemoteAddr, req.DeviceID, fmt.Sprintf("resume_failed: %v", err))
+		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusUnauthorized)
+		return
+	}
+
+	// 2. Issue fresh session token
+	sessionToken, err := s.registry.CreateSession(req.DeviceID, auth.DefaultSessionTTL)
+	if err != nil {
+		s.auditLogger.LogError("create_session_resume", err, map[string]interface{}{"device_id": req.DeviceID})
+		http.Error(w, `{"error":"failed to create session"}`, http.StatusInternalServerError)
+		return
+	}
+
+	// 3. Issue fresh rotated resumption token
+	newResumptionToken, _, err := s.registry.CreateResumptionToken(req.DeviceID, auth.DefaultResumptionTTL)
+	if err != nil {
+		s.auditLogger.LogError("create_resumption_token_resume", err, map[string]interface{}{"device_id": req.DeviceID})
+		http.Error(w, `{"error":"failed to create resumption token"}`, http.StatusInternalServerError)
+		return
+	}
+
+	pairedID, _ := s.registry.GetPairedDevice(req.DeviceID)
+	peerOnline := false
+	if pairedID != "" {
+		peerOnline = s.coordinator.IsDeviceOnline(pairedID)
+	}
+
+	s.auditLogger.LogAuthSuccess(r.RemoteAddr, req.DeviceID)
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"status":                 "OK",
+		"session_token":          sessionToken,
+		"resumption_token":       newResumptionToken,
+		"resumption_ttl_seconds": int64(auth.DefaultResumptionTTL.Seconds()),
+		"peer_online":            peerOnline,
 	})
 }
 
