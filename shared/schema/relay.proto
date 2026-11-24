@@ -1,0 +1,95 @@
+syntax = "proto3";
+
+package phonelink.relay;
+
+import "common.proto";
+
+option go_package = "github.com/pritamlkjh/phonelink/vps/pkg/proto/relay";
+option java_package = "com.phonelink.proto.relay";
+option java_multiple_files = true;
+
+// Envelope type indicator
+enum EnvelopeType {
+  ENVELOPE_UNSPECIFIED = 0;
+  AUTH_CHALLENGE = 1;
+  AUTH_RESPONSE = 2;
+  AUTH_RESULT = 3;
+  HEARTBEAT_PING = 4;
+  HEARTBEAT_PONG = 5;
+  PEER_STATUS_EVENT = 6;
+  SESSION_RESUME_REQUEST = 7;
+  SESSION_RESUME_RESPONSE = 8;
+  PAIRING_CLAIM_REQUEST = 9;
+  PAIRING_CLAIM_RESPONSE = 10;
+  RELAY_FORWARD = 20; // Carries encrypted or handshake payload to peer
+}
+
+// Top-level wire message transferred across the WebSocket
+message RelayMessage {
+  uint32 schema_version = 1;      // Schema version (1)
+  EnvelopeType type = 2;
+  string source_device_id = 3;
+  string target_device_id = 4;
+  string session_id = 5;
+  uint64 sequence_number = 6;
+  int64 timestamp = 7;           // Milliseconds since epoch
+  bytes payload = 8;             // Opaque bytes or sub-message
+}
+
+// VPS -> Client challenge on connect
+message AuthChallenge {
+  bytes server_nonce = 1;        // 32 random bytes
+  int64 timestamp = 2;
+}
+
+// Client -> VPS response to challenge
+message AuthResponse {
+  string device_id = 1;
+  bytes client_nonce = 2;        // 32 random bytes
+  bytes identity_public_key = 3; // Ed25519 public key
+  bytes signature = 4;           // Ed25519 signature over (server_nonce || client_nonce || timestamp)
+  int64 timestamp = 5;
+}
+
+// VPS -> Client auth result
+message AuthResult {
+  phonelink.common.StatusCode status = 1;
+  string session_token = 2;
+  bool peer_online = 3;
+  string message = 4;
+}
+
+// Peer status notification
+message PeerStatusEvent {
+  string peer_device_id = 1;
+  bool is_online = 2;
+  int64 timestamp = 3;
+}
+
+// Session resumption
+message SessionResumeRequest {
+  string device_id = 1;
+  string session_id = 2;
+  bytes resumption_token = 3;
+  uint64 last_received_seq = 4;
+}
+
+message SessionResumeResponse {
+  phonelink.common.StatusCode status = 1;
+  string session_id = 2;
+  uint64 next_seq = 3;
+}
+
+// Pairing claim
+message PairingClaimRequest {
+  string initiator_device_id = 1;
+  string pairing_token = 2;
+  bytes identity_public_key = 3;
+  bytes signature = 4;
+}
+
+message PairingClaimResponse {
+  phonelink.common.StatusCode status = 1;
+  string paired_peer_id = 2;
+  string message = 3;
+}

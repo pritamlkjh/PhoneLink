@@ -1,0 +1,47 @@
+syntax = "proto3";
+
+package phonelink.app;
+
+import "file.proto";
+import "camera.proto";
+import "actions.proto";
+import "common.proto";
+
+option go_package = "github.com/pritamlkjh/phonelink/vps/pkg/proto/app";
+option java_package = "com.phonelink.proto.app";
+option java_multiple_files = true;
+
+// Top-level Application Payload decrypted by Android or Mac
+message ApplicationMessage {
+  uint32 schema_version = 1;
+  string message_id = 2;
+  int64 timestamp = 3;
+
+  oneof payload {
+    // File operations
+    phonelink.file.FileListRequest file_list_req = 10;
+    phonelink.file.FileListResponse file_list_resp = 11;
+    phonelink.file.FileDownloadRequest file_download_req = 12;
+    phonelink.file.FileDownloadInitResponse file_download_init_resp = 13;
+    phonelink.file.FileChunk file_chunk = 14;
+    phonelink.file.FileChunkAck file_chunk_ack = 15;
+    phonelink.file.FileUploadRequest file_upload_req = 16;
+    phonelink.file.FileUploadInitResponse file_upload_init_resp = 17;
+
+    // Camera operations
+    phonelink.camera.CameraStartRequest camera_start_req = 20;
+    phonelink.camera.CameraStartResponse camera_start_resp = 21;
+    phonelink.camera.CameraStopRequest camera_stop_req = 22;
+    phonelink.camera.CameraStopResponse camera_stop_resp = 23;
+    phonelink.camera.CameraFrame camera_frame = 24;
+
+    // Scoped Remote Actions
+    phonelink.actions.DevicePingRequest device_ping_req = 30;
+    phonelink.actions.DevicePingResponse device_ping_resp = 31;
+    phonelink.actions.DeviceInfoRequest device_info_req = 32;
+    phonelink.actions.DeviceInfoResponse device_info_resp = 33;
+
+    // Generic error
+    phonelink.common.ErrorDetails error = 99;
+  }
+}

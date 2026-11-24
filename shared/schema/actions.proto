@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package phonelink.actions;
+
+import "common.proto";
+
+option go_package = "github.com/pritamlkjh/phonelink/vps/pkg/proto/actions";
+option java_package = "com.phonelink.proto.actions";
+option java_multiple_files = true;
+
+// 1. Device Ping / Locate (plays sound / vibrates)
+message DevicePingRequest {
+  string request_id = 1;
+  uint32 duration_seconds = 2;   // Max 30 seconds
+}
+
+message DevicePingResponse {
+  string request_id = 1;
+  phonelink.common.StatusCode status = 2;
+  string message = 3;
+}
+
+// 2. Device Information (read-only telemetry)
+message DeviceInfoRequest {
+  string request_id = 1;
+}
+
+message DeviceInfoResponse {
+  string request_id = 1;
+  phonelink.common.StatusCode status = 2;
+  string model = 3;              // e.g. "Pixel 8"
+  string os_version = 4;         // e.g. "Android 14 (API 34)"
+  int32 battery_percent = 5;     // 0-100
+  bool is_charging = 6;
+  uint64 total_storage_bytes = 7;
+  uint64 available_storage_bytes = 8;
+  string app_version = 9;
+}
