@@ -1,0 +1,19 @@
+{
+  "" : {
+    "diagnostics" : "/Users/pritamsarkar/.gemini/antigravity/scratch/PhoneLink/mac/.build/out/Intermediates.noindex/PhoneLinkMac.build/Debug/PhoneLinkKit-t.build/Objects-normal/arm64/PhoneLinkKit-primary.dia",
+    "emit-module-dependencies" : "/Users/pritamsarkar/.gemini/antigravity/scratch/PhoneLink/mac/.build/out/Intermediates.noindex/PhoneLinkMac.build/Debug/PhoneLinkKit-t.build/Objects-normal/arm64/PhoneLinkKit-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/pritamsarkar/.gemini/antigravity/scratch/PhoneLink/mac/.build/out/Intermediates.noindex/PhoneLinkMac.build/Debug/PhoneLinkKit-t.build/Objects-normal/arm64/PhoneLinkKit-primary-emit-module.dia",
+    "pch" : "/Users/pritamsarkar/.gemini/antigravity/scratch/PhoneLink/mac/.build/out/Intermediates.noindex/PhoneLinkMac.build/Debug/PhoneLinkKit-t.build/Objects-normal/arm64/PhoneLinkKit-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/pritamsarkar/.gemini/antigravity/scratch/PhoneLink/mac/.build/out/Intermediates.noindex/PhoneLinkMac.build/Debug/PhoneLinkKit-t.build/Objects-normal/arm64/PhoneLinkKit-primary.swiftdeps"
+  },
+  "/Users/pritamsarkar/.gemini/antigravity/scratch/PhoneLink/mac/Sources/PhoneLinkKit/PhoneLinkKit.swift" : {
+    "const-values" : "/Users/pritamsarkar/.gemini/antigravity/scratch/PhoneLink/mac/.build/out/Intermediates.noindex/PhoneLinkMac.build/Debug/PhoneLinkKit-t.build/Objects-normal/arm64/PhoneLinkKit.swiftconstvalues",
+    "dependencies" : "/Users/pritamsarkar/.gemini/antigravity/scratch/PhoneLink/mac/.build/out/Intermediates.noindex/PhoneLinkMac.build/Debug/PhoneLinkKit-t.build/Objects-normal/arm64/PhoneLinkKit.d",
+    "diagnostics" : "/Users/pritamsarkar/.gemini/antigravity/scratch/PhoneLink/mac/.build/out/Intermediates.noindex/PhoneLinkMac.build/Debug/PhoneLinkKit-t.build/Objects-normal/arm64/PhoneLinkKit.dia",
+    "index-unit-output-path" : "/PhoneLinkMac.build/Debug/PhoneLinkKit-t.build/Objects-normal/arm64/PhoneLinkKit.o",
+    "llvm-bc" : "/Users/pritamsarkar/.gemini/antigravity/scratch/PhoneLink/mac/.build/out/Intermediates.noindex/PhoneLinkMac.build/Debug/PhoneLinkKit-t.build/Objects-normal/arm64/PhoneLinkKit.bc",
+    "object" : "/Users/pritamsarkar/.gemini/antigravity/scratch/PhoneLink/mac/.build/out/Intermediates.noindex/PhoneLinkMac.build/Debug/PhoneLinkKit-t.build/Objects-normal/arm64/PhoneLinkKit.o",
+    "swift-dependencies" : "/Users/pritamsarkar/.gemini/antigravity/scratch/PhoneLink/mac/.build/out/Intermediates.noindex/PhoneLinkMac.build/Debug/PhoneLinkKit-t.build/Objects-normal/arm64/PhoneLinkKit.swiftdeps",
+    "swiftmodule" : "/Users/pritamsarkar/.gemini/antigravity/scratch/PhoneLink/mac/.build/out/Intermediates.noindex/PhoneLinkMac.build/Debug/PhoneLinkKit-t.build/Objects-normal/arm64/PhoneLinkKit~partial.swiftmodule"
+  }
+}

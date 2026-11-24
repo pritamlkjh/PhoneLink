@@ -1,0 +1,1734 @@
+[
+  {
+    "contents" : {
+      "guid" : "Workspace:/Users/pritamsarkar/.gemini/antigravity/scratch/PhoneLink/mac",
+      "name" : "PhoneLinkMac",
+      "path" : "/Users/pritamsarkar/.gemini/antigravity/scratch/PhoneLink/mac",
+      "projects" : [
+        "51ffce481f347470d6f55406517456015e98ff5bce7b04ab8fb4b5f79d3eb750",
+        "58d78b932cb61e7a3625b4c4bc2aa7f07cae5dde240f82d31c0f845403b723f8"
+      ]
+    },
+    "signature" : "1a72b63edd0a9f4233ba4348437e584e6d012ab44e0e03e6b24174e9032f7f94",
+    "type" : "workspace"
+  },
+  {
+    "contents" : {
+      "buildConfigurations" : [
+        {
+          "buildSettings" : {
+            "CLANG_ENABLE_MODULES[__platform_filter=driverkit]" : "YES",
+            "CLANG_ENABLE_MODULES[__platform_filter=ios-maccatalyst]" : "YES",
+            "CLANG_ENABLE_MODULES[__platform_filter=ios;ios-simulator]" : "YES",
+            "CLANG_ENABLE_MODULES[__platform_filter=macos]" : "YES",
+            "CLANG_ENABLE_MODULES[__platform_filter=tvos;tvos-simulator]" : "YES",
+            "CLANG_ENABLE_MODULES[__platform_filter=watchos;watchos-simulator]" : "YES",
+            "CLANG_ENABLE_MODULES[__platform_filter=xros;xros-simulator]" : "YES",
+            "CODE_SIGNING_REQUIRED" : "NO",
+            "CODE_SIGN_IDENTITY" : "",
+            "COMPILER_WORKING_DIRECTORY" : "$(WORKSPACE_DIR)",
+            "COPY_PHASE_STRIP" : "NO",
+            "DEBUG_INFORMATION_FORMAT" : "dwarf",
+            "DRIVERKIT_DEPLOYMENT_TARGET" : "21.0",
+            "DYLIB_INSTALL_NAME_BASE[__platform_filter=driverkit]" : "@rpath",
+            "DYLIB_INSTALL_NAME_BASE[__platform_filter=ios-maccatalyst]" : "@rpath",
+            "DYLIB_INSTALL_NAME_BASE[__platform_filter=ios;ios-simulator]" : "@rpath",
+            "DYLIB_INSTALL_NAME_BASE[__platform_filter=macos]" : "@rpath",
+            "DYLIB_INSTALL_NAME_BASE[__platform_filter=tvos;tvos-simulator]" : "@rpath",
+            "DYLIB_INSTALL_NAME_BASE[__platform_filter=watchos;watchos-simulator]" : "@rpath",
+            "DYLIB_INSTALL_NAME_BASE[__platform_filter=xros;xros-simulator]" : "@rpath",
+            "ENABLE_NS_ASSERTIONS" : "YES",
+            "ENABLE_TESTABILITY" : "YES",
+            "ENABLE_TESTING_SEARCH_PATHS" : "YES",
+            "ENTITLEMENTS_REQUIRED" : "NO",
+            "GCC_OPTIMIZATION_LEVEL" : "0",
+            "GCC_PREPROCESSOR_DEFINITIONS" : [
+              "$(inherited)",
+              "SWIFT_PACKAGE",
+              "DEBUG=1"
+            ],
+            "INDEX_ENABLE_DATA_STORE" : "YES",
+            "IPHONEOS_DEPLOYMENT_TARGET" : "15.0",
+            "IPHONEOS_DEPLOYMENT_TARGET[__platform_filter=ios-maccatalyst]" : "15.0",
+            "KEEP_PRIVATE_EXTERNS" : "NO",
+            "LIBTOOL_NO_WARNING_FOR_NO_SYMBOLS" : "YES",
+            "LINKER_DRIVER" : "auto",
+            "MACOSX_DEPLOYMENT_TARGET" : "14.0",
+            "ONLY_ACTIVE_ARCH" : "YES",
+            "OTHER_CFLAGS" : [
+              "$(inherited)",
+              "-DXcode"
+            ],
+            "OTHER_LDRFLAGS" : [
+
+            ],
+            "OTHER_SWIFT_FLAGS" : [
+              "$(inherited)",
+              "-DXcode"
+            ],
+            "PRODUCT_NAME" : "$(TARGET_NAME)",
+            "SKIP_INSTALL" : "YES",
+            "SPECIALIZATION_SDK_OPTIONS[__platform_filter=macos]" : [
+
+            ],
+            "SUPPORTED_PLATFORMS" : [
+              "$(AVAILABLE_PLATFORMS)"
+            ],
+            "SWIFT_ACTIVE_COMPILATION_CONDITIONS" : [
+              "$(inherited)",
+              "SWIFT_PACKAGE",
+              "DEBUG"
+            ],
+            "SWIFT_INSTALL_OBJC_HEADER" : "NO",
+            "SWIFT_OBJC_INTERFACE_HEADER_NAME" : "",
+            "SWIFT_OPTIMIZATION_LEVEL" : "-Onone",
+            "TARGETED_DEVICE_FAMILY" : "",
+            "TVOS_DEPLOYMENT_TARGET" : "15.0",
+            "USE_HEADERMAP" : "NO",
+            "WATCHOS_DEPLOYMENT_TARGET" : "9.0",
+            "XROS_DEPLOYMENT_TARGET" : "1.0"
+          },
+          "guid" : "PACKAGE:mac::BUILDCONFIG_0",
+          "impartedBuildProperties" : {
+            "buildSettings" : {
+
+            }
+          },
+          "name" : "Debug"
+        },
+        {
+          "buildSettings" : {
+            "CLANG_ENABLE_MODULES[__platform_filter=driverkit]" : "YES",
+            "CLANG_ENABLE_MODULES[__platform_filter=ios-maccatalyst]" : "YES",
+            "CLANG_ENABLE_MODULES[__platform_filter=ios;ios-simulator]" : "YES",
+            "CLANG_ENABLE_MODULES[__platform_filter=macos]" : "YES",
+            "CLANG_ENABLE_MODULES[__platform_filter=tvos;tvos-simulator]" : "YES",
+            "CLANG_ENABLE_MODULES[__platform_filter=watchos;watchos-simulator]" : "YES",
+            "CLANG_ENABLE_MODULES[__platform_filter=xros;xros-simulator]" : "YES",
+            "CODE_SIGNING_REQUIRED" : "NO",
+            "CODE_SIGN_IDENTITY" : "",
+            "COMPILER_WORKING_DIRECTORY" : "$(WORKSPACE_DIR)",
+            "COPY_PHASE_STRIP" : "YES",
+            "DEBUG_INFORMATION_FORMAT" : "dwarf-with-dsym",
+            "DEPLOYMENT_POSTPROCESSING" : "YES",
+            "DRIVERKIT_DEPLOYMENT_TARGET" : "21.0",
+            "DYLIB_INSTALL_NAME_BASE[__platform_filter=driverkit]" : "@rpath",
+            "DYLIB_INSTALL_NAME_BASE[__platform_filter=ios-maccatalyst]" : "@rpath",
+            "DYLIB_INSTALL_NAME_BASE[__platform_filter=ios;ios-simulator]" : "@rpath",
+            "DYLIB_INSTALL_NAME_BASE[__platform_filter=macos]" : "@rpath",
+            "DYLIB_INSTALL_NAME_BASE[__platform_filter=tvos;tvos-simulator]" : "@rpath",
+            "DYLIB_INSTALL_NAME_BASE[__platform_filter=watchos;watchos-simulator]" : "@rpath",
+            "DYLIB_INSTALL_NAME_BASE[__platform_filter=xros;xros-simulator]" : "@rpath",
+            "ENABLE_TESTING_SEARCH_PATHS" : "YES",
+            "ENTITLEMENTS_REQUIRED" : "NO",
+            "GCC_OPTIMIZATION_LEVEL" : "s",
+            "GCC_PREPROCESSOR_DEFINITIONS" : [
+              "$(inherited)",
+              "SWIFT_PACKAGE"
+            ],
+            "IPHONEOS_DEPLOYMENT_TARGET" : "15.0",
+            "IPHONEOS_DEPLOYMENT_TARGET[__platform_filter=ios-maccatalyst]" : "15.0",
+            "KEEP_PRIVATE_EXTERNS" : "NO",
+            "LIBTOOL_NO_WARNING_FOR_NO_SYMBOLS" : "YES",
+            "LINKER_DRIVER" : "auto",
+            "MACOSX_DEPLOYMENT_TARGET" : "14.0",
+            "OTHER_CFLAGS" : [
+              "$(inherited)",
+              "-DXcode"
+            ],
+            "OTHER_LDRFLAGS" : [
+
+            ],
+            "OTHER_SWIFT_FLAGS" : [
+              "$(inherited)",
+              "-DXcode"
+            ],
+            "PRODUCT_NAME" : "$(TARGET_NAME)",
+            "SKIP_INSTALL" : "YES",
+            "SPECIALIZATION_SDK_OPTIONS[__platform_filter=macos]" : [
+
+            ],
+            "SUPPORTED_PLATFORMS" : [
+              "$(AVAILABLE_PLATFORMS)"
+            ],
+            "SWIFT_ACTIVE_COMPILATION_CONDITIONS" : [
+              "$(inherited)",
+              "SWIFT_PACKAGE"
+            ],
+            "SWIFT_INSTALL_OBJC_HEADER" : "NO",
+            "SWIFT_OBJC_INTERFACE_HEADER_NAME" : "",
+            "SWIFT_OPTIMIZATION_LEVEL" : "-Owholemodule",
+            "TARGETED_DEVICE_FAMILY" : "",
+            "TVOS_DEPLOYMENT_TARGET" : "15.0",
+            "USE_HEADERMAP" : "NO",
+            "WATCHOS_DEPLOYMENT_TARGET" : "9.0",
+            "XROS_DEPLOYMENT_TARGET" : "1.0"
+          },
+          "guid" : "PACKAGE:mac::BUILDCONFIG_1",
+          "impartedBuildProperties" : {
+            "buildSettings" : {
+
+            }
+          },
+          "name" : "Release"
+        }
+      ],
+      "defaultConfigurationName" : "Release",
+      "groupTree" : {
+        "children" : [
+          {
+            "children" : [
+
+            ],
+            "guid" : "PACKAGE:mac::MAINGROUP::REF_0",
+            "name" : "AdditionalFiles",
+            "path" : "/",
+            "sourceTree" : "<absolute>",
+            "type" : "group"
+          },
+          {
+            "children" : [
+
+            ],
+            "guid" : "PACKAGE:mac::MAINGROUP::REF_1",
+            "name" : "Binaries",
+            "path" : "/",
+            "sourceTree" : "<absolute>",
+            "type" : "group"
+          },
+          {
+            "children" : [
+              {
+                "fileType" : "sourcecode.swift",
+                "guid" : "PACKAGE:mac::MAINGROUP::REF_2::REF_0",
+                "name" : "main.swift",
+                "path" : "main.swift",
+                "sourceTree" : "<group>",
+                "type" : "file"
+              }
+            ],
+            "guid" : "PACKAGE:mac::MAINGROUP::REF_2",
+            "name" : "/Users/pritamsarkar/.gemini/antigravity/scratch/PhoneLink/mac/Sources/PhoneLinkCLI",
+            "path" : "/Users/pritamsarkar/.gemini/antigravity/scratch/PhoneLink/mac/Sources/PhoneLinkCLI",
+            "sourceTree" : "<absolute>",
+            "type" : "group"
+          },
+          {
+            "children" : [
+              {
+                "fileType" : "sourcecode.swift",
+                "guid" : "PACKAGE:mac::MAINGROUP::REF_3::REF_0",
+                "name" : "main.swift",
+                "path" : "main.swift",
+                "sourceTree" : "<group>",
+                "type" : "file"
+              }
+            ],
+            "guid" : "PACKAGE:mac::MAINGROUP::REF_3",
+            "name" : "/Users/pritamsarkar/.gemini/antigravity/scratch/PhoneLink/mac/Tests/PhoneLinkTests",
+            "path" : "/Users/pritamsarkar/.gemini/antigravity/scratch/PhoneLink/mac/Tests/PhoneLinkTests",
+            "sourceTree" : "<absolute>",
+            "type" : "group"
+          },
+          {
+            "children" : [
+              {
+                "fileType" : "sourcecode.swift",
+                "guid" : "PACKAGE:mac::MAINGROUP::REF_4::REF_0",
+                "name" : "main.swift",
+                "path" : "main.swift",
+                "sourceTree" : "<group>",
+                "type" : "file"
+              }
+            ],
+            "guid" : "PACKAGE:mac::MAINGROUP::REF_4",
+            "name" : "/Users/pritamsarkar/.gemini/antigravity/scratch/PhoneLink/mac/Sources/PhoneLinkCLI",
+            "path" : "/Users/pritamsarkar/.gemini/antigravity/scratch/PhoneLink/mac/Sources/PhoneLinkCLI",
+            "sourceTree" : "<absolute>",
+            "type" : "group"
+          },
+          {
+            "children" : [
+              {
+                "fileType" : "sourcecode.swift",
+                "guid" : "PACKAGE:mac::MAINGROUP::REF_5::REF_0",
+                "name" : "PhoneLinkKit.swift",
+                "path" : "PhoneLinkKit.swift",
+                "sourceTree" : "<group>",
+                "type" : "file"
+              }
+            ],
+            "guid" : "PACKAGE:mac::MAINGROUP::REF_5",
+            "name" : "/Users/pritamsarkar/.gemini/antigravity/scratch/PhoneLink/mac/Sources/PhoneLinkKit",
+            "path" : "/Users/pritamsarkar/.gemini/antigravity/scratch/PhoneLink/mac/Sources/PhoneLinkKit",
+            "sourceTree" : "<absolute>",
+            "type" : "group"
+          },
+          {
+            "children" : [
+              {
+                "fileType" : "sourcecode.swift",
+                "guid" : "PACKAGE:mac::MAINGROUP::REF_6::REF_0",
+                "name" : "PhoneLinkKit.swift",
+                "path" : "PhoneLinkKit.swift",
+                "sourceTree" : "<group>",
+                "type" : "file"
+              }
+            ],
+            "guid" : "PACKAGE:mac::MAINGROUP::REF_6",
+            "name" : "/Users/pritamsarkar/.gemini/antigravity/scratch/PhoneLink/mac/Sources/PhoneLinkKit",
+            "path" : "/Users/pritamsarkar/.gemini/antigravity/scratch/PhoneLink/mac/Sources/PhoneLinkKit",
+            "sourceTree" : "<absolute>",
+            "type" : "group"
+          },
+          {
+            "children" : [
+              {
+                "fileType" : "sourcecode.swift",
+                "guid" : "PACKAGE:mac::MAINGROUP::REF_7::REF_0",
+                "name" : "main.swift",
+                "path" : "main.swift",
+                "sourceTree" : "<group>",
+                "type" : "file"
+              }
+            ],
+            "guid" : "PACKAGE:mac::MAINGROUP::REF_7",
+            "name" : "/Users/pritamsarkar/.gemini/antigravity/scratch/PhoneLink/mac/Tests/PhoneLinkTests",
+            "path" : "/Users/pritamsarkar/.gemini/antigravity/scratch/PhoneLink/mac/Tests/PhoneLinkTests",
+            "sourceTree" : "<absolute>",
+            "type" : "group"
+          }
+        ],
+        "guid" : "PACKAGE:mac::MAINGROUP",
+        "name" : "",
+        "path" : "",
+        "sourceTree" : "<group>",
+        "type" : "group"
+      },
+      "guid" : "PACKAGE:mac",
+      "path" : "/Users/pritamsarkar/.gemini/antigravity/scratch/PhoneLink/mac/Package.swift",
+      "projectDirectory" : "/Users/pritamsarkar/.gemini/antigravity/scratch/PhoneLink/mac",
+      "projectIsPackage" : "true",
+      "projectName" : "PhoneLinkMac",
+      "targets" : [
+        "48e22fe81a288ef1a263572d7df869b1905e55e73da4c6d354da7257ae000b97",
+        "caff49be8b238df45f9a02ad50702618b716bbebbe53759e27899034577c71a6",
+        "771b0a28c9dec9987f5adef80ec4a8c1f83639b0877cdfffb1e8af8575fe166a",
+        "d95eaf14766bdbae7e60ca1728e822270643564a3ab8a3d2f040f526ba857ea1",
+        "173d4db045c230652850ce501d7838a141cd861ad2caa0a5e17e448daae3eb20",
+        "5f7b5cb063e09f6e112cf84ab457e8e908d177c6eb5482701f20757072b45c31",
+        "7ff8e3972f934bbd6bf13691bc2617e64290a2ea50f536bf7a25ba2e00433f33",
+        "3f0419858c8eb2a5711faa577929a0f6335ea463145fcdea05522ad3f22fff82",
+        "6c8db254bd885e368b2287571d1ae0d7787875c2efedd8858eefc4d6dbfa410c"
+      ]
+    },
+    "signature" : "51ffce481f347470d6f55406517456015e98ff5bce7b04ab8fb4b5f79d3eb750",
+    "type" : "project"
+  },
+  {
+    "contents" : {
+      "approvedByUser" : "true",
+      "buildConfigurations" : [
+        {
+          "buildSettings" : {
+            "DOCC_EXTRACT_PROJECT_HEADERS_DOCUMENTATION" : "YES",
+            "DRIVERKIT_DEPLOYMENT_TARGET" : "21.0",
+            "GENERATE_EMBED_IN_CODE_ACCESSORS" : "NO",
+            "GENERATE_RESOURCE_ACCESSORS" : "YES",
+            "IPHONEOS_DEPLOYMENT_TARGET" : "15.0",
+            "IPHONEOS_DEPLOYMENT_TARGET[__platform_filter=ios-maccatalyst]" : "15.0",
+            "MACOSX_DEPLOYMENT_TARGET" : "14.0",
+            "OTHER_SWIFT_FLAGS" : [
+              "$(inherited)",
+              "$(OTHER_SWIFT_FLAGS_ENABLE_LIBFUZZER_$(ENABLE_LIBFUZZER))"
+            ],
+            "OTHER_SWIFT_FLAGS_ENABLE_LIBFUZZER_YES" : [
+              "-Xfrontend",
+              "-entry-point-function-name",
+              "-Xfrontend",
+              "PhoneLinkCLI_main"
+            ],
+            "PACKAGE_RESOURCE_TARGET_KIND" : "regular",
+            "PRODUCT_BUNDLE_IDENTIFIER" : "mac.phonelink",
+            "PRODUCT_MODULE_NAME" : "PhoneLinkCLI",
+            "PRODUCT_NAME" : "$(TARGET_NAME)",
+            "SDKROOT" : "auto",
+            "SDK_VARIANT" : "auto",
+            "SWIFT_DISABLE_PARSE_AS_LIBRARY" : "YES",
+            "SWIFT_ENABLE_BARE_SLASH_REGEX" : "NO",
+            "SWIFT_INSTALL_MODULE" : "NO",
+            "SWIFT_LIBRARIES_ONLY" : "NO",
+            "SWIFT_PACKAGE_NAME" : "mac",
+            "SWIFT_VERSION" : "5",
+            "SYMBOL_GRAPH_EXTRACTOR_OUTPUT_DIR" : "$(TARGET_BUILD_DIR)/$(CURRENT_ARCH)/PhoneLinkCLI.symbolgraphs",
+            "TAPI_EXTRACT_API_OUTPUT_DIR" : "$(TARGET_BUILD_DIR)/$(CURRENT_ARCH)/PhoneLinkCLI.symbolgraphs",
+            "TARGET_NAME" : "phonelink",
+            "TARGET_TEMP_DIR_SUFFIX" : "-p",
+            "TVOS_DEPLOYMENT_TARGET" : "15.0",
+            "WATCHOS_DEPLOYMENT_TARGET" : "9.0",
+            "XROS_DEPLOYMENT_TARGET" : "1.0"
+          },
+          "guid" : "PACKAGE-PRODUCT:mac_phonelink.phonelink::BUILDCONFIG_0",
+          "impartedBuildProperties" : {
+            "buildSettings" : {
+
+            }
+          },
+          "name" : "Debug"
+        },
+        {
+          "buildSettings" : {
+            "DOCC_EXTRACT_PROJECT_HEADERS_DOCUMENTATION" : "YES",
+            "DRIVERKIT_DEPLOYMENT_TARGET" : "21.0",
+            "GENERATE_EMBED_IN_CODE_ACCESSORS" : "NO",
+            "GENERATE_RESOURCE_ACCESSORS" : "YES",
+            "IPHONEOS_DEPLOYMENT_TARGET" : "15.0",
+            "IPHONEOS_DEPLOYMENT_TARGET[__platform_filter=ios-maccatalyst]" : "15.0",
+            "MACOSX_DEPLOYMENT_TARGET" : "14.0",
+            "OTHER_SWIFT_FLAGS" : [
+              "$(inherited)",
+              "$(OTHER_SWIFT_FLAGS_ENABLE_LIBFUZZER_$(ENABLE_LIBFUZZER))"
+            ],
+            "OTHER_SWIFT_FLAGS_ENABLE_LIBFUZZER_YES" : [
+              "-Xfrontend",
+              "-entry-point-function-name",
+              "-Xfrontend",
+              "PhoneLinkCLI_main"
+            ],
+            "PACKAGE_RESOURCE_TARGET_KIND" : "regular",
+            "PRODUCT_BUNDLE_IDENTIFIER" : "mac.phonelink",
+            "PRODUCT_MODULE_NAME" : "PhoneLinkCLI",
+            "PRODUCT_NAME" : "$(TARGET_NAME)",
+            "SDKROOT" : "auto",
+            "SDK_VARIANT" : "auto",
+            "SWIFT_DISABLE_PARSE_AS_LIBRARY" : "YES",
+            "SWIFT_ENABLE_BARE_SLASH_REGEX" : "NO",
+            "SWIFT_INSTALL_MODULE" : "NO",
+            "SWIFT_LIBRARIES_ONLY" : "NO",
+            "SWIFT_PACKAGE_NAME" : "mac",
+            "SWIFT_VERSION" : "5",
+            "SYMBOL_GRAPH_EXTRACTOR_OUTPUT_DIR" : "$(TARGET_BUILD_DIR)/$(CURRENT_ARCH)/PhoneLinkCLI.symbolgraphs",
+            "TAPI_EXTRACT_API_OUTPUT_DIR" : "$(TARGET_BUILD_DIR)/$(CURRENT_ARCH)/PhoneLinkCLI.symbolgraphs",
+            "TARGET_NAME" : "phonelink",
+            "TARGET_TEMP_DIR_SUFFIX" : "-p",
+            "TVOS_DEPLOYMENT_TARGET" : "15.0",
+            "WATCHOS_DEPLOYMENT_TARGET" : "9.0",
+            "XROS_DEPLOYMENT_TARGET" : "1.0"
+          },
+          "guid" : "PACKAGE-PRODUCT:mac_phonelink.phonelink::BUILDCONFIG_1",
+          "impartedBuildProperties" : {
+            "buildSettings" : {
+
+            }
+          },
+          "name" : "Release"
+        }
+      ],
+      "buildPhases" : [
+        {
+          "buildFiles" : [
+            {
+              "codeSignOnCopy" : "false",
+              "fileReference" : "PACKAGE:mac::MAINGROUP::REF_2::REF_0",
+              "guid" : "PACKAGE-PRODUCT:mac_phonelink.phonelink::BUILDPHASE_0::0",
+              "platformFilters" : [
+
+              ],
+              "removeHeadersOnCopy" : "false"
+            }
+          ],
+          "guid" : "PACKAGE-PRODUCT:mac_phonelink.phonelink::BUILDPHASE_0",
+          "type" : "com.apple.buildphase.sources"
+        },
+        {
+          "buildFiles" : [
+            {
+              "guid" : "PACKAGE-PRODUCT:mac_phonelink.phonelink::BUILDPHASE_1::0",
+              "platformFilters" : [
+
+              ],
+              "targetReference" : "PACKAGE-TARGET:PhoneLinkKit"
+            }
+          ],
+          "guid" : "PACKAGE-PRODUCT:mac_phonelink.phonelink::BUILDPHASE_1",
+          "type" : "com.apple.buildphase.frameworks"
+        }
+      ],
+      "buildRules" : [
+
+      ],
+      "customTasks" : [
+
+      ],
+      "dependencies" : [
+        {
+          "guid" : "PACKAGE-TARGET:PhoneLinkKit",
+          "platformFilters" : [
+
+          ]
+        }
+      ],
+      "guid" : "PACKAGE-PRODUCT:mac_phonelink.phonelink",
+      "name" : "phonelink-product",
+      "productReference" : {
+        "guid" : "PRODUCTREF-PACKAGE-PRODUCT:mac_phonelink.phonelink",
+        "name" : "$(EXECUTABLE_NAME)",
+        "type" : "file"
+      },
+      "productTypeIdentifier" : "com.apple.product-type.tool",
+      "type" : "standard"
+    },
+    "signature" : "48e22fe81a288ef1a263572d7df869b1905e55e73da4c6d354da7257ae000b97",
+    "type" : "target"
+  },
+  {
+    "contents" : {
+      "approvedByUser" : "true",
+      "buildConfigurations" : [
+        {
+          "buildSettings" : {
+            "EXECUTABLE_PREFIX" : "lib",
+            "EXECUTABLE_PREFIX[__platform_filter=windows-msvc]" : "",
+            "PRODUCT_NAME" : "PhoneLinkKit",
+            "SDKROOT" : "auto",
+            "SDK_VARIANT" : "auto",
+            "TARGET_NAME" : "PhoneLinkKit-product",
+            "TARGET_TEMP_DIR_SUFFIX" : "-p",
+            "USES_SWIFTPM_UNSAFE_FLAGS" : "NO"
+          },
+          "guid" : "PACKAGE-PRODUCT:mac_PhoneLinkKit.PhoneLinkKit::BUILDCONFIG_0",
+          "impartedBuildProperties" : {
+            "buildSettings" : {
+
+            }
+          },
+          "name" : "Debug"
+        },
+        {
+          "buildSettings" : {
+            "EXECUTABLE_PREFIX" : "lib",
+            "EXECUTABLE_PREFIX[__platform_filter=windows-msvc]" : "",
+            "PRODUCT_NAME" : "PhoneLinkKit",
+            "SDKROOT" : "auto",
+            "SDK_VARIANT" : "auto",
+            "TARGET_NAME" : "PhoneLinkKit-product",
+            "TARGET_TEMP_DIR_SUFFIX" : "-p",
+            "USES_SWIFTPM_UNSAFE_FLAGS" : "NO"
+          },
+          "guid" : "PACKAGE-PRODUCT:mac_PhoneLinkKit.PhoneLinkKit::BUILDCONFIG_1",
+          "impartedBuildProperties" : {
+            "buildSettings" : {
+
+            }
+          },
+          "name" : "Release"
+        }
+      ],
+      "buildPhases" : [
+        {
+          "buildFiles" : [
+            {
+              "guid" : "PACKAGE-PRODUCT:mac_PhoneLinkKit.PhoneLinkKit::BUILDPHASE_0::0",
+              "platformFilters" : [
+
+              ],
+              "targetReference" : "PACKAGE-TARGET:PhoneLinkKit"
+            }
+          ],
+          "guid" : "PACKAGE-PRODUCT:mac_PhoneLinkKit.PhoneLinkKit::BUILDPHASE_0",
+          "type" : "com.apple.buildphase.frameworks"
+        },
+        {
+          "buildFiles" : [
+
+          ],
+          "guid" : "PACKAGE-PRODUCT:mac_PhoneLinkKit.PhoneLinkKit::BUILDPHASE_1",
+          "type" : "com.apple.buildphase.sources"
+        }
+      ],
+      "buildRules" : [
+
+      ],
+      "customTasks" : [
+
+      ],
+      "dependencies" : [
+        {
+          "guid" : "PACKAGE-TARGET:PhoneLinkKit",
+          "platformFilters" : [
+
+          ]
+        }
+      ],
+      "dynamicTargetVariantGuid" : "PACKAGE-PRODUCT:mac_PhoneLinkKit.PhoneLinkKit-684665FBBF00BBBC-dynamic",
+      "guid" : "PACKAGE-PRODUCT:mac_PhoneLinkKit.PhoneLinkKit",
+      "name" : "PhoneLinkKit-product",
+      "productReference" : {
+        "guid" : "PRODUCTREF-PACKAGE-PRODUCT:mac_PhoneLinkKit.PhoneLinkKit",
+        "name" : "$(EXECUTABLE_NAME)",
+        "type" : "file"
+      },
+      "productTypeIdentifier" : "com.apple.product-type.library.static",
+      "type" : "standard"
+    },
+    "signature" : "caff49be8b238df45f9a02ad50702618b716bbebbe53759e27899034577c71a6",
+    "type" : "target"
+  },
+  {
+    "contents" : {
+      "approvedByUser" : "true",
+      "buildConfigurations" : [
+        {
+          "buildSettings" : {
+            "DOCC_EXTRACT_PROJECT_HEADERS_DOCUMENTATION" : "YES",
+            "DRIVERKIT_DEPLOYMENT_TARGET" : "21.0",
+            "GENERATE_EMBED_IN_CODE_ACCESSORS" : "NO",
+            "GENERATE_RESOURCE_ACCESSORS" : "YES",
+            "IPHONEOS_DEPLOYMENT_TARGET" : "15.0",
+            "IPHONEOS_DEPLOYMENT_TARGET[__platform_filter=ios-maccatalyst]" : "15.0",
+            "MACOSX_DEPLOYMENT_TARGET" : "14.0",
+            "OTHER_SWIFT_FLAGS" : [
+              "$(inherited)",
+              "$(OTHER_SWIFT_FLAGS_ENABLE_LIBFUZZER_$(ENABLE_LIBFUZZER))"
+            ],
+            "OTHER_SWIFT_FLAGS_ENABLE_LIBFUZZER_YES" : [
+              "-Xfrontend",
+              "-entry-point-function-name",
+              "-Xfrontend",
+              "PhoneLinkTests_main"
+            ],
+            "PACKAGE_RESOURCE_TARGET_KIND" : "regular",
+            "PRODUCT_BUNDLE_IDENTIFIER" : "mac.PhoneLinkTests",
+            "PRODUCT_MODULE_NAME" : "PhoneLinkTests",
+            "PRODUCT_NAME" : "$(TARGET_NAME)",
+            "SDKROOT" : "auto",
+            "SDK_VARIANT" : "auto",
+            "SWIFT_DISABLE_PARSE_AS_LIBRARY" : "YES",
+            "SWIFT_ENABLE_BARE_SLASH_REGEX" : "NO",
+            "SWIFT_INSTALL_MODULE" : "NO",
+            "SWIFT_LIBRARIES_ONLY" : "NO",
+            "SWIFT_PACKAGE_NAME" : "mac",
+            "SWIFT_VERSION" : "5",
+            "SYMBOL_GRAPH_EXTRACTOR_OUTPUT_DIR" : "$(TARGET_BUILD_DIR)/$(CURRENT_ARCH)/PhoneLinkTests.symbolgraphs",
+            "TAPI_EXTRACT_API_OUTPUT_DIR" : "$(TARGET_BUILD_DIR)/$(CURRENT_ARCH)/PhoneLinkTests.symbolgraphs",
+            "TARGET_NAME" : "PhoneLinkTests",
+            "TARGET_TEMP_DIR_SUFFIX" : "-p",
+            "TVOS_DEPLOYMENT_TARGET" : "15.0",
+            "WATCHOS_DEPLOYMENT_TARGET" : "9.0",
+            "XROS_DEPLOYMENT_TARGET" : "1.0"
+          },
+          "guid" : "PACKAGE-PRODUCT:mac_PhoneLinkTests.PhoneLinkTests::BUILDCONFIG_0",
+          "impartedBuildProperties" : {
+            "buildSettings" : {
+
+            }
+          },
+          "name" : "Debug"
+        },
+        {
+          "buildSettings" : {
+            "DOCC_EXTRACT_PROJECT_HEADERS_DOCUMENTATION" : "YES",
+            "DRIVERKIT_DEPLOYMENT_TARGET" : "21.0",
+            "GENERATE_EMBED_IN_CODE_ACCESSORS" : "NO",
+            "GENERATE_RESOURCE_ACCESSORS" : "YES",
+            "IPHONEOS_DEPLOYMENT_TARGET" : "15.0",
+            "IPHONEOS_DEPLOYMENT_TARGET[__platform_filter=ios-maccatalyst]" : "15.0",
+            "MACOSX_DEPLOYMENT_TARGET" : "14.0",
+            "OTHER_SWIFT_FLAGS" : [
+              "$(inherited)",
+              "$(OTHER_SWIFT_FLAGS_ENABLE_LIBFUZZER_$(ENABLE_LIBFUZZER))"
+            ],
+            "OTHER_SWIFT_FLAGS_ENABLE_LIBFUZZER_YES" : [
+              "-Xfrontend",
+              "-entry-point-function-name",
+              "-Xfrontend",
+              "PhoneLinkTests_main"
+            ],
+            "PACKAGE_RESOURCE_TARGET_KIND" : "regular",
+            "PRODUCT_BUNDLE_IDENTIFIER" : "mac.PhoneLinkTests",
+            "PRODUCT_MODULE_NAME" : "PhoneLinkTests",
+            "PRODUCT_NAME" : "$(TARGET_NAME)",
+            "SDKROOT" : "auto",
+            "SDK_VARIANT" : "auto",
+            "SWIFT_DISABLE_PARSE_AS_LIBRARY" : "YES",
+            "SWIFT_ENABLE_BARE_SLASH_REGEX" : "NO",
+            "SWIFT_INSTALL_MODULE" : "NO",
+            "SWIFT_LIBRARIES_ONLY" : "NO",
+            "SWIFT_PACKAGE_NAME" : "mac",
+            "SWIFT_VERSION" : "5",
+            "SYMBOL_GRAPH_EXTRACTOR_OUTPUT_DIR" : "$(TARGET_BUILD_DIR)/$(CURRENT_ARCH)/PhoneLinkTests.symbolgraphs",
+            "TAPI_EXTRACT_API_OUTPUT_DIR" : "$(TARGET_BUILD_DIR)/$(CURRENT_ARCH)/PhoneLinkTests.symbolgraphs",
+            "TARGET_NAME" : "PhoneLinkTests",
+            "TARGET_TEMP_DIR_SUFFIX" : "-p",
+            "TVOS_DEPLOYMENT_TARGET" : "15.0",
+            "WATCHOS_DEPLOYMENT_TARGET" : "9.0",
+            "XROS_DEPLOYMENT_TARGET" : "1.0"
+          },
+          "guid" : "PACKAGE-PRODUCT:mac_PhoneLinkTests.PhoneLinkTests::BUILDCONFIG_1",
+          "impartedBuildProperties" : {
+            "buildSettings" : {
+
+            }
+          },
+          "name" : "Release"
+        }
+      ],
+      "buildPhases" : [
+        {
+          "buildFiles" : [
+            {
+              "codeSignOnCopy" : "false",
+              "fileReference" : "PACKAGE:mac::MAINGROUP::REF_3::REF_0",
+              "guid" : "PACKAGE-PRODUCT:mac_PhoneLinkTests.PhoneLinkTests::BUILDPHASE_0::0",
+              "platformFilters" : [
+
+              ],
+              "removeHeadersOnCopy" : "false"
+            }
+          ],
+          "guid" : "PACKAGE-PRODUCT:mac_PhoneLinkTests.PhoneLinkTests::BUILDPHASE_0",
+          "type" : "com.apple.buildphase.sources"
+        },
+        {
+          "buildFiles" : [
+            {
+              "guid" : "PACKAGE-PRODUCT:mac_PhoneLinkTests.PhoneLinkTests::BUILDPHASE_1::0",
+              "platformFilters" : [
+
+              ],
+              "targetReference" : "PACKAGE-TARGET:PhoneLinkKit"
+            }
+          ],
+          "guid" : "PACKAGE-PRODUCT:mac_PhoneLinkTests.PhoneLinkTests::BUILDPHASE_1",
+          "type" : "com.apple.buildphase.frameworks"
+        }
+      ],
+      "buildRules" : [
+
+      ],
+      "customTasks" : [
+
+      ],
+      "dependencies" : [
+        {
+          "guid" : "PACKAGE-TARGET:PhoneLinkKit",
+          "platformFilters" : [
+
+          ]
+        }
+      ],
+      "guid" : "PACKAGE-PRODUCT:mac_PhoneLinkTests.PhoneLinkTests",
+      "name" : "PhoneLinkTests-product",
+      "productReference" : {
+        "guid" : "PRODUCTREF-PACKAGE-PRODUCT:mac_PhoneLinkTests.PhoneLinkTests",
+        "name" : "$(EXECUTABLE_NAME)",
+        "type" : "file"
+      },
+      "productTypeIdentifier" : "com.apple.product-type.tool",
+      "type" : "standard"
+    },
+    "signature" : "d95eaf14766bdbae7e60ca1728e822270643564a3ab8a3d2f040f526ba857ea1",
+    "type" : "target"
+  },
+  {
+    "contents" : {
+      "approvedByUser" : "true",
+      "buildConfigurations" : [
+        {
+          "buildSettings" : {
+            "DEFINES_MODULE" : "YES",
+            "DOCC_EXTRACT_PROJECT_HEADERS_DOCUMENTATION" : "YES",
+            "GENERATE_EMBED_IN_CODE_ACCESSORS" : "YES",
+            "GENERATE_PRELINK_OBJECT_FILE" : "NO",
+            "GENERATE_RESOURCE_ACCESSORS" : "YES",
+            "MODULEMAP_FILE_CONTENTS" : "module PhoneLinkCLI {\nheader \"PhoneLinkCLI-Swift.h\"\nexport *\n}",
+            "MODULEMAP_PATH" : "$(GENERATED_MODULEMAP_DIR)/PhoneLinkCLI.modulemap",
+            "OTHER_SWIFT_FLAGS" : [
+              "$(inherited)",
+              "-Xfrontend",
+              "-entry-point-function-name",
+              "-Xfrontend",
+              "PhoneLinkCLI_main"
+            ],
+            "PACKAGE_RESOURCE_TARGET_KIND" : "regular",
+            "PRODUCT_BUNDLE_IDENTIFIER" : "mac.PhoneLinkCLI",
+            "PRODUCT_MODULE_NAME" : "PhoneLinkCLI",
+            "PRODUCT_NAME" : "$(TARGET_NAME)",
+            "SDKROOT" : "auto",
+            "SDK_VARIANT" : "auto",
+            "STRIP_INSTALLED_PRODUCT" : "NO",
+            "SUPPORTS_TEXT_BASED_API" : "NO",
+            "SWIFT_DISABLE_PARSE_AS_LIBRARY" : "YES",
+            "SWIFT_ENABLE_BARE_SLASH_REGEX" : "NO",
+            "SWIFT_LIBRARIES_ONLY" : "NO",
+            "SWIFT_OBJC_INTERFACE_HEADER_DIR" : "$(GENERATED_MODULEMAP_DIR)",
+            "SWIFT_OBJC_INTERFACE_HEADER_NAME" : "PhoneLinkCLI-Swift.h",
+            "SWIFT_PACKAGE_NAME" : "mac",
+            "SWIFT_VERSION" : "5",
+            "SYMBOL_GRAPH_EXTRACTOR_OUTPUT_DIR" : "$(TARGET_BUILD_DIR)/$(CURRENT_ARCH)/PhoneLinkCLI.symbolgraphs",
+            "TAPI_DYLIB_INSTALL_NAME" : "PhoneLinkCLI",
+            "TAPI_EXTRACT_API_OUTPUT_DIR" : "$(TARGET_BUILD_DIR)/$(CURRENT_ARCH)/PhoneLinkCLI.symbolgraphs",
+            "TARGET_BUILD_DIR" : "$(TARGET_BUILD_DIR)/ExecutableModules",
+            "TARGET_NAME" : "PhoneLinkCLI-684665FB3C238E6C-testable",
+            "TARGET_TEMP_DIR_SUFFIX" : "-t"
+          },
+          "guid" : "PACKAGE-TARGET:PhoneLinkCLI-684665FB3C238E6C-testable::BUILDCONFIG_0",
+          "impartedBuildProperties" : {
+            "buildSettings" : {
+              "FRAMEWORK_SEARCH_PATHS" : [
+                "$(BUILT_PRODUCTS_DIR)/PackageFrameworks",
+                "$(inherited)"
+              ],
+              "LD_RUNPATH_SEARCH_PATHS" : [
+                "$(RPATH_ORIGIN)",
+                "$(BUILT_PRODUCTS_DIR)/PackageFrameworks",
+                "$(inherited)"
+              ],
+              "LD_WARN_DUPLICATE_LIBRARIES" : "NO",
+              "LIBRARY_SEARCH_PATHS[__platform_filter=windows-msvc]" : [
+                "$(inherited)",
+                "$(TARGET_BUILD_DIR)/ExecutableModules"
+              ],
+              "OTHER_CFLAGS" : [
+                "-fmodule-map-file=$(GENERATED_MODULEMAP_DIR)/PhoneLinkCLI.modulemap",
+                "$(inherited)"
+              ]
+            }
+          },
+          "name" : "Debug"
+        },
+        {
+          "buildSettings" : {
+            "DEFINES_MODULE" : "YES",
+            "DOCC_EXTRACT_PROJECT_HEADERS_DOCUMENTATION" : "YES",
+            "GENERATE_EMBED_IN_CODE_ACCESSORS" : "YES",
+            "GENERATE_PRELINK_OBJECT_FILE" : "NO",
+            "GENERATE_RESOURCE_ACCESSORS" : "YES",
+            "MODULEMAP_FILE_CONTENTS" : "module PhoneLinkCLI {\nheader \"PhoneLinkCLI-Swift.h\"\nexport *\n}",
+            "MODULEMAP_PATH" : "$(GENERATED_MODULEMAP_DIR)/PhoneLinkCLI.modulemap",
+            "OTHER_SWIFT_FLAGS" : [
+              "$(inherited)",
+              "-Xfrontend",
+              "-entry-point-function-name",
+              "-Xfrontend",
+              "PhoneLinkCLI_main"
+            ],
+            "PACKAGE_RESOURCE_TARGET_KIND" : "regular",
+            "PRODUCT_BUNDLE_IDENTIFIER" : "mac.PhoneLinkCLI",
+            "PRODUCT_MODULE_NAME" : "PhoneLinkCLI",
+            "PRODUCT_NAME" : "$(TARGET_NAME)",
+            "SDKROOT" : "auto",
+            "SDK_VARIANT" : "auto",
+            "STRIP_INSTALLED_PRODUCT" : "NO",
+            "SUPPORTS_TEXT_BASED_API" : "NO",
+            "SWIFT_DISABLE_PARSE_AS_LIBRARY" : "YES",
+            "SWIFT_ENABLE_BARE_SLASH_REGEX" : "NO",
+            "SWIFT_LIBRARIES_ONLY" : "NO",
+            "SWIFT_OBJC_INTERFACE_HEADER_DIR" : "$(GENERATED_MODULEMAP_DIR)",
+            "SWIFT_OBJC_INTERFACE_HEADER_NAME" : "PhoneLinkCLI-Swift.h",
+            "SWIFT_PACKAGE_NAME" : "mac",
+            "SWIFT_VERSION" : "5",
+            "SYMBOL_GRAPH_EXTRACTOR_OUTPUT_DIR" : "$(TARGET_BUILD_DIR)/$(CURRENT_ARCH)/PhoneLinkCLI.symbolgraphs",
+            "TAPI_DYLIB_INSTALL_NAME" : "PhoneLinkCLI",
+            "TAPI_EXTRACT_API_OUTPUT_DIR" : "$(TARGET_BUILD_DIR)/$(CURRENT_ARCH)/PhoneLinkCLI.symbolgraphs",
+            "TARGET_BUILD_DIR" : "$(TARGET_BUILD_DIR)/ExecutableModules",
+            "TARGET_NAME" : "PhoneLinkCLI-684665FB3C238E6C-testable",
+            "TARGET_TEMP_DIR_SUFFIX" : "-t"
+          },
+          "guid" : "PACKAGE-TARGET:PhoneLinkCLI-684665FB3C238E6C-testable::BUILDCONFIG_1",
+          "impartedBuildProperties" : {
+            "buildSettings" : {
+              "FRAMEWORK_SEARCH_PATHS" : [
+                "$(BUILT_PRODUCTS_DIR)/PackageFrameworks",
+                "$(inherited)"
+              ],
+              "LD_RUNPATH_SEARCH_PATHS" : [
+                "$(RPATH_ORIGIN)",
+                "$(inherited)"
+              ],
+              "LD_WARN_DUPLICATE_LIBRARIES" : "NO",
+              "LIBRARY_SEARCH_PATHS[__platform_filter=windows-msvc]" : [
+                "$(inherited)",
+                "$(TARGET_BUILD_DIR)/ExecutableModules"
+              ],
+              "OTHER_CFLAGS" : [
+                "-fmodule-map-file=$(GENERATED_MODULEMAP_DIR)/PhoneLinkCLI.modulemap",
+                "$(inherited)"
+              ]
+            }
+          },
+          "name" : "Release"
+        }
+      ],
+      "buildPhases" : [
+        {
+          "buildFiles" : [
+            {
+              "codeSignOnCopy" : "false",
+              "fileReference" : "PACKAGE:mac::MAINGROUP::REF_4::REF_0",
+              "guid" : "PACKAGE-TARGET:PhoneLinkCLI-684665FB3C238E6C-testable::BUILDPHASE_0::0",
+              "platformFilters" : [
+
+              ],
+              "removeHeadersOnCopy" : "false"
+            }
+          ],
+          "guid" : "PACKAGE-TARGET:PhoneLinkCLI-684665FB3C238E6C-testable::BUILDPHASE_0",
+          "type" : "com.apple.buildphase.sources"
+        }
+      ],
+      "buildRules" : [
+
+      ],
+      "customTasks" : [
+
+      ],
+      "dependencies" : [
+        {
+          "guid" : "PACKAGE-TARGET:PhoneLinkKit",
+          "platformFilters" : [
+
+          ]
+        }
+      ],
+      "guid" : "PACKAGE-TARGET:PhoneLinkCLI-684665FB3C238E6C-testable",
+      "name" : "PhoneLinkCLI",
+      "productReference" : {
+        "guid" : "PRODUCTREF-PACKAGE-TARGET:PhoneLinkCLI-684665FB3C238E6C-testable",
+        "name" : "$(EXECUTABLE_NAME)",
+        "type" : "file"
+      },
+      "productTypeIdentifier" : "org.swift.product-type.common.object",
+      "type" : "standard"
+    },
+    "signature" : "173d4db045c230652850ce501d7838a141cd861ad2caa0a5e17e448daae3eb20",
+    "type" : "target"
+  },
+  {
+    "contents" : {
+      "approvedByUser" : "true",
+      "buildConfigurations" : [
+        {
+          "buildSettings" : {
+            "DEFINES_MODULE" : "YES",
+            "DOCC_EXTRACT_PROJECT_HEADERS_DOCUMENTATION" : "YES",
+            "GENERATE_PRELINK_OBJECT_FILE" : "NO",
+            "MODULEMAP_FILE_CONTENTS" : "module PhoneLinkKit {\nheader \"PhoneLinkKit-Swift.h\"\nexport *\n}",
+            "MODULEMAP_PATH" : "$(GENERATED_MODULEMAP_DIR)/PhoneLinkKit.modulemap",
+            "PACKAGE_RESOURCE_TARGET_KIND" : "regular",
+            "PRODUCT_BUNDLE_IDENTIFIER" : "mac.PhoneLinkKit",
+            "PRODUCT_MODULE_NAME" : "PhoneLinkKit",
+            "PRODUCT_NAME" : "$(TARGET_NAME)",
+            "SDKROOT" : "auto",
+            "SDK_VARIANT" : "auto",
+            "STRIP_INSTALLED_PRODUCT" : "NO",
+            "SUPPORTS_TEXT_BASED_API" : "NO",
+            "SWIFT_ACTIVE_COMPILATION_CONDITIONS" : [
+              "$(inherited)",
+              "SWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE"
+            ],
+            "SWIFT_DISABLE_COMPILATION_FOR_STATIC_LINKING_WHEN_ANY_TARGET_IS_PROMOTED_TO_DYNAMIC[__platform_filter=windows-msvc]" : [
+              "PACKAGE-PRODUCT:mac_PhoneLinkKit.PhoneLinkKit"
+            ],
+            "SWIFT_DISABLE_PARSE_AS_LIBRARY" : "NO",
+            "SWIFT_ENABLE_BARE_SLASH_REGEX" : "NO",
+            "SWIFT_LIBRARIES_ONLY" : "YES",
+            "SWIFT_OBJC_INTERFACE_HEADER_DIR" : "$(GENERATED_MODULEMAP_DIR)",
+            "SWIFT_OBJC_INTERFACE_HEADER_NAME" : "PhoneLinkKit-Swift.h",
+            "SWIFT_PACKAGE_NAME" : "mac",
+            "SWIFT_VERSION" : "5",
+            "SYMBOL_GRAPH_EXTRACTOR_OUTPUT_DIR" : "$(TARGET_BUILD_DIR)/$(CURRENT_ARCH)/PhoneLinkKit.symbolgraphs",
+            "TAPI_DYLIB_INSTALL_NAME" : "PhoneLinkKit",
+            "TAPI_EXTRACT_API_OUTPUT_DIR" : "$(TARGET_BUILD_DIR)/$(CURRENT_ARCH)/PhoneLinkKit.symbolgraphs",
+            "TARGET_NAME" : "PhoneLinkKit",
+            "TARGET_TEMP_DIR_SUFFIX" : "-t"
+          },
+          "guid" : "PACKAGE-TARGET:PhoneLinkKit::BUILDCONFIG_0",
+          "impartedBuildProperties" : {
+            "buildSettings" : {
+              "FRAMEWORK_SEARCH_PATHS" : [
+                "$(BUILT_PRODUCTS_DIR)/PackageFrameworks",
+                "$(inherited)"
+              ],
+              "LD_RUNPATH_SEARCH_PATHS" : [
+                "$(RPATH_ORIGIN)",
+                "$(BUILT_PRODUCTS_DIR)/PackageFrameworks",
+                "$(inherited)"
+              ],
+              "LD_WARN_DUPLICATE_LIBRARIES" : "NO",
+              "OTHER_CFLAGS" : [
+                "-fmodule-map-file=$(GENERATED_MODULEMAP_DIR)/PhoneLinkKit.modulemap",
+                "$(inherited)"
+              ]
+            }
+          },
+          "name" : "Debug"
+        },
+        {
+          "buildSettings" : {
+            "DEFINES_MODULE" : "YES",
+            "DOCC_EXTRACT_PROJECT_HEADERS_DOCUMENTATION" : "YES",
+            "GENERATE_PRELINK_OBJECT_FILE" : "NO",
+            "MODULEMAP_FILE_CONTENTS" : "module PhoneLinkKit {\nheader \"PhoneLinkKit-Swift.h\"\nexport *\n}",
+            "MODULEMAP_PATH" : "$(GENERATED_MODULEMAP_DIR)/PhoneLinkKit.modulemap",
+            "PACKAGE_RESOURCE_TARGET_KIND" : "regular",
+            "PRODUCT_BUNDLE_IDENTIFIER" : "mac.PhoneLinkKit",
+            "PRODUCT_MODULE_NAME" : "PhoneLinkKit",
+            "PRODUCT_NAME" : "$(TARGET_NAME)",
+            "SDKROOT" : "auto",
+            "SDK_VARIANT" : "auto",
+            "STRIP_INSTALLED_PRODUCT" : "NO",
+            "SUPPORTS_TEXT_BASED_API" : "NO",
+            "SWIFT_ACTIVE_COMPILATION_CONDITIONS" : [
+              "$(inherited)",
+              "SWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE"
+            ],
+            "SWIFT_DISABLE_COMPILATION_FOR_STATIC_LINKING_WHEN_ANY_TARGET_IS_PROMOTED_TO_DYNAMIC[__platform_filter=windows-msvc]" : [
+              "PACKAGE-PRODUCT:mac_PhoneLinkKit.PhoneLinkKit"
+            ],
+            "SWIFT_DISABLE_PARSE_AS_LIBRARY" : "NO",
+            "SWIFT_ENABLE_BARE_SLASH_REGEX" : "NO",
+            "SWIFT_LIBRARIES_ONLY" : "YES",
+            "SWIFT_OBJC_INTERFACE_HEADER_DIR" : "$(GENERATED_MODULEMAP_DIR)",
+            "SWIFT_OBJC_INTERFACE_HEADER_NAME" : "PhoneLinkKit-Swift.h",
+            "SWIFT_PACKAGE_NAME" : "mac",
+            "SWIFT_VERSION" : "5",
+            "SYMBOL_GRAPH_EXTRACTOR_OUTPUT_DIR" : "$(TARGET_BUILD_DIR)/$(CURRENT_ARCH)/PhoneLinkKit.symbolgraphs",
+            "TAPI_DYLIB_INSTALL_NAME" : "PhoneLinkKit",
+            "TAPI_EXTRACT_API_OUTPUT_DIR" : "$(TARGET_BUILD_DIR)/$(CURRENT_ARCH)/PhoneLinkKit.symbolgraphs",
+            "TARGET_NAME" : "PhoneLinkKit",
+            "TARGET_TEMP_DIR_SUFFIX" : "-t"
+          },
+          "guid" : "PACKAGE-TARGET:PhoneLinkKit::BUILDCONFIG_1",
+          "impartedBuildProperties" : {
+            "buildSettings" : {
+              "FRAMEWORK_SEARCH_PATHS" : [
+                "$(BUILT_PRODUCTS_DIR)/PackageFrameworks",
+                "$(inherited)"
+              ],
+              "LD_RUNPATH_SEARCH_PATHS" : [
+                "$(RPATH_ORIGIN)",
+                "$(inherited)"
+              ],
+              "LD_WARN_DUPLICATE_LIBRARIES" : "NO",
+              "OTHER_CFLAGS" : [
+                "-fmodule-map-file=$(GENERATED_MODULEMAP_DIR)/PhoneLinkKit.modulemap",
+                "$(inherited)"
+              ]
+            }
+          },
+          "name" : "Release"
+        }
+      ],
+      "buildPhases" : [
+        {
+          "buildFiles" : [
+            {
+              "codeSignOnCopy" : "false",
+              "fileReference" : "PACKAGE:mac::MAINGROUP::REF_5::REF_0",
+              "guid" : "PACKAGE-TARGET:PhoneLinkKit::BUILDPHASE_0::0",
+              "platformFilters" : [
+
+              ],
+              "removeHeadersOnCopy" : "false"
+            }
+          ],
+          "guid" : "PACKAGE-TARGET:PhoneLinkKit::BUILDPHASE_0",
+          "type" : "com.apple.buildphase.sources"
+        }
+      ],
+      "buildRules" : [
+
+      ],
+      "customTasks" : [
+
+      ],
+      "dependencies" : [
+
+      ],
+      "dynamicTargetVariantGuid" : "PACKAGE-TARGET:PhoneLinkKit-684665FBBF00BBBC-dynamic",
+      "guid" : "PACKAGE-TARGET:PhoneLinkKit",
+      "name" : "PhoneLinkKit",
+      "productReference" : {
+        "guid" : "PRODUCTREF-PACKAGE-TARGET:PhoneLinkKit",
+        "name" : "$(EXECUTABLE_NAME)",
+        "type" : "file"
+      },
+      "productTypeIdentifier" : "org.swift.product-type.library.static",
+      "type" : "standard"
+    },
+    "signature" : "5f7b5cb063e09f6e112cf84ab457e8e908d177c6eb5482701f20757072b45c31",
+    "type" : "target"
+  },
+  {
+    "contents" : {
+      "approvedByUser" : "true",
+      "buildConfigurations" : [
+        {
+          "buildSettings" : {
+            "DEFINES_MODULE" : "YES",
+            "DOCC_EXTRACT_PROJECT_HEADERS_DOCUMENTATION" : "YES",
+            "GENERATE_EMBED_IN_CODE_ACCESSORS" : "YES",
+            "GENERATE_PRELINK_OBJECT_FILE" : "NO",
+            "GENERATE_RESOURCE_ACCESSORS" : "YES",
+            "MODULEMAP_FILE_CONTENTS" : "module PhoneLinkTests {\nheader \"PhoneLinkTests-Swift.h\"\nexport *\n}",
+            "MODULEMAP_PATH" : "$(GENERATED_MODULEMAP_DIR)/PhoneLinkTests.modulemap",
+            "OTHER_SWIFT_FLAGS" : [
+              "$(inherited)",
+              "-Xfrontend",
+              "-entry-point-function-name",
+              "-Xfrontend",
+              "PhoneLinkTests_main"
+            ],
+            "PACKAGE_RESOURCE_TARGET_KIND" : "regular",
+            "PRODUCT_BUNDLE_IDENTIFIER" : "mac.PhoneLinkTests",
+            "PRODUCT_MODULE_NAME" : "PhoneLinkTests",
+            "PRODUCT_NAME" : "$(TARGET_NAME)",
+            "SDKROOT" : "auto",
+            "SDK_VARIANT" : "auto",
+            "STRIP_INSTALLED_PRODUCT" : "NO",
+            "SUPPORTS_TEXT_BASED_API" : "NO",
+            "SWIFT_DISABLE_PARSE_AS_LIBRARY" : "YES",
+            "SWIFT_ENABLE_BARE_SLASH_REGEX" : "NO",
+            "SWIFT_LIBRARIES_ONLY" : "NO",
+            "SWIFT_OBJC_INTERFACE_HEADER_DIR" : "$(GENERATED_MODULEMAP_DIR)",
+            "SWIFT_OBJC_INTERFACE_HEADER_NAME" : "PhoneLinkTests-Swift.h",
+            "SWIFT_PACKAGE_NAME" : "mac",
+            "SWIFT_VERSION" : "5",
+            "SYMBOL_GRAPH_EXTRACTOR_OUTPUT_DIR" : "$(TARGET_BUILD_DIR)/$(CURRENT_ARCH)/PhoneLinkTests.symbolgraphs",
+            "TAPI_DYLIB_INSTALL_NAME" : "PhoneLinkTests",
+            "TAPI_EXTRACT_API_OUTPUT_DIR" : "$(TARGET_BUILD_DIR)/$(CURRENT_ARCH)/PhoneLinkTests.symbolgraphs",
+            "TARGET_BUILD_DIR" : "$(TARGET_BUILD_DIR)/ExecutableModules",
+            "TARGET_NAME" : "PhoneLinkTests-71F39878F4825AA9-testable",
+            "TARGET_TEMP_DIR_SUFFIX" : "-t"
+          },
+          "guid" : "PACKAGE-TARGET:PhoneLinkTests-71F39878F4825AA9-testable::BUILDCONFIG_0",
+          "impartedBuildProperties" : {
+            "buildSettings" : {
+              "FRAMEWORK_SEARCH_PATHS" : [
+                "$(BUILT_PRODUCTS_DIR)/PackageFrameworks",
+                "$(inherited)"
+              ],
+              "LD_RUNPATH_SEARCH_PATHS" : [
+                "$(RPATH_ORIGIN)",
+                "$(BUILT_PRODUCTS_DIR)/PackageFrameworks",
+                "$(inherited)"
+              ],
+              "LD_WARN_DUPLICATE_LIBRARIES" : "NO",
+              "LIBRARY_SEARCH_PATHS[__platform_filter=windows-msvc]" : [
+                "$(inherited)",
+                "$(TARGET_BUILD_DIR)/ExecutableModules"
+              ],
+              "OTHER_CFLAGS" : [
+                "-fmodule-map-file=$(GENERATED_MODULEMAP_DIR)/PhoneLinkTests.modulemap",
+                "$(inherited)"
+              ]
+            }
+          },
+          "name" : "Debug"
+        },
+        {
+          "buildSettings" : {
+            "DEFINES_MODULE" : "YES",
+            "DOCC_EXTRACT_PROJECT_HEADERS_DOCUMENTATION" : "YES",
+            "GENERATE_EMBED_IN_CODE_ACCESSORS" : "YES",
+            "GENERATE_PRELINK_OBJECT_FILE" : "NO",
+            "GENERATE_RESOURCE_ACCESSORS" : "YES",
+            "MODULEMAP_FILE_CONTENTS" : "module PhoneLinkTests {\nheader \"PhoneLinkTests-Swift.h\"\nexport *\n}",
+            "MODULEMAP_PATH" : "$(GENERATED_MODULEMAP_DIR)/PhoneLinkTests.modulemap",
+            "OTHER_SWIFT_FLAGS" : [
+              "$(inherited)",
+              "-Xfrontend",
+              "-entry-point-function-name",
+              "-Xfrontend",
+              "PhoneLinkTests_main"
+            ],
+            "PACKAGE_RESOURCE_TARGET_KIND" : "regular",
+            "PRODUCT_BUNDLE_IDENTIFIER" : "mac.PhoneLinkTests",
+            "PRODUCT_MODULE_NAME" : "PhoneLinkTests",
+            "PRODUCT_NAME" : "$(TARGET_NAME)",
+            "SDKROOT" : "auto",
+            "SDK_VARIANT" : "auto",
+            "STRIP_INSTALLED_PRODUCT" : "NO",
+            "SUPPORTS_TEXT_BASED_API" : "NO",
+            "SWIFT_DISABLE_PARSE_AS_LIBRARY" : "YES",
+            "SWIFT_ENABLE_BARE_SLASH_REGEX" : "NO",
+            "SWIFT_LIBRARIES_ONLY" : "NO",
+            "SWIFT_OBJC_INTERFACE_HEADER_DIR" : "$(GENERATED_MODULEMAP_DIR)",
+            "SWIFT_OBJC_INTERFACE_HEADER_NAME" : "PhoneLinkTests-Swift.h",
+            "SWIFT_PACKAGE_NAME" : "mac",
+            "SWIFT_VERSION" : "5",
+            "SYMBOL_GRAPH_EXTRACTOR_OUTPUT_DIR" : "$(TARGET_BUILD_DIR)/$(CURRENT_ARCH)/PhoneLinkTests.symbolgraphs",
+            "TAPI_DYLIB_INSTALL_NAME" : "PhoneLinkTests",
+            "TAPI_EXTRACT_API_OUTPUT_DIR" : "$(TARGET_BUILD_DIR)/$(CURRENT_ARCH)/PhoneLinkTests.symbolgraphs",
+            "TARGET_BUILD_DIR" : "$(TARGET_BUILD_DIR)/ExecutableModules",
+            "TARGET_NAME" : "PhoneLinkTests-71F39878F4825AA9-testable",
+            "TARGET_TEMP_DIR_SUFFIX" : "-t"
+          },
+          "guid" : "PACKAGE-TARGET:PhoneLinkTests-71F39878F4825AA9-testable::BUILDCONFIG_1",
+          "impartedBuildProperties" : {
+            "buildSettings" : {
+              "FRAMEWORK_SEARCH_PATHS" : [
+                "$(BUILT_PRODUCTS_DIR)/PackageFrameworks",
+                "$(inherited)"
+              ],
+              "LD_RUNPATH_SEARCH_PATHS" : [
+                "$(RPATH_ORIGIN)",
+                "$(inherited)"
+              ],
+              "LD_WARN_DUPLICATE_LIBRARIES" : "NO",
+              "LIBRARY_SEARCH_PATHS[__platform_filter=windows-msvc]" : [
+                "$(inherited)",
+                "$(TARGET_BUILD_DIR)/ExecutableModules"
+              ],
+              "OTHER_CFLAGS" : [
+                "-fmodule-map-file=$(GENERATED_MODULEMAP_DIR)/PhoneLinkTests.modulemap",
+                "$(inherited)"
+              ]
+            }
+          },
+          "name" : "Release"
+        }
+      ],
+      "buildPhases" : [
+        {
+          "buildFiles" : [
+            {
+              "codeSignOnCopy" : "false",
+              "fileReference" : "PACKAGE:mac::MAINGROUP::REF_7::REF_0",
+              "guid" : "PACKAGE-TARGET:PhoneLinkTests-71F39878F4825AA9-testable::BUILDPHASE_0::0",
+              "platformFilters" : [
+
+              ],
+              "removeHeadersOnCopy" : "false"
+            }
+          ],
+          "guid" : "PACKAGE-TARGET:PhoneLinkTests-71F39878F4825AA9-testable::BUILDPHASE_0",
+          "type" : "com.apple.buildphase.sources"
+        }
+      ],
+      "buildRules" : [
+
+      ],
+      "customTasks" : [
+
+      ],
+      "dependencies" : [
+        {
+          "guid" : "PACKAGE-TARGET:PhoneLinkKit",
+          "platformFilters" : [
+
+          ]
+        }
+      ],
+      "guid" : "PACKAGE-TARGET:PhoneLinkTests-71F39878F4825AA9-testable",
+      "name" : "PhoneLinkTests",
+      "productReference" : {
+        "guid" : "PRODUCTREF-PACKAGE-TARGET:PhoneLinkTests-71F39878F4825AA9-testable",
+        "name" : "$(EXECUTABLE_NAME)",
+        "type" : "file"
+      },
+      "productTypeIdentifier" : "org.swift.product-type.common.object",
+      "type" : "standard"
+    },
+    "signature" : "3f0419858c8eb2a5711faa577929a0f6335ea463145fcdea05522ad3f22fff82",
+    "type" : "target"
+  },
+  {
+    "contents" : {
+      "buildConfigurations" : [
+        {
+          "buildSettings" : {
+
+          },
+          "guid" : "PACKAGE-PRODUCT:mac-PhoneLinkMacPackageTests.PhoneLinkMacPackageTests::BUILDCONFIG_0",
+          "impartedBuildProperties" : {
+            "buildSettings" : {
+
+            }
+          },
+          "name" : "Debug"
+        },
+        {
+          "buildSettings" : {
+
+          },
+          "guid" : "PACKAGE-PRODUCT:mac-PhoneLinkMacPackageTests.PhoneLinkMacPackageTests::BUILDCONFIG_1",
+          "impartedBuildProperties" : {
+            "buildSettings" : {
+
+            }
+          },
+          "name" : "Release"
+        }
+      ],
+      "buildPhases" : [
+
+      ],
+      "buildRules" : [
+
+      ],
+      "customTasks" : [
+
+      ],
+      "dependencies" : [
+
+      ],
+      "guid" : "PACKAGE-PRODUCT:mac-PhoneLinkMacPackageTests.PhoneLinkMacPackageTests",
+      "name" : "PhoneLinkMacPackageTests-product",
+      "type" : "aggregate"
+    },
+    "signature" : "6c8db254bd885e368b2287571d1ae0d7787875c2efedd8858eefc4d6dbfa410c",
+    "type" : "target"
+  },
+  {
+    "contents" : {
+      "approvedByUser" : "true",
+      "buildConfigurations" : [
+        {
+          "buildSettings" : {
+            "EXECUTABLE_PREFIX" : "lib",
+            "EXECUTABLE_PREFIX[__platform_filter=windows-msvc]" : "",
+            "PRODUCT_BUNDLE_IDENTIFIER" : "mac.PhoneLinkKit",
+            "PRODUCT_MODULE_NAME" : "PhoneLinkKit",
+            "PRODUCT_NAME" : "PhoneLinkKit",
+            "SDKROOT" : "auto",
+            "SDK_VARIANT" : "auto",
+            "SWIFT_PACKAGE_NAME" : "mac",
+            "TARGET_NAME" : "PhoneLinkKit-product",
+            "TARGET_TEMP_DIR_SUFFIX" : "-t",
+            "USES_SWIFTPM_UNSAFE_FLAGS" : "NO"
+          },
+          "guid" : "PACKAGE-PRODUCT:mac_PhoneLinkKit.PhoneLinkKit-684665FBBF00BBBC-dynamic::BUILDCONFIG_0",
+          "impartedBuildProperties" : {
+            "buildSettings" : {
+
+            }
+          },
+          "name" : "Debug"
+        },
+        {
+          "buildSettings" : {
+            "EXECUTABLE_PREFIX" : "lib",
+            "EXECUTABLE_PREFIX[__platform_filter=windows-msvc]" : "",
+            "PRODUCT_BUNDLE_IDENTIFIER" : "mac.PhoneLinkKit",
+            "PRODUCT_MODULE_NAME" : "PhoneLinkKit",
+            "PRODUCT_NAME" : "PhoneLinkKit",
+            "SDKROOT" : "auto",
+            "SDK_VARIANT" : "auto",
+            "SWIFT_PACKAGE_NAME" : "mac",
+            "TARGET_NAME" : "PhoneLinkKit-product",
+            "TARGET_TEMP_DIR_SUFFIX" : "-t",
+            "USES_SWIFTPM_UNSAFE_FLAGS" : "NO"
+          },
+          "guid" : "PACKAGE-PRODUCT:mac_PhoneLinkKit.PhoneLinkKit-684665FBBF00BBBC-dynamic::BUILDCONFIG_1",
+          "impartedBuildProperties" : {
+            "buildSettings" : {
+
+            }
+          },
+          "name" : "Release"
+        }
+      ],
+      "buildPhases" : [
+        {
+          "buildFiles" : [
+            {
+              "guid" : "PACKAGE-PRODUCT:mac_PhoneLinkKit.PhoneLinkKit-684665FBBF00BBBC-dynamic::BUILDPHASE_0::0",
+              "platformFilters" : [
+
+              ],
+              "targetReference" : "PACKAGE-TARGET:PhoneLinkKit"
+            }
+          ],
+          "guid" : "PACKAGE-PRODUCT:mac_PhoneLinkKit.PhoneLinkKit-684665FBBF00BBBC-dynamic::BUILDPHASE_0",
+          "type" : "com.apple.buildphase.frameworks"
+        },
+        {
+          "buildFiles" : [
+
+          ],
+          "guid" : "PACKAGE-PRODUCT:mac_PhoneLinkKit.PhoneLinkKit-684665FBBF00BBBC-dynamic::BUILDPHASE_1",
+          "type" : "com.apple.buildphase.sources"
+        }
+      ],
+      "buildRules" : [
+
+      ],
+      "customTasks" : [
+
+      ],
+      "dependencies" : [
+        {
+          "guid" : "PACKAGE-TARGET:PhoneLinkKit",
+          "platformFilters" : [
+
+          ]
+        }
+      ],
+      "guid" : "PACKAGE-PRODUCT:mac_PhoneLinkKit.PhoneLinkKit-684665FBBF00BBBC-dynamic",
+      "name" : "PhoneLinkKitdynamic-product",
+      "productReference" : {
+        "guid" : "PRODUCTREF-PACKAGE-PRODUCT:mac_PhoneLinkKit.PhoneLinkKit-684665FBBF00BBBC-dynamic",
+        "name" : "$(EXECUTABLE_NAME)",
+        "type" : "file"
+      },
+      "productTypeIdentifier" : "com.apple.product-type.library.dynamic",
+      "type" : "standard"
+    },
+    "signature" : "771b0a28c9dec9987f5adef80ec4a8c1f83639b0877cdfffb1e8af8575fe166a",
+    "type" : "target"
+  },
+  {
+    "contents" : {
+      "approvedByUser" : "true",
+      "buildConfigurations" : [
+        {
+          "buildSettings" : {
+            "DEFINES_MODULE" : "YES",
+            "DOCC_EXTRACT_PROJECT_HEADERS_DOCUMENTATION" : "YES",
+            "EXECUTABLE_PREFIX" : "lib",
+            "EXECUTABLE_PREFIX[__platform_filter=windows-msvc]" : "",
+            "MODULEMAP_FILE_CONTENTS" : "module PhoneLinkKit {\nheader \"PhoneLinkKit-Swift.h\"\nexport *\n}",
+            "MODULEMAP_PATH" : "$(GENERATED_MODULEMAP_DIR)/PhoneLinkKit.modulemap",
+            "PACKAGE_RESOURCE_TARGET_KIND" : "regular",
+            "PRODUCT_BUNDLE_IDENTIFIER" : "mac.PhoneLinkKit",
+            "PRODUCT_MODULE_NAME" : "PhoneLinkKit",
+            "PRODUCT_NAME" : "PhoneLinkKit",
+            "SDKROOT" : "auto",
+            "SDK_VARIANT" : "auto",
+            "SUPPORTS_TEXT_BASED_API" : "NO",
+            "SWIFT_ACTIVE_COMPILATION_CONDITIONS" : [
+              "$(inherited)",
+              "SWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE"
+            ],
+            "SWIFT_DISABLE_PARSE_AS_LIBRARY" : "NO",
+            "SWIFT_ENABLE_BARE_SLASH_REGEX" : "NO",
+            "SWIFT_LIBRARIES_ONLY" : "YES",
+            "SWIFT_OBJC_INTERFACE_HEADER_DIR" : "$(GENERATED_MODULEMAP_DIR)",
+            "SWIFT_OBJC_INTERFACE_HEADER_NAME" : "PhoneLinkKit-Swift.h",
+            "SWIFT_PACKAGE_NAME" : "mac",
+            "SWIFT_VERSION" : "5",
+            "SYMBOL_GRAPH_EXTRACTOR_OUTPUT_DIR" : "$(TARGET_BUILD_DIR)/$(CURRENT_ARCH)/PhoneLinkKit.symbolgraphs",
+            "TAPI_EXTRACT_API_OUTPUT_DIR" : "$(TARGET_BUILD_DIR)/$(CURRENT_ARCH)/PhoneLinkKit.symbolgraphs",
+            "TARGET_NAME" : "PhoneLinkKit",
+            "TARGET_TEMP_DIR_SUFFIX" : "-t"
+          },
+          "guid" : "PACKAGE-TARGET:PhoneLinkKit-684665FBBF00BBBC-dynamic::BUILDCONFIG_0",
+          "impartedBuildProperties" : {
+            "buildSettings" : {
+              "FRAMEWORK_SEARCH_PATHS" : [
+                "$(BUILT_PRODUCTS_DIR)/PackageFrameworks",
+                "$(inherited)"
+              ],
+              "LD_RUNPATH_SEARCH_PATHS" : [
+                "$(RPATH_ORIGIN)",
+                "$(BUILT_PRODUCTS_DIR)/PackageFrameworks",
+                "$(inherited)"
+              ],
+              "LD_WARN_DUPLICATE_LIBRARIES" : "NO",
+              "OTHER_CFLAGS" : [
+                "-fmodule-map-file=$(GENERATED_MODULEMAP_DIR)/PhoneLinkKit.modulemap",
+                "$(inherited)"
+              ]
+            }
+          },
+          "name" : "Debug"
+        },
+        {
+          "buildSettings" : {
+            "DEFINES_MODULE" : "YES",
+            "DOCC_EXTRACT_PROJECT_HEADERS_DOCUMENTATION" : "YES",
+            "EXECUTABLE_PREFIX" : "lib",
+            "EXECUTABLE_PREFIX[__platform_filter=windows-msvc]" : "",
+            "MODULEMAP_FILE_CONTENTS" : "module PhoneLinkKit {\nheader \"PhoneLinkKit-Swift.h\"\nexport *\n}",
+            "MODULEMAP_PATH" : "$(GENERATED_MODULEMAP_DIR)/PhoneLinkKit.modulemap",
+            "PACKAGE_RESOURCE_TARGET_KIND" : "regular",
+            "PRODUCT_BUNDLE_IDENTIFIER" : "mac.PhoneLinkKit",
+            "PRODUCT_MODULE_NAME" : "PhoneLinkKit",
+            "PRODUCT_NAME" : "PhoneLinkKit",
+            "SDKROOT" : "auto",
+            "SDK_VARIANT" : "auto",
+            "SUPPORTS_TEXT_BASED_API" : "NO",
+            "SWIFT_ACTIVE_COMPILATION_CONDITIONS" : [
+              "$(inherited)",
+              "SWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE"
+            ],
+            "SWIFT_DISABLE_PARSE_AS_LIBRARY" : "NO",
+            "SWIFT_ENABLE_BARE_SLASH_REGEX" : "NO",
+            "SWIFT_LIBRARIES_ONLY" : "YES",
+            "SWIFT_OBJC_INTERFACE_HEADER_DIR" : "$(GENERATED_MODULEMAP_DIR)",
+            "SWIFT_OBJC_INTERFACE_HEADER_NAME" : "PhoneLinkKit-Swift.h",
+            "SWIFT_PACKAGE_NAME" : "mac",
+            "SWIFT_VERSION" : "5",
+            "SYMBOL_GRAPH_EXTRACTOR_OUTPUT_DIR" : "$(TARGET_BUILD_DIR)/$(CURRENT_ARCH)/PhoneLinkKit.symbolgraphs",
+            "TAPI_EXTRACT_API_OUTPUT_DIR" : "$(TARGET_BUILD_DIR)/$(CURRENT_ARCH)/PhoneLinkKit.symbolgraphs",
+            "TARGET_NAME" : "PhoneLinkKit",
+            "TARGET_TEMP_DIR_SUFFIX" : "-t"
+          },
+          "guid" : "PACKAGE-TARGET:PhoneLinkKit-684665FBBF00BBBC-dynamic::BUILDCONFIG_1",
+          "impartedBuildProperties" : {
+            "buildSettings" : {
+              "FRAMEWORK_SEARCH_PATHS" : [
+                "$(BUILT_PRODUCTS_DIR)/PackageFrameworks",
+                "$(inherited)"
+              ],
+              "LD_RUNPATH_SEARCH_PATHS" : [
+                "$(RPATH_ORIGIN)",
+                "$(inherited)"
+              ],
+              "LD_WARN_DUPLICATE_LIBRARIES" : "NO",
+              "OTHER_CFLAGS" : [
+                "-fmodule-map-file=$(GENERATED_MODULEMAP_DIR)/PhoneLinkKit.modulemap",
+                "$(inherited)"
+              ]
+            }
+          },
+          "name" : "Release"
+        }
+      ],
+      "buildPhases" : [
+        {
+          "buildFiles" : [
+            {
+              "codeSignOnCopy" : "false",
+              "fileReference" : "PACKAGE:mac::MAINGROUP::REF_6::REF_0",
+              "guid" : "PACKAGE-TARGET:PhoneLinkKit-684665FBBF00BBBC-dynamic::BUILDPHASE_0::0",
+              "platformFilters" : [
+
+              ],
+              "removeHeadersOnCopy" : "false"
+            }
+          ],
+          "guid" : "PACKAGE-TARGET:PhoneLinkKit-684665FBBF00BBBC-dynamic::BUILDPHASE_0",
+          "type" : "com.apple.buildphase.sources"
+        }
+      ],
+      "buildRules" : [
+
+      ],
+      "customTasks" : [
+
+      ],
+      "dependencies" : [
+
+      ],
+      "guid" : "PACKAGE-TARGET:PhoneLinkKit-684665FBBF00BBBC-dynamic",
+      "name" : "PhoneLinkKit",
+      "productReference" : {
+        "guid" : "PRODUCTREF-PACKAGE-TARGET:PhoneLinkKit-684665FBBF00BBBC-dynamic",
+        "name" : "$(EXECUTABLE_NAME)",
+        "type" : "file"
+      },
+      "productTypeIdentifier" : "com.apple.product-type.library.dynamic",
+      "type" : "standard"
+    },
+    "signature" : "7ff8e3972f934bbd6bf13691bc2617e64290a2ea50f536bf7a25ba2e00433f33",
+    "type" : "target"
+  },
+  {
+    "contents" : {
+      "buildConfigurations" : [
+        {
+          "buildSettings" : {
+            "PRODUCT_NAME" : "$(TARGET_NAME)",
+            "SDKROOT" : "auto",
+            "SDK_VARIANT" : "auto",
+            "SKIP_INSTALL" : "YES",
+            "SUPPORTED_PLATFORMS" : [
+              "$(AVAILABLE_PLATFORMS)"
+            ]
+          },
+          "guid" : "AGGREGATE::BUILDCONFIG_0",
+          "impartedBuildProperties" : {
+            "buildSettings" : {
+
+            }
+          },
+          "name" : "Debug"
+        },
+        {
+          "buildSettings" : {
+            "PRODUCT_NAME" : "$(TARGET_NAME)",
+            "SDKROOT" : "auto",
+            "SDK_VARIANT" : "auto",
+            "SKIP_INSTALL" : "YES",
+            "SUPPORTED_PLATFORMS" : [
+              "$(AVAILABLE_PLATFORMS)"
+            ]
+          },
+          "guid" : "AGGREGATE::BUILDCONFIG_1",
+          "impartedBuildProperties" : {
+            "buildSettings" : {
+
+            }
+          },
+          "name" : "Release"
+        }
+      ],
+      "defaultConfigurationName" : "Release",
+      "developmentRegion" : "en",
+      "groupTree" : {
+        "children" : [
+
+        ],
+        "guid" : "AGGREGATE::MAINGROUP",
+        "name" : "",
+        "path" : "",
+        "sourceTree" : "<group>",
+        "type" : "group"
+      },
+      "guid" : "AGGREGATE",
+      "path" : "/Users/pritamsarkar/.gemini/antigravity/scratch/PhoneLink/mac/Package.swift",
+      "projectDirectory" : "/Users/pritamsarkar/.gemini/antigravity/scratch/PhoneLink/mac",
+      "projectIsPackage" : "true",
+      "projectName" : "Aggregate",
+      "targets" : [
+        "a0cb3da2efaf97e98d8675657ce73e51d1a7673f863c1df48283a3b6d912c7ab",
+        "ce40a43167b87751474cffc7ea2e1ca0ebfce729842044e1d953276baa566651"
+      ]
+    },
+    "signature" : "58d78b932cb61e7a3625b4c4bc2aa7f07cae5dde240f82d31c0f845403b723f8",
+    "type" : "project"
+  },
+  {
+    "contents" : {
+      "buildConfigurations" : [
+        {
+          "buildSettings" : {
+
+          },
+          "guid" : "ALL-INCLUDING-TESTS::BUILDCONFIG_0",
+          "impartedBuildProperties" : {
+            "buildSettings" : {
+
+            }
+          },
+          "name" : "Debug"
+        },
+        {
+          "buildSettings" : {
+
+          },
+          "guid" : "ALL-INCLUDING-TESTS::BUILDCONFIG_1",
+          "impartedBuildProperties" : {
+            "buildSettings" : {
+
+            }
+          },
+          "name" : "Release"
+        }
+      ],
+      "buildPhases" : [
+
+      ],
+      "buildRules" : [
+
+      ],
+      "customTasks" : [
+
+      ],
+      "dependencies" : [
+        {
+          "guid" : "PACKAGE-PRODUCT:mac_phonelink.phonelink",
+          "platformFilters" : [
+
+          ]
+        },
+        {
+          "guid" : "PACKAGE-PRODUCT:mac_PhoneLinkKit.PhoneLinkKit",
+          "platformFilters" : [
+
+          ]
+        },
+        {
+          "guid" : "PACKAGE-PRODUCT:mac_PhoneLinkTests.PhoneLinkTests",
+          "platformFilters" : [
+
+          ]
+        },
+        {
+          "guid" : "PACKAGE-TARGET:PhoneLinkKit",
+          "platformFilters" : [
+
+          ]
+        }
+      ],
+      "guid" : "ALL-INCLUDING-TESTS",
+      "name" : "AllIncludingTests",
+      "type" : "aggregate"
+    },
+    "signature" : "a0cb3da2efaf97e98d8675657ce73e51d1a7673f863c1df48283a3b6d912c7ab",
+    "type" : "target"
+  },
+  {
+    "contents" : {
+      "buildConfigurations" : [
+        {
+          "buildSettings" : {
+
+          },
+          "guid" : "ALL-EXCLUDING-TESTS::BUILDCONFIG_0",
+          "impartedBuildProperties" : {
+            "buildSettings" : {
+
+            }
+          },
+          "name" : "Debug"
+        },
+        {
+          "buildSettings" : {
+
+          },
+          "guid" : "ALL-EXCLUDING-TESTS::BUILDCONFIG_1",
+          "impartedBuildProperties" : {
+            "buildSettings" : {
+
+            }
+          },
+          "name" : "Release"
+        }
+      ],
+      "buildPhases" : [
+
+      ],
+      "buildRules" : [
+
+      ],
+      "customTasks" : [
+
+      ],
+      "dependencies" : [
+        {
+          "guid" : "PACKAGE-PRODUCT:mac_phonelink.phonelink",
+          "platformFilters" : [
+
+          ]
+        },
+        {
+          "guid" : "PACKAGE-PRODUCT:mac_PhoneLinkKit.PhoneLinkKit",
+          "platformFilters" : [
+
+          ]
+        },
+        {
+          "guid" : "PACKAGE-PRODUCT:mac_PhoneLinkTests.PhoneLinkTests",
+          "platformFilters" : [
+
+          ]
+        },
+        {
+          "guid" : "PACKAGE-TARGET:PhoneLinkKit",
+          "platformFilters" : [
+
+          ]
+        }
+      ],
+      "guid" : "ALL-EXCLUDING-TESTS",
+      "name" : "AllExcludingTests",
+      "type" : "aggregate"
+    },
+    "signature" : "ce40a43167b87751474cffc7ea2e1ca0ebfce729842044e1d953276baa566651",
+    "type" : "target"
+  }
+]
