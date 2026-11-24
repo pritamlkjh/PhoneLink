@@ -32,6 +32,8 @@ xcuserdata/
 .build/
 **/.build/
 mac/.build/
+mac/release/*.tar.gz
+mac/release/PhoneLink-*/
 
 # IDE
 .idea/

@@ -1378,7 +1378,7 @@
       "id": "REL-3",
       "name": "Mac Release Build & Packaging",
       "category": "release",
-      "status": "PENDING",
+      "status": "COMPLETE",
       "depends_on": [
         "SEC-2",
         "TEST-2"
