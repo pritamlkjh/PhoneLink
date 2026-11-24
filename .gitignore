@@ -18,6 +18,7 @@ local.properties
 captures/
 .externalNativeBuild/
 .cxx/
+*.apk
 
 # Go build artifacts
 bin/
