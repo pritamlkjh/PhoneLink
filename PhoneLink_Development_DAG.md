@@ -1076,7 +1076,7 @@ Format per node: Purpose → Dependencies/Blocks/Parallelizable → Inputs/Outpu
 ### 4.12 Documentation
 
 #### `DOC-1` — Consolidated Documentation & Setup Guide
-**Category:** Documentation · **Priority:** P2
+**Category:** Documentation · **Priority:** P2 · **Status:** COMPLETE
 
 **Purpose:** Everything needed to actually set the system up from scratch, plus an explicit statement of its privacy/consent model.
 
