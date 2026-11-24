@@ -411,7 +411,7 @@
       "id": "AND-7",
       "name": "Android Background Execution & Foreground Service",
       "category": "android",
-      "status": "PENDING",
+      "status": "COMPLETE",
       "depends_on": [
         "AND-1",
         "AND-5"
