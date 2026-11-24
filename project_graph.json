@@ -587,7 +587,7 @@
       "id": "AND-6",
       "name": "Android Authentication Handshake",
       "category": "android",
-      "status": "PENDING",
+      "status": "COMPLETE",
       "depends_on": [
         "AND-3",
         "AND-4",
