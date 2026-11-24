@@ -49,9 +49,13 @@ run_step "VPS Relay (Go) Tests" \
 run_step "Android Client (Gradle) Tests" \
     "cd $REPO_ROOT/android && ./gradlew testDebugUnitTest"
 
+# 5. INT-1 End-to-End Relay Integration Tests
+run_step "INT-1 End-to-End Encrypted Relay Integration Test" \
+    "$REPO_ROOT/tests/test_int1_e2e.sh"
+
 echo "=========================================================="
 if [ $FAILURES -eq 0 ]; then
-    echo "   ALL REGRESSION SUITES PASSED (4/4)"
+    echo "   ALL REGRESSION SUITES PASSED (5/5)"
     echo "=========================================================="
     exit 0
 else

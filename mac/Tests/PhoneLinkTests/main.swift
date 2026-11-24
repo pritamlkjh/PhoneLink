@@ -94,5 +94,25 @@ assertEqual(manager.state, ConnectionManager.State.disconnected)
 assertFalse(manager.state.isConnected)
 print("PASS: testConnectionManagerStateRepresentation")
 
-print(">>> ALL MAC CLIENT UNIT TESTS PASSED (7/7) <<<")
+// Test 8: INT-1 E2E Key Agreement and AES-256-GCM Round-trip
+let e2eMac = E2EEncryptionManager()
+let e2eAndroid = E2EEncryptionManager()
+
+let salt = Data([1, 2, 3, 4, 5, 6, 7, 8])
+let macKeys = try! e2eMac.deriveSessionKeys(peerPublicKeyData: e2eAndroid.publicKeyRaw, salt: salt)
+let androidKeys = try! e2eAndroid.deriveSessionKeys(peerPublicKeyData: e2eMac.publicKeyRaw, salt: salt)
+
+let pingPlaintext = "PHONELINK_E2E_PING_HELLO_SWIFT".data(using: .utf8)!
+let aad = "seq-1".data(using: .utf8)!
+
+let ciphertext = try! E2EEncryptionManager.encryptAESGCM(key: macKeys.keyMacToAndroid, plaintext: pingPlaintext, aad: aad)
+assertFalse(String(data: ciphertext, encoding: .isoLatin1)!.contains("PING"), "Ciphertext must not leak plaintext")
+
+let decryptedData = try! E2EEncryptionManager.decryptAESGCM(key: androidKeys.keyMacToAndroid, payload: ciphertext, aad: aad)
+let decryptedString = String(data: decryptedData, encoding: .utf8)!
+assertEqual(decryptedString, "PHONELINK_E2E_PING_HELLO_SWIFT")
+
+print("PASS: testE2EKeyAgreementAndEncryptionRoundTrip")
+
+print(">>> ALL MAC CLIENT UNIT TESTS PASSED (8/8) <<<")
 exit(0)

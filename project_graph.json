@@ -817,7 +817,7 @@
       "id": "INT-1",
       "name": "First End-to-End Encrypted Connection",
       "category": "integration",
-      "status": "PENDING",
+      "status": "COMPLETE",
       "depends_on": [
         "AND-6",
         "VPS-4",
