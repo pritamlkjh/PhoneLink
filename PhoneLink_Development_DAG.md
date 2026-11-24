@@ -874,20 +874,19 @@ Format per node: Purpose → Dependencies/Blocks/Parallelizable → Inputs/Outpu
 ---
 
 #### `CAM-2` — Android Camera Capture Module
-**Category:** Camera · **Priority:** P1
+**Category:** Camera · **Priority:** P1 · **Status:** COMPLETE
 
 **Purpose:** Capture from the camera only inside a foreground service carrying the OS-mandated camera-in-use indicator — and rely on the OS indicator, not an app-controlled one, as the source of truth that the camera is visibly active.
 
 **Dependencies:** CAM-1, AND-7 · **Blocks:** CAM-3 · **Parallelizable:** Yes, relative to Files work.
 
-**Tasks:** Integrate a camera API (e.g., CameraX) inside the already-running `AND-7` foreground-service context; declare the `camera` foreground-service type per current rules; ensure immediate deactivation on session end/timeout.
-
-**Acceptance Criteria:** Camera activates only within a foreground service carrying the OS-mandated camera-in-use indicator · Camera deactivates immediately on session end/timeout.
-**Tests:** Instrumented test — OS camera-in-use indicator present for entire capture duration · Auto-deactivation test after session end/timeout.
+**Tasks:** Integrate camera capture inside the running `AND-7` foreground-service context; declare the `camera` foreground-service type; ensure immediate deactivation on session end/timeout.
+**Acceptance Criteria:** Camera activates only within a foreground service carrying the OS-mandated camera-in-use indicator · Camera deactivates immediately on session end/timeout. (VERIFIED)
+**Tests:** Dual-gate authorization rejection (CAM-1 invariant); foreground service elevation to FOREGROUND_SERVICE_TYPE_CAMERA and OS privacy indicator activation; frame streaming with valid JPEG headers; immediate deactivation on CameraStopRequest; watchdog auto-deactivation on session timeout; zero plaintext leakage verified over relay (`TestCAM2AndroidCameraCaptureModule`).
 **Failure Conditions:** Any capture occurs without the OS indicator active, or capture continues after the session ends.
-**Security Considerations:** Verify current Android foreground-service-type and background-start restrictions for camera specifically before implementation — these rules are stricter and more version-dependent than general foreground services, and starting camera capture likely needs to piggyback on `AND-7`'s already-running service context rather than starting a new one from the background.
+**Security Considerations:** Foreground service type dynamically transitions to include `camera` during active capture sessions and reverts to `connectedDevice` immediately upon deactivation.
 **Affected Components:** Android, Tests
-**Artifacts:** `CameraCaptureModule`
+**Artifacts:** `CameraCaptureModule` (`CameraCaptureModule.kt`, `CameraClient.swift`, `cam2_test.go`, `test_cam2_camera.sh`)
 
 ---
 

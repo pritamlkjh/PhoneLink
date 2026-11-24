@@ -62,6 +62,8 @@ class ConnectionForegroundService : Service() {
     private lateinit var storageAccessLayer: StorageAccessLayer
     private lateinit var fileOperationHandler: FileOperationHandler
     private lateinit var remoteActionRegistry: com.phonelink.actions.RemoteActionRegistry
+    private lateinit var cameraAuthGate: com.phonelink.camera.CameraAuthorizationGate
+    private lateinit var cameraCaptureModule: com.phonelink.camera.CameraCaptureModule
     private var peerSession: com.phonelink.crypto.E2EPeerSession? = null
     private var isRunning = false
 
@@ -71,6 +73,36 @@ class ConnectionForegroundService : Service() {
         storageAccessLayer = StorageAccessLayer.fromContext(this)
         fileOperationHandler = FileOperationHandler(storageAccessLayer)
         remoteActionRegistry = com.phonelink.actions.RemoteActionRegistry.fromContext(this)
+        cameraAuthGate = com.phonelink.camera.CameraAuthorizationGate.fromContext(this, secureStorage)
+
+        val serviceController = object : com.phonelink.camera.CameraCaptureModule.ForegroundServiceController {
+            override fun onCameraCaptureStarted() {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    val cameraServiceType = ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+                    val notification = buildNotification("PhoneLink: Camera streaming active")
+                    startForeground(NOTIFICATION_ID, notification, cameraServiceType)
+                } else {
+                    updateNotification("PhoneLink: Camera streaming active")
+                }
+            }
+
+            override fun onCameraCaptureStopped() {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    val defaultServiceType = ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+                    val notification = buildNotification("Connected to VPS relay")
+                    startForeground(NOTIFICATION_ID, notification, defaultServiceType)
+                } else {
+                    updateNotification("Connected to VPS relay")
+                }
+            }
+        }
+
+        cameraCaptureModule = com.phonelink.camera.CameraCaptureModule(
+            cameraAuthGate = cameraAuthGate,
+            cameraSource = com.phonelink.camera.AndroidCameraSource(this),
+            serviceController = serviceController
+        )
+
         createNotificationChannel()
     }
 
@@ -111,7 +143,8 @@ class ConnectionForegroundService : Service() {
         peerSession = com.phonelink.crypto.E2EPeerSession(
             sendFunction = { bytes -> currentTransport.send(bytes) },
             messageDispatcher = { plaintext, sendAppMsg ->
-                fileOperationHandler.processApplicationMessage(plaintext, sendAppMsg)
+                cameraCaptureModule.processApplicationMessage(plaintext, sendAppMsg)
+                    ?: fileOperationHandler.processApplicationMessage(plaintext, sendAppMsg)
                     ?: remoteActionRegistry.processApplicationMessage(plaintext)
             }
         )
@@ -123,10 +156,14 @@ class ConnectionForegroundService : Service() {
                     is NetworkTransport.ConnectionState.Connecting -> "Connecting to VPS relay..."
                     is NetworkTransport.ConnectionState.Reconnecting -> "Reconnecting (attempt ${newState.attempt})..."
                     is NetworkTransport.ConnectionState.Disconnected -> {
+                        cameraCaptureModule.stopCapture("disconnected", "transport_disconnected")
                         peerSession?.reset()
                         "Disconnected"
                     }
-                    is NetworkTransport.ConnectionState.Error -> "Connection error: ${newState.cause.message}"
+                    is NetworkTransport.ConnectionState.Error -> {
+                        cameraCaptureModule.stopCapture("error", "transport_error")
+                        "Connection error: ${newState.cause.message}"
+                    }
                 }
                 updateNotification(statusText)
             }
@@ -168,6 +205,9 @@ class ConnectionForegroundService : Service() {
 
     private fun stopForegroundService() {
         isRunning = false
+        try {
+            cameraCaptureModule.stopCapture("service_stopped", "service_stopped")
+        } catch (_: Exception) {}
         transport?.disconnect()
         transport = null
         stopForeground(STOP_FOREGROUND_REMOVE)

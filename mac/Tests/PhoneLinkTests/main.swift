@@ -441,5 +441,94 @@ assertEqual(parsedActionErr.status, "STATUS_ACTION_NOT_PERMITTED")
 assertEqual(parsedActionErr.errorMessage, "Remote device info is disabled")
 print("PASS: testDeviceInfoResponseParserAndErrorHandling")
 
-print(">>> ALL MAC CLIENT UNIT TESTS PASSED (24/24) <<<")
+// Test 25: CAM-2 CameraStartRequest Builder
+let startReqData = try! CameraClient.buildCameraStartRequest(
+    sessionId: "cam-test-1",
+    lens: .front,
+    targetFps: 3,
+    jpegQuality: 85,
+    maxWidth: 1280,
+    maxHeight: 720
+)
+let startReqJson = try! JSONSerialization.jsonObject(with: startReqData) as! [String: Any]
+assertEqual(startReqJson["schema_version"] as! Int, 1)
+let startSubReq = startReqJson["camera_start_req"] as! [String: Any]
+assertEqual(startSubReq["session_id"] as! String, "cam-test-1")
+assertEqual(startSubReq["lens"] as! String, "LENS_FRONT")
+assertEqual(startSubReq["target_fps"] as! Int, 3)
+assertEqual(startSubReq["jpeg_quality"] as! Int, 85)
+assertEqual(startSubReq["max_width"] as! Int, 1280)
+assertEqual(startSubReq["max_height"] as! Int, 720)
+print("PASS: testCameraStartRequestBuilder")
+
+// Test 26: CAM-2 CameraStartResponse Parser
+let sampleStartRespJSON = """
+{
+    "schema_version": 1,
+    "message_id": "msg-start-resp",
+    "timestamp": 1774426507000,
+    "camera_start_resp": {
+        "session_id": "cam-test-1",
+        "status": "STATUS_OK",
+        "actual_fps": 3
+    }
+}
+""".data(using: .utf8)!
+let parsedStartResp = try! CameraClient.parseCameraStartResponse(data: sampleStartRespJSON)
+assertEqual(parsedStartResp.sessionId, "cam-test-1")
+assertEqual(parsedStartResp.status, "STATUS_OK")
+assertEqual(parsedStartResp.actualFps, 3)
+print("PASS: testCameraStartResponseParser")
+
+// Test 27: CAM-2 CameraStopRequest Builder & Response Parser
+let stopReqData = try! CameraClient.buildCameraStopRequest(sessionId: "cam-test-1", reason: "user_done")
+let stopReqJson = try! JSONSerialization.jsonObject(with: stopReqData) as! [String: Any]
+let stopSubReq = stopReqJson["camera_stop_req"] as! [String: Any]
+assertEqual(stopSubReq["session_id"] as! String, "cam-test-1")
+assertEqual(stopSubReq["reason"] as! String, "user_done")
+
+let sampleStopRespJSON = """
+{
+    "schema_version": 1,
+    "message_id": "msg-stop-resp",
+    "timestamp": 1774426508000,
+    "camera_stop_resp": {
+        "session_id": "cam-test-1",
+        "status": "STATUS_OK"
+    }
+}
+""".data(using: .utf8)!
+let parsedStopResp = try! CameraClient.parseCameraStopResponse(data: sampleStopRespJSON)
+assertEqual(parsedStopResp.sessionId, "cam-test-1")
+assertEqual(parsedStopResp.status, "STATUS_OK")
+print("PASS: testCameraStopRequestBuilderAndResponseParser")
+
+// Test 28: CAM-2 CameraFrame Parser
+let mockJpegBytes = Data([0xFF, 0xD8, 0x01, 0x02])
+let sampleFrameJSON = """
+{
+    "schema_version": 1,
+    "message_id": "msg-frame-1",
+    "timestamp": 1774426509000,
+    "camera_frame": {
+        "session_id": "cam-test-1",
+        "frame_number": 1,
+        "timestamp_ms": 1774426509000,
+        "data": "\(mockJpegBytes.base64EncodedString())",
+        "width": 1280,
+        "height": 720,
+        "lens": "LENS_FRONT"
+    }
+}
+""".data(using: .utf8)!
+let parsedFrame = try! CameraClient.parseCameraFrame(data: sampleFrameJSON)
+assertEqual(parsedFrame.sessionId, "cam-test-1")
+assertEqual(parsedFrame.frameNumber, 1)
+assertEqual(parsedFrame.width, 1280)
+assertEqual(parsedFrame.height, 720)
+assertEqual(parsedFrame.lens, .front)
+assertEqual(parsedFrame.jpegData, mockJpegBytes)
+print("PASS: testCameraFrameParser")
+
+print(">>> ALL MAC CLIENT UNIT TESTS PASSED (28/28) <<<")
 exit(0)

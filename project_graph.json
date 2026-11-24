@@ -790,7 +790,7 @@
       "id": "CAM-2",
       "name": "Android Camera Capture Module",
       "category": "camera",
-      "status": "PENDING",
+      "status": "COMPLETE",
       "depends_on": [
         "CAM-1",
         "AND-7"

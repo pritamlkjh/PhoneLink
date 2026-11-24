@@ -73,9 +73,13 @@ run_step "FILE-4 Secure File Upload Test" \
 run_step "FILE-5 Scoped Remote Action System Test" \
     "$REPO_ROOT/tests/test_file5_actions.sh"
 
+# 11. CAM-2 Android Camera Capture Module Integration Tests
+run_step "CAM-2 Android Camera Capture Module Test" \
+    "$REPO_ROOT/tests/test_cam2_camera.sh"
+
 echo "=========================================================="
 if [ $FAILURES -eq 0 ]; then
-    echo "   ALL REGRESSION SUITES PASSED (10/10)"
+    echo "   ALL REGRESSION SUITES PASSED (11/11)"
     echo "=========================================================="
     exit 0
 else
