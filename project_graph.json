@@ -619,7 +619,7 @@
       "id": "CAM-1",
       "name": "Camera Permission & Explicit Activation Authorization Flow",
       "category": "camera",
-      "status": "PENDING",
+      "status": "COMPLETE",
       "depends_on": [
         "ARCH-4",
         "AND-4"
@@ -647,7 +647,7 @@
       "id": "FILE-1",
       "name": "Android Storage Access Layer",
       "category": "files",
-      "status": "PENDING",
+      "status": "COMPLETE",
       "depends_on": [
         "AND-4",
         "ARCH-4"
