@@ -108,7 +108,9 @@ class ConnectionForegroundService : Service() {
 
         peerSession = com.phonelink.crypto.E2EPeerSession(
             sendFunction = { bytes -> currentTransport.send(bytes) },
-            messageDispatcher = { plaintext -> fileOperationHandler.processApplicationMessage(plaintext) }
+            messageDispatcher = { plaintext, sendAppMsg ->
+                fileOperationHandler.processApplicationMessage(plaintext, sendAppMsg)
+            }
         )
 
         currentTransport.addListener(object : NetworkTransport.Listener {

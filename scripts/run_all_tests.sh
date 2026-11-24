@@ -61,9 +61,13 @@ run_step "INT-2 Device Discovery & Status Reporting Test" \
 run_step "FILE-2 Remote File Listing Test" \
     "$REPO_ROOT/tests/test_file2_ls.sh"
 
+# 8. FILE-3 Secure File Download Integration Tests
+run_step "FILE-3 Secure File Download Test" \
+    "$REPO_ROOT/tests/test_file3_download.sh"
+
 echo "=========================================================="
 if [ $FAILURES -eq 0 ]; then
-    echo "   ALL REGRESSION SUITES PASSED (7/7)"
+    echo "   ALL REGRESSION SUITES PASSED (8/8)"
     echo "=========================================================="
     exit 0
 else

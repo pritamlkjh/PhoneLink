@@ -173,11 +173,11 @@ func (c *Coordinator) ForwardPayload(sourceDeviceID, targetDeviceID string, payl
 	}
 	c.mu.RUnlock()
 
-	// Forward verbatim without looking inside
+	// Forward verbatim without looking inside with backpressure timeout
 	select {
 	case peerSess.SendChan <- payload:
 		return nil
-	default:
-		return errors.New("peer send channel buffer full")
+	case <-time.After(5 * time.Second):
+		return errors.New("peer send channel buffer full: timed out")
 	}
 }

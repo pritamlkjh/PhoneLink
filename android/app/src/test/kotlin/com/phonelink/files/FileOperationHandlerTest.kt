@@ -125,4 +125,151 @@ class FileOperationHandlerTest {
         assertEquals("sample.json", item.getString("name"))
         assertEquals("application/json", item.getString("mime_type"))
     }
+
+    @Test
+    fun testHandleFileDownloadInitSuccess() {
+        val sampleFile = File(tempRoot, "download_test.bin").apply {
+            writeBytes(ByteArray(150_000) { (it % 256).toByte() })
+        }
+        val expectedSha256 = FileOperationHandler.computeFileSha256(sampleFile)
+
+        val initResp = fileHandler.handleFileDownloadInit(
+            filePath = "download_test.bin",
+            startOffset = 0L,
+            transferId = "transfer-101",
+            chunkSizeBytes = 64 * 1024
+        )
+
+        assertEquals("transfer-101", initResp.transferId)
+        assertEquals(FileOperationHandler.STATUS_OK, initResp.status)
+        assertEquals("download_test.bin", initResp.filePath)
+        assertEquals(150_000L, initResp.totalSizeBytes)
+        assertEquals(64 * 1024, initResp.chunkSizeBytes)
+        assertEquals(expectedSha256, initResp.sha256Checksum)
+        assertEquals("", initResp.errorMessage)
+    }
+
+    @Test
+    fun testHandleFileDownloadInitNotFound() {
+        val initResp = fileHandler.handleFileDownloadInit(
+            filePath = "missing_file.dat",
+            startOffset = 0L,
+            transferId = "transfer-404"
+        )
+
+        assertEquals(FileOperationHandler.STATUS_NOT_FOUND, initResp.status)
+        assertTrue(initResp.errorMessage.contains("exist", ignoreCase = true))
+    }
+
+    @Test
+    fun testHandleFileDownloadInitDirectoryForbidden() {
+        File(tempRoot, "SubFolder").apply { mkdir() }
+
+        val initResp = fileHandler.handleFileDownloadInit(
+            filePath = "SubFolder",
+            startOffset = 0L,
+            transferId = "transfer-dir"
+        )
+
+        assertEquals(FileOperationHandler.STATUS_STORAGE_ACCESS_DENIED, initResp.status)
+        assertTrue(initResp.errorMessage.contains("directory", ignoreCase = true))
+    }
+
+    @Test
+    fun testHandleFileDownloadInitPathTraversalForbidden() {
+        val initResp = fileHandler.handleFileDownloadInit(
+            filePath = "../../etc/shadow",
+            startOffset = 0L,
+            transferId = "transfer-traversal"
+        )
+
+        assertEquals(FileOperationHandler.STATUS_STORAGE_ACCESS_DENIED, initResp.status)
+        assertTrue(initResp.errorMessage.contains("traversal", ignoreCase = true))
+    }
+
+    @Test
+    fun testStreamFileChunksComplete() {
+        val sampleData = ByteArray(150_000) { (it % 256).toByte() }
+        File(tempRoot, "stream_test.bin").apply { writeBytes(sampleData) }
+
+        val collectedChunks = mutableListOf<JSONObject>()
+        val totalChunks = fileHandler.streamFileChunks(
+            filePath = "stream_test.bin",
+            transferId = "tx-stream",
+            startOffset = 0L,
+            chunkSizeBytes = 64 * 1024,
+            onChunk = { chunkBytes ->
+                val json = JSONObject(String(chunkBytes, Charsets.UTF_8))
+                collectedChunks.add(json.getJSONObject("file_chunk"))
+                true
+            }
+        )
+
+        // 150,000 / 65,536 = 2 full chunks (64KB each) + 1 partial chunk (18,928 bytes) = 3 chunks
+        assertEquals(3L, totalChunks)
+        assertEquals(3, collectedChunks.size)
+
+        // Verify chunk 0
+        val c0 = collectedChunks[0]
+        assertEquals(0L, c0.getLong("chunk_index"))
+        assertEquals(0L, c0.getLong("offset"))
+        assertFalse(c0.getBoolean("is_final_chunk"))
+        val d0 = java.util.Base64.getDecoder().decode(c0.getString("data"))
+        assertEquals(65536, d0.size)
+        assertEquals(FileOperationHandler.computeChunkSha256(d0), c0.getString("chunk_sha256"))
+
+        // Verify chunk 1
+        val c1 = collectedChunks[1]
+        assertEquals(1L, c1.getLong("chunk_index"))
+        assertEquals(65536L, c1.getLong("offset"))
+        assertFalse(c1.getBoolean("is_final_chunk"))
+        val d1 = java.util.Base64.getDecoder().decode(c1.getString("data"))
+        assertEquals(65536, d1.size)
+        assertEquals(FileOperationHandler.computeChunkSha256(d1), c1.getString("chunk_sha256"))
+
+        // Verify chunk 2 (final)
+        val c2 = collectedChunks[2]
+        assertEquals(2L, c2.getLong("chunk_index"))
+        assertEquals(131072L, c2.getLong("offset"))
+        assertTrue(c2.getBoolean("is_final_chunk"))
+        val d2 = java.util.Base64.getDecoder().decode(c2.getString("data"))
+        assertEquals(18928, d2.size)
+        assertEquals(FileOperationHandler.computeChunkSha256(d2), c2.getString("chunk_sha256"))
+
+        // Reassemble and verify whole file
+        val assembled = d0 + d1 + d2
+        assertEquals(sampleData.size, assembled.size)
+        assertTrue(sampleData.contentEquals(assembled))
+    }
+
+    @Test
+    fun testStreamFileChunksResumeOffset() {
+        val sampleData = ByteArray(100_000) { (it % 256).toByte() }
+        File(tempRoot, "resume_test.bin").apply { writeBytes(sampleData) }
+
+        val startOffset = 65536L
+        val collectedChunks = mutableListOf<JSONObject>()
+
+        val totalChunks = fileHandler.streamFileChunks(
+            filePath = "resume_test.bin",
+            transferId = "tx-resume",
+            startOffset = startOffset,
+            chunkSizeBytes = 64 * 1024,
+            onChunk = { chunkBytes ->
+                val json = JSONObject(String(chunkBytes, Charsets.UTF_8))
+                collectedChunks.add(json.getJSONObject("file_chunk"))
+                true
+            }
+        )
+
+        assertEquals(1L, totalChunks)
+        val c0 = collectedChunks[0]
+        assertEquals(startOffset, c0.getLong("offset"))
+        assertTrue(c0.getBoolean("is_final_chunk"))
+
+        val chunkData = java.util.Base64.getDecoder().decode(c0.getString("data"))
+        assertEquals((100_000 - startOffset).toInt(), chunkData.size)
+        val expectedSlice = sampleData.copyOfRange(startOffset.toInt(), 100_000)
+        assertTrue(expectedSlice.contentEquals(chunkData))
+    }
 }

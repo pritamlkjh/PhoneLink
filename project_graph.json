@@ -1049,7 +1049,7 @@
       "id": "FILE-3",
       "name": "Secure File Download",
       "category": "files",
-      "status": "PENDING",
+      "status": "COMPLETE",
       "depends_on": [
         "FILE-2",
         "VPS-4"

@@ -205,5 +205,80 @@ assertEqual(FileClient.formatByteSize(1048576), "1.0 MB")
 assertTrue(FileClient.formatDate(1774400000000).count >= 10)
 print("PASS: testByteAndDateFormatting")
 
-print(">>> ALL MAC CLIENT UNIT TESTS PASSED (13/13) <<<")
+// Test 14: FILE-3 FileDownloadRequest Builder
+let dlReqData = try! FileClient.buildFileDownloadRequest(filePath: "Documents/report.pdf", startOffset: 65536, transferId: "dl-tx-101")
+let dlReqJson = try! JSONSerialization.jsonObject(with: dlReqData) as! [String: Any]
+assertEqual(dlReqJson["schema_version"] as! Int, 1)
+let dlSubReq = dlReqJson["file_download_req"] as! [String: Any]
+assertEqual(dlSubReq["transfer_id"] as! String, "dl-tx-101")
+assertEqual(dlSubReq["file_path"] as! String, "Documents/report.pdf")
+assertEqual((dlSubReq["start_offset"] as! NSNumber).uint64Value, 65536)
+print("PASS: testFileDownloadRequestBuilder")
+
+// Test 15: FILE-3 FileDownloadInitResponse Parser
+let sampleDlInitJSON = """
+{
+    "schema_version": 1,
+    "message_id": "msg-dl-init",
+    "timestamp": 1774426500000,
+    "file_download_init_resp": {
+        "transfer_id": "dl-tx-101",
+        "status": "STATUS_OK",
+        "file_path": "Documents/report.pdf",
+        "total_size_bytes": 1048576,
+        "chunk_size_bytes": 65536,
+        "sha256_checksum": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "error_message": ""
+    }
+}
+""".data(using: .utf8)!
+
+let parsedDlInit = try! FileClient.parseFileDownloadInitResponse(data: sampleDlInitJSON)
+assertEqual(parsedDlInit.transferId, "dl-tx-101")
+assertEqual(parsedDlInit.status, "STATUS_OK")
+assertEqual(parsedDlInit.filePath, "Documents/report.pdf")
+assertEqual(parsedDlInit.totalSizeBytes, 1048576)
+assertEqual(parsedDlInit.chunkSizeBytes, 65536)
+assertEqual(parsedDlInit.sha256Checksum, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+print("PASS: testFileDownloadInitResponseParser")
+
+// Test 16: FILE-3 FileChunk Parser and SHA-256 Verification
+let sampleChunkPayload = Data("Sample File Chunk Data for PhoneLink FILE-3 Test".utf8)
+let sampleChunkSha = FileClient.computeSHA256Hex(data: sampleChunkPayload)
+let sampleChunkBase64 = sampleChunkPayload.base64EncodedString()
+
+let sampleChunkJSON = """
+{
+    "schema_version": 1,
+    "message_id": "msg-chunk-0",
+    "timestamp": 1774426501000,
+    "file_chunk": {
+        "transfer_id": "dl-tx-101",
+        "chunk_index": 0,
+        "offset": 0,
+        "data": "\(sampleChunkBase64)",
+        "chunk_sha256": "\(sampleChunkSha)",
+        "is_final_chunk": true
+    }
+}
+""".data(using: .utf8)!
+
+let parsedChunk = try! FileClient.parseFileChunk(data: sampleChunkJSON)
+assertEqual(parsedChunk.transferId, "dl-tx-101")
+assertEqual(parsedChunk.chunkIndex, 0)
+assertEqual(parsedChunk.offset, 0)
+assertTrue(parsedChunk.isFinalChunk)
+let decodedData = Data(base64Encoded: parsedChunk.dataBase64)!
+assertEqual(decodedData, sampleChunkPayload)
+assertEqual(FileClient.computeSHA256Hex(data: decodedData), parsedChunk.chunkSha256)
+print("PASS: testFileChunkParserAndSha256Verification")
+
+// Test 17: FILE-3 computeFileSHA256Hex on disk file
+let tempFile = tempDir.appendingPathComponent("sha_test.bin")
+try! sampleChunkPayload.write(to: tempFile)
+let computedFileSha = try! FileClient.computeFileSHA256Hex(at: tempFile)
+assertEqual(computedFileSha, sampleChunkSha)
+print("PASS: testFileSHA256HexOnDisk")
+
+print(">>> ALL MAC CLIENT UNIT TESTS PASSED (17/17) <<<")
 exit(0)

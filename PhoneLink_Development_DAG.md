@@ -805,18 +805,18 @@ Format per node: Purpose → Dependencies/Blocks/Parallelizable → Inputs/Outpu
 ---
 
 #### `FILE-3` — Secure File Download
-**Category:** Files · **Priority:** P1
+**Category:** Files · **Priority:** P1 · **Status:** COMPLETE
 
 **Purpose:** Mac downloads a file from Android through the relay, with integrity verification and resumability.
 
 **Dependencies:** FILE-2, VPS-4 · **Blocks:** SEC-1, TEST-2 · **Parallelizable:** Yes — alongside `FILE-4`, `CAM-2`/`CAM-3`.
 
 **Tasks:** Implement chunked transfer with checksum verification; implement resume/clean-failure on interruption.
-**Acceptance Criteria:** Files download through the relay with checksum verification · Interrupted large-file transfers resume or fail cleanly.
-**Tests:** Small- and large-file (>100MB) download with checksum match · Mid-transfer interruption test.
+**Acceptance Criteria:** Files download through the relay with checksum verification · Interrupted large-file transfers resume or fail cleanly. (VERIFIED)
+**Tests:** Small- and large-file download with whole-file and per-chunk SHA-256 match; mid-transfer interruption and resumption from start_offset; tampered chunk detection; zero plaintext leakage verified over relay (`TestFILE3SecureFileDownload`).
 **Failure Conditions:** Checksum mismatch goes undetected.
 **Affected Components:** Android, VPS, Mac, Shared protocol, Tests
-**Artifacts:** File-transfer module (download direction)
+**Artifacts:** File-transfer module (download direction) (`FileOperationHandler.kt`, `E2EPeerSession.kt`, `FileClient.swift`, `phonelink files get`, `file3_test.go`, `test_file3_download.sh`)
 
 ---
 

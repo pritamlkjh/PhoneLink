@@ -4,15 +4,31 @@ import org.json.JSONObject
 import java.util.Base64
 
 /**
- * ARCH-2 / INT-1 / FILE-2: Android E2E Peer Session.
+ * ARCH-2 / INT-1 / FILE-2 / FILE-3: Android E2E Peer Session.
  *
  * Manages the ephemeral key exchange and transparent encryption/decryption of
  * application layer messages with the paired Mac client.
  */
-class E2EPeerSession(
-    private val sendFunction: (ByteArray) -> Boolean,
-    private val messageDispatcher: (ByteArray) -> ByteArray?
-) {
+class E2EPeerSession {
+    private val sendFunction: (ByteArray) -> Boolean
+    private val messageDispatcher: (ByteArray, (ByteArray) -> Boolean) -> ByteArray?
+
+    constructor(
+        sendFunction: (ByteArray) -> Boolean,
+        messageDispatcher: (ByteArray, (ByteArray) -> Boolean) -> ByteArray?
+    ) {
+        this.sendFunction = sendFunction
+        this.messageDispatcher = messageDispatcher
+    }
+
+    constructor(
+        sendFunction: (ByteArray) -> Boolean,
+        messageDispatcher: (ByteArray) -> ByteArray?
+    ) : this(
+        sendFunction,
+        { plaintext, _ -> messageDispatcher(plaintext) }
+    )
+
     private var sessionKeys: E2EEncryptionManager.SessionKeys? = null
     private var e2eManager: E2EEncryptionManager = E2EEncryptionManager()
 
@@ -21,6 +37,19 @@ class E2EPeerSession(
     fun reset() {
         sessionKeys = null
         e2eManager = E2EEncryptionManager()
+    }
+
+    /**
+     * Encrypts and transmits an outgoing application payload to the paired peer.
+     */
+    fun sendApplicationMessage(payloadBytes: ByteArray): Boolean {
+        val keys = sessionKeys ?: return false
+        val encrypted = E2EEncryptionManager.encryptAESGCM(keys.keyAndroidToMac, payloadBytes)
+        val respJson = JSONObject().apply {
+            put("type", "E2E_PAYLOAD")
+            put("ciphertext", Base64.getEncoder().encodeToString(encrypted))
+        }
+        return sendFunction(respJson.toString().toByteArray(Charsets.UTF_8))
     }
 
     /**
@@ -92,15 +121,12 @@ class E2EPeerSession(
             return false
         }
 
-        val responseBytes = messageDispatcher(plaintext) ?: return true
-        val encryptedResponse = E2EEncryptionManager.encryptAESGCM(keys.keyAndroidToMac, responsePayload = responseBytes)
-
-        // Send back as E2E_PAYLOAD JSON wrapper
-        val respJson = JSONObject().apply {
-            put("type", "E2E_PAYLOAD")
-            put("ciphertext", Base64.getEncoder().encodeToString(encryptedResponse))
+        val sendAppMsg: (ByteArray) -> Boolean = { payload ->
+            sendApplicationMessage(payload)
         }
-        sendFunction(respJson.toString().toByteArray(Charsets.UTF_8))
+
+        val responseBytes = messageDispatcher(plaintext, sendAppMsg) ?: return true
+        sendApplicationMessage(responseBytes)
         return true
     }
 
