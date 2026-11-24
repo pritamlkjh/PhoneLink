@@ -1,0 +1,6 @@
+<resources>
+    <string name="app_name">PhoneLink</string>
+    <string name="status_ready">PhoneLink Service Ready</string>
+    <string name="status_connected">Connected to VPS Relay</string>
+    <string name="status_disconnected">Disconnected</string>
+</resources>
