@@ -1247,7 +1247,7 @@
       "id": "TEST-3",
       "name": "Network Failure & Chaos Testing",
       "category": "testing",
-      "status": "PENDING",
+      "status": "COMPLETE",
       "depends_on": [
         "TEST-2",
         "INT-3"
