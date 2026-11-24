@@ -145,9 +145,13 @@ run_step "DOC-1 Consolidated Documentation & Setup Guide" \
 run_step "VPS-8 VPS Direct-Connection Optimization" \
     "$REPO_ROOT/tests/test_vps8_direct.sh"
 
+# 29. FINAL-1 Final Acceptance Testing & Fresh-Environment Dry Run
+run_step "FINAL-1 Final Acceptance Testing & Fresh-Environment Dry Run" \
+    "$REPO_ROOT/tests/test_final1_dryrun.sh"
+
 echo "=========================================================="
 if [ $FAILURES -eq 0 ]; then
-    echo "   ALL REGRESSION SUITES PASSED (28/28)"
+    echo "   ALL REGRESSION SUITES PASSED (29/29)"
     echo "=========================================================="
     exit 0
 else

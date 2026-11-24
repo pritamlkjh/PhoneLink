@@ -2,8 +2,8 @@
 
 > **Personal authorized remote-access system connecting 1 Android phone, 1 macOS client, and 1 low-trust Linux VPS relay.**
 
-[![Test Suite](https://img.shields.io/badge/regression%20tests-26%2F26%20passing-brightgreen)](#testing--verification)
-[![DAG Status](https://img.shields.io/badge/DAG%20progress-93.9%25%20(46%2F49)-blue)](#development-dag)
+[![Test Suite](https://img.shields.io/badge/regression%20tests-29%2F29%20passing-brightgreen)](#testing--verification)
+[![DAG Status](https://img.shields.io/badge/DAG%20progress-100%25%20(49%2F49)-blue)](#development-dag)
 [![Security Policy](https://img.shields.io/badge/privacy-anti--stalkerware%20enforced-success)](docs/PRIVACY_MODEL.md)
 
 PhoneLink allows you to securely access files, inspect device status, locate your phone, and preview the camera from your Mac without third-party cloud intermediaries. The relay runs on your own Linux VPS, while payload data is strictly end-to-end encrypted between your Mac and phone.

@@ -1403,7 +1403,7 @@
       "id": "FINAL-1",
       "name": "Final Acceptance Testing & Release Readiness",
       "category": "final_acceptance",
-      "status": "PENDING",
+      "status": "COMPLETE",
       "depends_on": [
         "REL-1",
         "REL-2",

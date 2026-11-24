@@ -1094,7 +1094,7 @@ Format per node: Purpose → Dependencies/Blocks/Parallelizable → Inputs/Outpu
 ### 4.13 Final Acceptance
 
 #### `FINAL-1` — Final Acceptance Testing & Release Readiness
-**Category:** Final Acceptance · **Priority:** P0
+**Category:** Final Acceptance · **Priority:** P0 · **Status:** COMPLETE
 
 **Purpose:** One last fresh-environment dry run proving the whole system, as released, actually works end-to-end.
 
