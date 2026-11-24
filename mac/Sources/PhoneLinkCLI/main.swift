@@ -18,13 +18,15 @@ func printUsage() {
     USAGE: phonelink <subcommand> [options]
     
     SUBCOMMANDS:
-      info          Show local Mac device identity, public key, and relay config
+      info          Show local Mac device identity (use '--device' for remote phone info)
+      device        Execute scoped remote actions on phone (info, ping)
       pair          Initiate pairing ceremony (generates pairing token & short code)
       status        Check relay connectivity and Android phone online/offline state
                     Options: --watch (stream real-time updates), --json, --vps <url>
       ping          Send an end-to-end encrypted round-trip ping to the phone
+                    Options: --duration <seconds>, --relay (ping relay only), --json
       wipe          Wipe stored credentials and reset Mac device identity
-      files         Browse and transfer files (FILE-2, FILE-3)
+      files         Browse and transfer files (FILE-2, FILE-3, FILE-4)
       camera        Live camera streaming and capture (CAM-3, CAM-4)
       version       Show PhoneLink version information
       help          Show help information
@@ -54,11 +56,58 @@ func parseOption(_ option: String, in args: [String]) -> String? {
     return nil
 }
 
-func handleInfo(args: [String], identity: DeviceIdentityManager) {
+func handleInfo(args: [String], identity: DeviceIdentityManager, client: AuthClient) async {
     let isJSON = parseFlag("--json", in: args)
+    let isDevice = parseFlag("--device", in: args)
+    let vpsStr = parseOption("--vps", in: args) ?? Config.defaultRelayURL
+
+    if isDevice {
+        guard let vpsURL = URL(string: vpsStr) else {
+            fputs("ERROR: Invalid VPS relay URL: \(vpsStr)\n", stderr)
+            exit(2)
+        }
+        do {
+            let resp = try await ActionClient.fetchDeviceInfo(vpsBaseURL: vpsURL, identity: identity, client: client)
+            if isJSON {
+                let dict: [String: Any] = [
+                    "request_id": resp.requestId,
+                    "status": resp.status,
+                    "model": resp.model,
+                    "os_version": resp.osVersion,
+                    "battery_percent": resp.batteryPercent,
+                    "is_charging": resp.isCharging,
+                    "total_storage_bytes": resp.totalStorageBytes,
+                    "available_storage_bytes": resp.availableStorageBytes,
+                    "app_version": resp.appVersion,
+                    "error_message": resp.errorMessage ?? ""
+                ]
+                if let data = try? JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted, .sortedKeys]),
+                   let str = String(data: data, encoding: .utf8) {
+                    print(str)
+                }
+            } else {
+                print("PhoneLink Remote Device Info")
+                print("--------------------------------------------------")
+                print("Device Model:      \(resp.model)")
+                print("OS Version:        \(resp.osVersion)")
+                let chargingStr = resp.isCharging ? " (Charging)" : ""
+                print("Battery:           \(resp.batteryPercent)%\(chargingStr)")
+                print("Total Storage:     \(FileClient.formatByteSize(resp.totalStorageBytes))")
+                print("Available Storage: \(FileClient.formatByteSize(resp.availableStorageBytes))")
+                print("App Version:       \(resp.appVersion)")
+                if let err = resp.errorMessage, !err.isEmpty {
+                    print("Error:             \(err)")
+                }
+            }
+            exit(resp.status == "STATUS_OK" ? 0 : 1)
+        } catch {
+            fputs("ERROR: Failed to fetch remote device info: \(error.localizedDescription)\n", stderr)
+            exit(1)
+        }
+    }
+
     let devID = identity.deviceID
     let pubKey = identity.publicKeyBase64
-    let relayURL = parseOption("--vps", in: args) ?? Config.defaultRelayURL
 
     if isJSON {
         let dict: [String: Any] = [
@@ -67,7 +116,7 @@ func handleInfo(args: [String], identity: DeviceIdentityManager) {
             "device_id": devID,
             "public_key": pubKey,
             "key_algorithm": "ED25519",
-            "relay_url": relayURL
+            "relay_url": vpsStr
         ]
         if let data = try? JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted, .sortedKeys]),
            let str = String(data: data, encoding: .utf8) {
@@ -79,7 +128,8 @@ func handleInfo(args: [String], identity: DeviceIdentityManager) {
         print("Device ID:      \(devID)")
         print("Key Algorithm:  Ed25519 (RFC 8032)")
         print("Public Key:     \(pubKey)")
-        print("Relay Endpoint: \(relayURL)")
+        print("Relay Endpoint: \(vpsStr)")
+        print("\nTip: Run 'phonelink info --device' or 'phonelink device info' to query connected Android phone telemetry.")
     }
     exit(0)
 }
@@ -236,10 +286,57 @@ func handleStatus(args: [String], identity: DeviceIdentityManager, client: AuthC
 
 func handlePing(args: [String], identity: DeviceIdentityManager, client: AuthClient) async {
     let isJSON = parseFlag("--json", in: args)
+    let isRelayOnly = parseFlag("--relay", in: args)
+    let isDevice = parseFlag("--device", in: args)
     let vpsStr = parseOption("--vps", in: args) ?? Config.defaultRelayURL
     guard let vpsURL = URL(string: vpsStr) else {
         fputs("ERROR: Invalid VPS relay URL: \(vpsStr)\n", stderr)
         exit(2)
+    }
+
+    if isDevice || !isRelayOnly {
+        let durationStr = parseOption("--duration", in: args) ?? "5"
+        let duration = UInt32(durationStr) ?? 5
+        let startTime = Date()
+
+        do {
+            let resp = try await ActionClient.sendPing(
+                vpsBaseURL: vpsURL,
+                identity: identity,
+                client: client,
+                durationSeconds: duration
+            )
+            let latencyMs = Int(Date().timeIntervalSince(startTime) * 1000)
+
+            if isJSON {
+                let dict: [String: Any] = [
+                    "request_id": resp.requestId,
+                    "status": resp.status,
+                    "duration_seconds": duration,
+                    "message": resp.message,
+                    "rtt_ms": latencyMs
+                ]
+                if let data = try? JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted, .sortedKeys]),
+                   let str = String(data: data, encoding: .utf8) {
+                    print(str)
+                }
+            } else {
+                print("PhoneLink Device Ping Response")
+                print("--------------------------------------------------")
+                print("Status:       \(resp.status)")
+                print("Duration:     \(duration)s")
+                print("Message:      \(resp.message)")
+                print("Roundtrip:    \(latencyMs) ms")
+            }
+            exit(resp.status == "STATUS_OK" ? 0 : 1)
+        } catch {
+            if isRelayOnly {
+                // fall through to relay ping
+            } else {
+                fputs("ERROR: Failed to ping Android device: \(error.localizedDescription)\n", stderr)
+                exit(1)
+            }
+        }
     }
 
     let manager = ConnectionManager(vpsBaseURL: vpsURL, identity: identity, authClient: client)
@@ -261,6 +358,38 @@ func handlePing(args: [String], identity: DeviceIdentityManager, client: AuthCli
         print("Ping to PhoneLink VPS [\(vpsStr)]: time=\(latencyMs)ms status=OK")
     }
     exit(0)
+}
+
+func handleDevice(args: [String], identity: DeviceIdentityManager, client: AuthClient) async {
+    guard let sub = args.first else {
+        print("""
+        USAGE: phonelink device <action> [options]
+        
+        ACTIONS:
+          info          Retrieve remote phone telemetry (model, OS, battery, storage)
+          ping          Trigger remote phone audio/vibration ping (max 30s)
+        
+        OPTIONS:
+          --duration <s duration in seconds for ping (1..30, default: 5)
+          --vps <url>   Override VPS relay URL
+          --json        Format output as JSON
+        """)
+        exit(2)
+    }
+    let restArgs = Array(args.dropFirst())
+    switch sub {
+    case "info":
+        var infoArgs = restArgs
+        infoArgs.append("--device")
+        await handleInfo(args: infoArgs, identity: identity, client: client)
+    case "ping":
+        var pingArgs = restArgs
+        pingArgs.append("--device")
+        await handlePing(args: pingArgs, identity: identity, client: client)
+    default:
+        fputs("ERROR: Unknown device action '\(sub)'. Only allowlisted actions (info, ping) are permitted.\n", stderr)
+        exit(2)
+    }
 }
 
 func printFilesUsage() {
@@ -663,7 +792,10 @@ case "-h", "--help", "help":
     exit(0)
 
 case "info":
-    handleInfo(args: subArgs, identity: identity)
+    await handleInfo(args: subArgs, identity: identity, client: client)
+
+case "device":
+    await handleDevice(args: subArgs, identity: identity, client: client)
 
 case "wipe":
     handleWipe(args: subArgs, identity: identity)

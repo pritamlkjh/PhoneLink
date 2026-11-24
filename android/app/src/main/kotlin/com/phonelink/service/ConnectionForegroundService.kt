@@ -61,6 +61,7 @@ class ConnectionForegroundService : Service() {
     private lateinit var secureStorage: SecureStorage
     private lateinit var storageAccessLayer: StorageAccessLayer
     private lateinit var fileOperationHandler: FileOperationHandler
+    private lateinit var remoteActionRegistry: com.phonelink.actions.RemoteActionRegistry
     private var peerSession: com.phonelink.crypto.E2EPeerSession? = null
     private var isRunning = false
 
@@ -69,6 +70,7 @@ class ConnectionForegroundService : Service() {
         secureStorage = SecureStorage.fromContext(this)
         storageAccessLayer = StorageAccessLayer.fromContext(this)
         fileOperationHandler = FileOperationHandler(storageAccessLayer)
+        remoteActionRegistry = com.phonelink.actions.RemoteActionRegistry.fromContext(this)
         createNotificationChannel()
     }
 
@@ -110,6 +112,7 @@ class ConnectionForegroundService : Service() {
             sendFunction = { bytes -> currentTransport.send(bytes) },
             messageDispatcher = { plaintext, sendAppMsg ->
                 fileOperationHandler.processApplicationMessage(plaintext, sendAppMsg)
+                    ?: remoteActionRegistry.processApplicationMessage(plaintext)
             }
         )
 

@@ -34,6 +34,8 @@ class SecureStorage(
         const val KEY_PAIRED_PUBLIC_KEY = "paired_public_key"
         const val KEY_RELAY_URL = "relay_url"
         const val KEY_CAMERA_ALLOWED = "camera_allowed_toggle" // Defaults to false
+        const val KEY_REMOTE_PING_ALLOWED = "remote_ping_allowed_toggle" // Defaults to true
+        const val KEY_REMOTE_INFO_ALLOWED = "remote_info_allowed_toggle" // Defaults to true
 
         private fun getOrCreateMasterKey(prefs: SharedPreferences): SecretKey {
             val encodedKey = prefs.getString(PREF_KEY_MASTER_KEY, null)
@@ -174,5 +176,39 @@ class SecureStorage(
 
     fun setCameraAllowed(allowed: Boolean) {
         saveString(KEY_CAMERA_ALLOWED, allowed.toString())
+    }
+
+    /**
+     * In-app Remote Ping Authorization Gate (FILE-5 requirement).
+     * Defaults to TRUE.
+     */
+    fun isRemotePingAllowed(): Boolean {
+        val encrypted = preferences.getString(KEY_REMOTE_PING_ALLOWED, null) ?: return true
+        return try {
+            decrypt(encrypted).toBoolean()
+        } catch (_: Exception) {
+            true
+        }
+    }
+
+    fun setRemotePingAllowed(allowed: Boolean) {
+        saveString(KEY_REMOTE_PING_ALLOWED, allowed.toString())
+    }
+
+    /**
+     * In-app Remote Info Authorization Gate (FILE-5 requirement).
+     * Defaults to TRUE.
+     */
+    fun isRemoteInfoAllowed(): Boolean {
+        val encrypted = preferences.getString(KEY_REMOTE_INFO_ALLOWED, null) ?: return true
+        return try {
+            decrypt(encrypted).toBoolean()
+        } catch (_: Exception) {
+            true
+        }
+    }
+
+    fun setRemoteInfoAllowed(allowed: Boolean) {
+        saveString(KEY_REMOTE_INFO_ALLOWED, allowed.toString())
     }
 }

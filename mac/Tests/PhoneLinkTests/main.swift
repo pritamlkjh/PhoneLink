@@ -357,5 +357,89 @@ assertEqual(parsedAck.chunkIndex, 1)
 assertEqual(parsedAck.status, "STATUS_OK")
 print("PASS: testFileChunkUploadAndAckParser")
 
-print(">>> ALL MAC CLIENT UNIT TESTS PASSED (20/20) <<<")
+// Test 21: FILE-5 DevicePingRequest Builder
+let pingReqData = try! ActionClient.buildDevicePingRequest(durationSeconds: 15, requestId: "ping-req-42")
+let pingReqJson = try! JSONSerialization.jsonObject(with: pingReqData) as! [String: Any]
+assertEqual(pingReqJson["schema_version"] as! Int, 1)
+let pingSubReq = pingReqJson["device_ping_req"] as! [String: Any]
+assertEqual(pingSubReq["request_id"] as! String, "ping-req-42")
+assertEqual(pingSubReq["duration_seconds"] as! Int, 15)
+print("PASS: testDevicePingRequestBuilder")
+
+// Test 22: FILE-5 DevicePingResponse Parser
+let samplePingRespJSON = """
+{
+    "schema_version": 1,
+    "message_id": "msg-ping-resp",
+    "timestamp": 1774426504000,
+    "device_ping_resp": {
+        "request_id": "ping-req-42",
+        "status": "STATUS_OK",
+        "message": "Device ping active for 15 seconds"
+    }
+}
+""".data(using: .utf8)!
+let parsedPingResp = try! ActionClient.parseDevicePingResponse(data: samplePingRespJSON)
+assertEqual(parsedPingResp.requestId, "ping-req-42")
+assertEqual(parsedPingResp.status, "STATUS_OK")
+assertEqual(parsedPingResp.message, "Device ping active for 15 seconds")
+print("PASS: testDevicePingResponseParser")
+
+// Test 23: FILE-5 DeviceInfoRequest Builder
+let infoReqData = try! ActionClient.buildDeviceInfoRequest(requestId: "info-req-77")
+let infoReqJson = try! JSONSerialization.jsonObject(with: infoReqData) as! [String: Any]
+assertEqual(infoReqJson["schema_version"] as! Int, 1)
+let infoSubReq = infoReqJson["device_info_req"] as! [String: Any]
+assertEqual(infoSubReq["request_id"] as! String, "info-req-77")
+print("PASS: testDeviceInfoRequestBuilder")
+
+// Test 24: FILE-5 DeviceInfoResponse Parser
+let sampleInfoRespJSON = """
+{
+    "schema_version": 1,
+    "message_id": "msg-info-resp",
+    "timestamp": 1774426505000,
+    "device_info_resp": {
+        "request_id": "info-req-77",
+        "status": "STATUS_OK",
+        "model": "Google Pixel 8 Pro",
+        "os_version": "Android 14 (API 34)",
+        "battery_percent": 92,
+        "is_charging": true,
+        "total_storage_bytes": 256000000000,
+        "available_storage_bytes": 180000000000,
+        "app_version": "1.0.0"
+    }
+}
+""".data(using: .utf8)!
+let parsedInfoResp = try! ActionClient.parseDeviceInfoResponse(data: sampleInfoRespJSON)
+assertEqual(parsedInfoResp.requestId, "info-req-77")
+assertEqual(parsedInfoResp.status, "STATUS_OK")
+assertEqual(parsedInfoResp.model, "Google Pixel 8 Pro")
+assertEqual(parsedInfoResp.osVersion, "Android 14 (API 34)")
+assertEqual(parsedInfoResp.batteryPercent, 92)
+assertTrue(parsedInfoResp.isCharging)
+assertEqual(parsedInfoResp.totalStorageBytes, 256000000000)
+assertEqual(parsedInfoResp.availableStorageBytes, 180000000000)
+assertEqual(parsedInfoResp.appVersion, "1.0.0")
+
+// Test Action Error response parsing
+let sampleActionErrJSON = """
+{
+    "schema_version": 1,
+    "message_id": "msg-action-err",
+    "timestamp": 1774426506000,
+    "error": {
+        "request_id": "info-req-77",
+        "code": "STATUS_ACTION_NOT_PERMITTED",
+        "message": "Remote device info is disabled"
+    }
+}
+""".data(using: .utf8)!
+let parsedActionErr = try! ActionClient.parseDeviceInfoResponse(data: sampleActionErrJSON)
+assertEqual(parsedActionErr.status, "STATUS_ACTION_NOT_PERMITTED")
+assertEqual(parsedActionErr.errorMessage, "Remote device info is disabled")
+print("PASS: testDeviceInfoResponseParserAndErrorHandling")
+
+print(">>> ALL MAC CLIENT UNIT TESTS PASSED (24/24) <<<")
 exit(0)

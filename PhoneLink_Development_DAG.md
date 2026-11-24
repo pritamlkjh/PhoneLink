@@ -837,20 +837,19 @@ Format per node: Purpose → Dependencies/Blocks/Parallelizable → Inputs/Outpu
 ---
 
 #### `FILE-5` — Scoped Remote Action System
-**Category:** Files · **Priority:** P2
+**Category:** Files · **Priority:** P2 · **Status:** COMPLETE
 
-**Purpose:** A small, fixed, build-time allowlist of remote actions (e.g., locate/ping, a predefined export) — and, just as importantly, the explicit guarantee that this is *not* a general remote-command/shell-execution system.
+**Purpose:** A small, fixed, build-time allowlist of remote actions (device.ping, device.info) — and, just as importantly, the explicit guarantee that this is *not* a general remote-command/shell-execution system.
 
 **Dependencies:** FILE-2, ARCH-4 · **Blocks:** SEC-2, TEST-2 · **Parallelizable:** Yes.
 
-**Tasks:** Define the fixed action allowlist explicitly (see Section 16, open question); implement each action as an independently permission-gated, user-visible operation; ensure no code path accepts a free-form command string from Mac or VPS.
-
-**Acceptance Criteria:** Fixed, build-time allowlist of remote actions only, no arbitrary command or shell execution exists anywhere · Each action independently permission-gated and user-visible on the Android side.
-**Tests:** Security test — no code path accepts an arbitrary command string · Each allowlisted action verified to produce its user-visible effect.
+**Tasks:** Define the fixed action allowlist explicitly; implement each action as an independently permission-gated, user-visible operation; ensure no code path accepts a free-form command string from Mac or VPS.
+**Acceptance Criteria:** Fixed, build-time allowlist of remote actions only, no arbitrary command or shell execution exists anywhere · Each action independently permission-gated and user-visible on the Android side. (VERIFIED)
+**Tests:** Security test confirms arbitrary shell commands and injection attempts are rejected with STATUS_ACTION_NOT_PERMITTED; duration clamping (0->5s default, >30s->30s max, <0->STATUS_INVALID_ARGUMENT); permission gating (ping/info denial); device telemetry collection; zero plaintext leakage verified over relay (`TestFILE5ScopedRemoteActions`).
 **Failure Conditions:** Any code path that would accept and execute an arbitrary command/script string.
 **Security Considerations:** This node's real job is constraining scope, not adding capability — its allowlist should not grow without revisiting `ARCH-4`. This is the node most likely, if built carelessly, to turn PhoneLink into a general-purpose backdoor; treat that as the primary risk to design against.
 **Affected Components:** Android, VPS, Mac, Shared protocol, Tests
-**Artifacts:** `RemoteActionRegistry` (fixed allowlist)
+**Artifacts:** `RemoteActionRegistry` (fixed allowlist) (`RemoteActionRegistry.kt`, `ActionClient.swift`, `phonelink device info`, `phonelink device ping`, `file5_test.go`, `test_file5_actions.sh`)
 
 ---
 

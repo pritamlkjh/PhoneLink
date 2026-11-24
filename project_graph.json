@@ -1111,7 +1111,7 @@
       "id": "FILE-5",
       "name": "Scoped Remote Action System",
       "category": "files",
-      "status": "PENDING",
+      "status": "COMPLETE",
       "depends_on": [
         "FILE-2",
         "ARCH-4"

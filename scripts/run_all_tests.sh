@@ -69,9 +69,13 @@ run_step "FILE-3 Secure File Download Test" \
 run_step "FILE-4 Secure File Upload Test" \
     "$REPO_ROOT/tests/test_file4_upload.sh"
 
+# 10. FILE-5 Scoped Remote Action System Integration Tests
+run_step "FILE-5 Scoped Remote Action System Test" \
+    "$REPO_ROOT/tests/test_file5_actions.sh"
+
 echo "=========================================================="
 if [ $FAILURES -eq 0 ]; then
-    echo "   ALL REGRESSION SUITES PASSED (9/9)"
+    echo "   ALL REGRESSION SUITES PASSED (10/10)"
     echo "=========================================================="
     exit 0
 else
