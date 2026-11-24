@@ -1024,7 +1024,7 @@
       "id": "CAM-4",
       "name": "Mac Camera Viewer Client",
       "category": "camera",
-      "status": "PENDING",
+      "status": "COMPLETE",
       "depends_on": [
         "CAM-3",
         "MAC-4"

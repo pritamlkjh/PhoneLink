@@ -81,9 +81,13 @@ run_step "CAM-2 Android Camera Capture Module Test" \
 run_step "CAM-3 Camera Frame Streaming Protocol Test" \
     "$REPO_ROOT/tests/test_cam3_streaming.sh"
 
+# 13. CAM-4 Mac Camera Viewer Client Integration Tests
+run_step "CAM-4 Mac Camera Viewer Client Test" \
+    "$REPO_ROOT/tests/test_cam4_viewer.sh"
+
 echo "=========================================================="
 if [ $FAILURES -eq 0 ]; then
-    echo "   ALL REGRESSION SUITES PASSED (12/12)"
+    echo "   ALL REGRESSION SUITES PASSED (13/13)"
     echo "=========================================================="
     exit 0
 else
