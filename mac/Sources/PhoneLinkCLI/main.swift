@@ -768,7 +768,7 @@ func handleFilesList(args: [String], identity: DeviceIdentityManager, client: Au
     }
 }
 
-// MARK: - Camera Stream Command (CAM-3 / CAM-4)
+// MARK: - Camera Stream & Viewer Command (CAM-3 / CAM-4)
 
 func handleCamera(args: [String], identity: DeviceIdentityManager, client: AuthClient) async {
     let isJSON = parseFlag("--json", in: args)
@@ -776,9 +776,13 @@ func handleCamera(args: [String], identity: DeviceIdentityManager, client: AuthC
 
     if isHelp {
         print("""
-        Usage: phonelink camera [stream] [options]
+        Usage: phonelink camera [view|stream] [options]
 
-        Streams live camera preview frames from the paired Android device.
+        Live camera viewer and preview stream client for paired Android device.
+
+        COMMANDS:
+          view                  Interactive live terminal viewer with visual canvas (default)
+          stream                Stream log mode with real-time frame transmission metrics
 
         OPTIONS:
           --lens <front|back>   Select camera lens (default: back)
@@ -786,11 +790,17 @@ func handleCamera(args: [String], identity: DeviceIdentityManager, client: AuthC
           --quality <10-100>    JPEG compression quality (default: 80)
           --duration <sec>      Maximum streaming duration (default: 10s)
           --max-frames <n>      Stop after receiving n frames
+          --save <directory>    Save received JPEG frames to specified directory
+          --no-canvas           Disable visual ASCII canvas in view mode
           --vps <url>           VPS relay URL override
           --json                Output stream stats in JSON format
         """)
         exit(0)
     }
+
+    let isViewMode = !args.contains("stream") // 'view' or default is view mode
+    let showCanvas = isViewMode && !parseFlag("--no-canvas", in: args)
+    let saveDir = parseOption("--save", in: args)
 
     let vpsStr = parseOption("--vps", in: args) ?? Config.defaultRelayURL
     guard let vpsURL = URL(string: vpsStr) else {
@@ -824,16 +834,33 @@ func handleCamera(args: [String], identity: DeviceIdentityManager, client: AuthC
     let maxWidth: UInt32 = 1280
     let maxHeight: UInt32 = 720
 
-    if !isJSON {
-        print(">> Initializing camera stream [Lens: \(lens.rawValue), Target FPS: \(targetFps)]...")
+    // Prepare save directory if requested
+    var saveURL: URL? = nil
+    if let dir = saveDir {
+        let url = URL(fileURLWithPath: (dir as NSString).expandingTildeInPath)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        saveURL = url
     }
+
+    let viewerController = CameraViewerController()
+    viewerController.notifyConnecting()
+
+    if !isJSON {
+        print(CameraTerminalRenderer.renderBanner(state: viewerController.state, lens: lens, width: maxWidth, height: maxHeight))
+        if showCanvas {
+            print(CameraTerminalRenderer.renderAsciiCanvas(frame: nil, state: viewerController.state))
+        }
+    }
+
+    let targetSaveURL = saveURL
+    let activeLens = lens
 
     do {
         let summary = try await CameraClient.streamCamera(
             vpsBaseURL: vpsURL,
             identity: identity,
             client: client,
-            lens: lens,
+            lens: activeLens,
             targetFps: targetFps,
             jpegQuality: jpegQuality,
             maxWidth: maxWidth,
@@ -841,18 +868,43 @@ func handleCamera(args: [String], identity: DeviceIdentityManager, client: AuthC
             maxDurationSeconds: durationSeconds,
             maxFrames: maxFrames,
             onFrame: { frame, stats in
+                viewerController.notifyFrameReceived(frame: frame, stats: stats)
+
+                // Save frame if requested
+                if let sUrl = targetSaveURL {
+                    let frameFilename = String(format: "frame_%05llu.jpg", frame.frameNumber)
+                    let fileURL = sUrl.appendingPathComponent(frameFilename)
+                    try? frame.jpegData.write(to: fileURL)
+                }
+
                 if !isJSON {
-                    let sizeKB = Double(frame.jpegData.count) / 1024.0
-                    print(String(format: "[Frame #%llu] %ux%u (%.1f KB) | Latency: %lld ms | Rate: %.1f FPS",
-                                 frame.frameNumber, frame.width, frame.height, sizeKB, stats.lastLatencyMs, stats.currentFps))
+                    if showCanvas {
+                        // In interactive view mode, redraw banner and canvas
+                        let banner = CameraTerminalRenderer.renderBanner(
+                            state: viewerController.state,
+                            lens: activeLens,
+                            width: frame.width,
+                            height: frame.height,
+                            frameBytes: frame.jpegData.count
+                        )
+                        let canvas = CameraTerminalRenderer.renderAsciiCanvas(frame: frame, state: viewerController.state)
+                        print("\u{001B}[H\u{001B}[2J" + banner + "\n" + canvas)
+                    } else {
+                        let sizeKB = Double(frame.jpegData.count) / 1024.0
+                        print(String(format: "[Frame #%llu] %ux%u (%.1f KB) | Latency: %lld ms | Rate: %.1f FPS",
+                                     frame.frameNumber, frame.width, frame.height, sizeKB, stats.lastLatencyMs, stats.currentFps))
+                    }
                 }
             },
             onStatusChange: { status in
-                if !isJSON {
+                if !isJSON && !showCanvas {
                     print(">> \(status)")
                 }
             }
         )
+
+        // Stream deactivation - strictly transition viewer to inactive state (CAM-4 invariant)
+        viewerController.notifyStopped(reason: summary.stopReason)
 
         if isJSON {
             let encoder = JSONEncoder()
@@ -860,7 +912,18 @@ func handleCamera(args: [String], identity: DeviceIdentityManager, client: AuthC
             let data = try encoder.encode(summary)
             print(String(data: data, encoding: .utf8)!)
         } else {
+            if showCanvas {
+                let banner = CameraTerminalRenderer.renderBanner(
+                    state: viewerController.state,
+                    lens: lens,
+                    width: maxWidth,
+                    height: maxHeight
+                )
+                let canvas = CameraTerminalRenderer.renderAsciiCanvas(frame: nil, state: viewerController.state)
+                print("\u{001B}[H\u{001B}[2J" + banner + "\n" + canvas)
+            }
             print("--------------------------------------------------------------------------------")
+            print("Viewer state: \(viewerController.state.statusBadge) - \(viewerController.state.statusDescription)")
             print("Stream summary: \(summary.totalFrames) frames received, \(summary.droppedFrames) dropped")
             print(String(format: "Average Latency: %.1f ms | Average Rate: %.1f FPS | Duration: %.2f s",
                          summary.averageLatencyMs, summary.averageFps, summary.durationSeconds))
@@ -868,6 +931,7 @@ func handleCamera(args: [String], identity: DeviceIdentityManager, client: AuthC
         }
         exit(0)
     } catch {
+        viewerController.notifyError(message: error.localizedDescription)
         if isJSON {
             let dict: [String: Any] = [
                 "status": "ERROR",
@@ -876,6 +940,7 @@ func handleCamera(args: [String], identity: DeviceIdentityManager, client: AuthC
             let data = try! JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted])
             print(String(data: data, encoding: .utf8)!)
         } else {
+            print(CameraTerminalRenderer.renderBanner(state: viewerController.state, lens: lens))
             fputs("ERROR: \(error.localizedDescription)\n", stderr)
         }
         exit(1)

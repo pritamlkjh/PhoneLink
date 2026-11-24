@@ -576,5 +576,103 @@ assertEqual(detectedDrops, 3)
 assertEqual(expectedFrame, 8)
 print("PASS: testCameraFrameGapsAndDroppedFrameSequenceDetection")
 
-print(">>> ALL MAC CLIENT UNIT TESTS PASSED (30/30) <<<")
+// Test 31: CAM-4 CameraViewerState Transitions
+let controller = CameraViewerController(staleTimeoutMs: 100)
+assertFalse(controller.state.isActive)
+assertEqual(controller.state, .inactive(reason: "not_started"))
+
+controller.notifyConnecting()
+assertFalse(controller.state.isActive)
+assertEqual(controller.state, .connecting)
+
+let dummyJpeg = Data([0xFF, 0xD8, 0x01, 0x02])
+let dummyFrame = CameraFrame(
+    sessionId: "sess-v-1",
+    frameNumber: 1,
+    timestampMs: Int64(Date().timeIntervalSince1970 * 1000),
+    jpegData: dummyJpeg,
+    width: 1280,
+    height: 720,
+    lens: .back
+)
+let dummyStats = CameraStreamStats(
+    framesReceived: 1,
+    framesDropped: 0,
+    lastLatencyMs: 30,
+    averageLatencyMs: 30.0,
+    currentFps: 2.0,
+    elapsedSeconds: 0.5
+)
+controller.notifyFrameReceived(frame: dummyFrame, stats: dummyStats)
+assertTrue(controller.state.isActive)
+if case .active(let fn, let lat, let fps, _) = controller.state {
+    assertEqual(fn, 1)
+    assertEqual(lat, 30)
+    assert(fps > 1.9 && fps < 2.1)
+} else {
+    fatalError("Expected .active state")
+}
+print("PASS: testCameraViewerStateTransitions")
+
+// Test 32: CAM-4 Stale Frame Watchdog
+assertFalse(controller.checkStale()) // Immediately after frame, not stale yet
+Thread.sleep(forTimeInterval: 0.15) // Sleep > 100ms stale timeout
+assertTrue(controller.checkStale()) // Now stale
+assertFalse(controller.state.isActive)
+if case .stale(let lastFn, let elapsed) = controller.state {
+    assertEqual(lastFn, 1)
+    assertTrue(elapsed >= 100)
+} else {
+    fatalError("Expected .stale state")
+}
+print("PASS: testCameraViewerStaleFrameWatchdog")
+
+// Test 33: CAM-4 Immediate Inactive State on Deactivation
+controller.notifyStopped(reason: "user_stopped")
+assertFalse(controller.state.isActive)
+assertEqual(controller.state, .stopped(reason: "user_stopped"))
+assertTrue(controller.state.statusBadge.contains("STOPPED"))
+
+controller.notifyInactive(reason: "camera_hardware_closed")
+assertFalse(controller.state.isActive)
+assertEqual(controller.state, .inactive(reason: "camera_hardware_closed"))
+assertTrue(controller.state.statusBadge.contains("INACTIVE"))
+print("PASS: testCameraViewerImmediateInactiveOnStop")
+
+// Test 34: CAM-4 CameraTerminalRenderer Banner and Canvas
+let activeBanner = CameraTerminalRenderer.renderBanner(
+    state: .active(frameNumber: 42, latencyMs: 25, fps: 3.0, timestamp: Date()),
+    lens: .back,
+    width: 1280,
+    height: 720,
+    frameBytes: 32000
+)
+assertTrue(activeBanner.contains("LIVE [ACTIVE]"))
+assertTrue(activeBanner.contains("1280x720"))
+
+let inactiveBanner = CameraTerminalRenderer.renderBanner(
+    state: .inactive(reason: "stopped"),
+    lens: .front
+)
+assertTrue(inactiveBanner.contains("INACTIVE"))
+assertTrue(inactiveBanner.contains("Hardware: Inactive"))
+
+let activeCanvas = CameraTerminalRenderer.renderAsciiCanvas(
+    frame: dummyFrame,
+    state: .active(frameNumber: 1, latencyMs: 30, fps: 2.0, timestamp: Date()),
+    columns: 20,
+    rows: 4
+)
+assertTrue(activeCanvas.contains("+--------------------+"))
+
+let inactiveCanvas = CameraTerminalRenderer.renderAsciiCanvas(
+    frame: nil,
+    state: .inactive(reason: "stopped"),
+    columns: 20,
+    rows: 4
+)
+assertTrue(inactiveCanvas.contains("STREAM INACTIVE"))
+print("PASS: testCameraTerminalRendererCanvasOutput")
+
+print(">>> ALL MAC CLIENT UNIT TESTS PASSED (34/34) <<<")
 exit(0)

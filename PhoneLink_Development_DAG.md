@@ -907,7 +907,7 @@ Format per node: Purpose → Dependencies/Blocks/Parallelizable → Inputs/Outpu
 ---
 
 #### `CAM-4` — Mac Camera Viewer Client
-**Category:** Camera · **Priority:** P1
+**Category:** Camera · **Priority:** P1 · **Status:** COMPLETED
 
 **Purpose:** Display the incoming stream when active, and clearly show when it isn't.
 
@@ -918,7 +918,7 @@ Format per node: Purpose → Dependencies/Blocks/Parallelizable → Inputs/Outpu
 **Tests:** Manual test — live frames shown during an authorized session; inactive state shown otherwise.
 **Failure Conditions:** Viewer shows a stale frame without indicating the stream has actually stopped.
 **Affected Components:** Mac, Tests
-**Artifacts:** `phonelink camera` viewer
+**Artifacts:** `phonelink camera` viewer (`CameraViewer.swift`, `main.swift`, `PhoneLinkTests/main.swift`, `cam4_test.go`, `test_cam4_viewer.sh`)
 
 ---
 
