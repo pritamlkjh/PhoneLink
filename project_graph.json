@@ -474,7 +474,7 @@
       "id": "AND-4",
       "name": "Android Secure Local Storage",
       "category": "android",
-      "status": "PENDING",
+      "status": "COMPLETE",
       "depends_on": [
         "AND-3"
       ],
