@@ -94,7 +94,7 @@
       "id": "AND-1",
       "name": "Android Project Foundation",
       "category": "android",
-      "status": "PENDING",
+      "status": "COMPLETE",
       "depends_on": [
         "ARCH-1"
       ],
