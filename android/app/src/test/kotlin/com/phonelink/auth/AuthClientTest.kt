@@ -171,4 +171,50 @@ class AuthClientTest {
         assertEquals(pairedMacId, result.getOrThrow())
         assertEquals(pairedMacId, secureStorage.getPairedDeviceId())
     }
+
+    @Test
+    fun testGetDeviceStatusSuccess() {
+        val pairedMacId = "mac_device_paired_peer_6789"
+        mockWebServer.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setBody(
+                    JSONObject().apply {
+                        put("device_id", identityManager.getDeviceId())
+                        put("is_online", true)
+                        put("is_paired", true)
+                        put("peer_device_id", pairedMacId)
+                        put("peer_online", true)
+                        put("timestamp", 1234567890L)
+                    }.toString()
+                )
+        )
+
+        val vpsUrl = mockWebServer.url("").toString().removeSuffix("/")
+        val result = authClient.getDeviceStatus(vpsUrl, "valid_session_token")
+
+        assertTrue(result.isSuccess)
+        val status = result.getOrThrow()
+        assertEquals(identityManager.getDeviceId(), status.deviceId)
+        assertTrue(status.isOnline)
+        assertTrue(status.isPaired)
+        assertEquals(pairedMacId, status.peerDeviceId)
+        assertTrue(status.peerOnline)
+        assertEquals(1234567890L, status.timestamp)
+    }
+
+    @Test
+    fun testGetDeviceStatusUnauthorized() {
+        mockWebServer.enqueue(
+            MockResponse()
+                .setResponseCode(401)
+                .setBody("{\"error\":\"unauthorized: invalid session token\"}")
+        )
+
+        val vpsUrl = mockWebServer.url("").toString().removeSuffix("/")
+        val result = authClient.getDeviceStatus(vpsUrl, "invalid_session_token")
+
+        assertTrue(result.isFailure)
+        assertTrue(result.exceptionOrNull()!!.message!!.contains("401"))
+    }
 }

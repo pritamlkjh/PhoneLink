@@ -98,6 +98,24 @@ public final class ConnectionManager: @unchecked Sendable {
         }
     }
 
+    /// Connects and waits until the initial peer presence is resolved (or timeout).
+    /// Resolves immediately when .peerOnline, .peerOffline, or .error is reached.
+    public func connectAndWaitForPresence(timeoutSeconds: Double = 3.0) async -> State {
+        await connect()
+
+        let deadline = Date().addingTimeInterval(timeoutSeconds)
+        while Date() < deadline {
+            let current = self.state
+            switch current {
+            case .peerOnline, .peerOffline, .error:
+                return current
+            default:
+                try? await Task.sleep(nanoseconds: 20_000_000) // 20ms poll
+            }
+        }
+        return self.state
+    }
+
     /// Listens continuously for incoming WebSocket frames from the VPS relay.
     private func listenForMessages(_ task: URLSessionWebSocketTask) {
         task.receive { [weak self] result in

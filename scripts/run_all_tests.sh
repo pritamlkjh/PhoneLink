@@ -53,9 +53,13 @@ run_step "Android Client (Gradle) Tests" \
 run_step "INT-1 End-to-End Encrypted Relay Integration Test" \
     "$REPO_ROOT/tests/test_int1_e2e.sh"
 
+# 6. INT-2 Device Discovery & Status Reporting Integration Tests
+run_step "INT-2 Device Discovery & Status Reporting Test" \
+    "$REPO_ROOT/tests/test_int2_status.sh"
+
 echo "=========================================================="
 if [ $FAILURES -eq 0 ]; then
-    echo "   ALL REGRESSION SUITES PASSED (5/5)"
+    echo "   ALL REGRESSION SUITES PASSED (6/6)"
     echo "=========================================================="
     exit 0
 else

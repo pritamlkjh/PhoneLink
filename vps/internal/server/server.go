@@ -128,6 +128,7 @@ func (s *Server) registerRoutes() {
 	// Auth and Device Management endpoints (VPS-2)
 	s.mux.HandleFunc("POST /api/v1/devices/register", s.handleDeviceRegister)
 	s.mux.HandleFunc("POST /api/v1/devices/revoke", s.handleDeviceRevoke)
+	s.mux.HandleFunc("GET /api/v1/devices/status", s.handleDeviceStatus)
 	s.mux.HandleFunc("POST /api/v1/auth/challenge", s.handleAuthChallenge)
 	s.mux.HandleFunc("POST /api/v1/auth/verify", s.handleAuthVerify)
 	s.mux.HandleFunc("POST /api/v1/pairing/create", s.handlePairingCreate)
@@ -193,13 +194,22 @@ func (s *Server) handleWebSocketConnect(w http.ResponseWriter, r *http.Request) 
 	defer s.coordinator.DisconnectSession(deviceID)
 
 	// Writer pump
+	stopWriter := make(chan struct{})
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		for msg := range sendChan {
-			_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-			if err := conn.WriteMessage(websocket.BinaryMessage, msg); err != nil {
+		for {
+			select {
+			case <-stopWriter:
 				return
+			case msg, ok := <-sendChan:
+				if !ok {
+					return
+				}
+				_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+				if err := conn.WriteMessage(websocket.BinaryMessage, msg); err != nil {
+					return
+				}
 			}
 		}
 	}()
@@ -214,6 +224,11 @@ func (s *Server) handleWebSocketConnect(w http.ResponseWriter, r *http.Request) 
 			_ = s.coordinator.ForwardPayload(deviceID, sess.PeerDeviceID, payload)
 		}
 	}
+
+	// Trigger disconnect immediately upon client socket close
+	s.coordinator.DisconnectSession(deviceID)
+	close(stopWriter)
+	_ = conn.Close()
 
 	<-done
 }
@@ -463,6 +478,58 @@ func (s *Server) handlePairingClaim(w http.ResponseWriter, r *http.Request) {
 		"message":        "pairing established",
 		"paired_peer_id": pairedPeer,
 	})
+}
+
+// DeviceStatusResponse represents the real-time status of a device and its paired peer.
+type DeviceStatusResponse struct {
+	DeviceID     string `json:"device_id"`
+	IsOnline     bool   `json:"is_online"`
+	IsPaired     bool   `json:"is_paired"`
+	PeerDeviceID string `json:"peer_device_id,omitempty"`
+	PeerOnline   bool   `json:"peer_online"`
+	Timestamp    int64  `json:"timestamp"`
+}
+
+func (s *Server) handleDeviceStatus(w http.ResponseWriter, r *http.Request) {
+	// Extract session token from query string (?token=...) or Authorization header
+	token := r.URL.Query().Get("token")
+	if token == "" {
+		authHeader := r.Header.Get("Authorization")
+		if strings.HasPrefix(authHeader, "Bearer ") {
+			token = strings.TrimPrefix(authHeader, "Bearer ")
+		}
+	}
+
+	if token == "" {
+		http.Error(w, `{"error":"session token is required"}`, http.StatusUnauthorized)
+		return
+	}
+
+	deviceID, err := s.registry.ValidateSession(token)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"unauthorized: %s"}`, err.Error()), http.StatusUnauthorized)
+		return
+	}
+
+	pairedDeviceID, err := s.registry.GetPairedDevice(deviceID)
+	isPaired := (err == nil && pairedDeviceID != "")
+	peerOnline := false
+	if isPaired {
+		peerOnline = s.coordinator.IsDeviceOnline(pairedDeviceID)
+	}
+
+	resp := DeviceStatusResponse{
+		DeviceID:     deviceID,
+		IsOnline:     s.coordinator.IsDeviceOnline(deviceID),
+		IsPaired:     isPaired,
+		PeerDeviceID: pairedDeviceID,
+		PeerOnline:   peerOnline,
+		Timestamp:    time.Now().Unix(),
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 // Handler returns the underlying http.Handler for testing

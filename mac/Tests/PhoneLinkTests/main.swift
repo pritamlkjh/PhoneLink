@@ -114,5 +114,35 @@ assertEqual(decryptedString, "PHONELINK_E2E_PING_HELLO_SWIFT")
 
 print("PASS: testE2EKeyAgreementAndEncryptionRoundTrip")
 
-print(">>> ALL MAC CLIENT UNIT TESTS PASSED (8/8) <<<")
+// Test 9: INT-2 Device Status JSON Decoding
+let statusJSON = """
+{
+    "device_id": "mac-device-id-12345",
+    "is_online": true,
+    "is_paired": true,
+    "peer_device_id": "android-device-id-67890",
+    "peer_online": true,
+    "timestamp": 1774426000
+}
+""".data(using: .utf8)!
+
+let status = try! JSONDecoder().decode(AuthClient.DeviceStatus.self, from: statusJSON)
+assertEqual(status.deviceId, "mac-device-id-12345")
+assertTrue(status.isOnline)
+assertTrue(status.isPaired)
+assertEqual(status.peerDeviceId, "android-device-id-67890")
+assertTrue(status.peerOnline)
+assertEqual(status.timestamp, 1774426000)
+print("PASS: testDeviceStatusDecoding")
+
+// Test 10: INT-2 ConnectionManager Presence State Transitions
+let onlineState = ConnectionManager.State.peerOnline(peerDeviceID: "android-device-id-67890")
+let offlineState = ConnectionManager.State.peerOffline(peerDeviceID: "android-device-id-67890")
+assertTrue(onlineState.isConnected, "peerOnline state must be considered connected")
+assertTrue(offlineState.isConnected, "peerOffline state must be considered connected to relay")
+assertEqual(onlineState, ConnectionManager.State.peerOnline(peerDeviceID: "android-device-id-67890"))
+assertFalse(onlineState == offlineState)
+print("PASS: testPeerOnlineAndOfflineStates")
+
+print(">>> ALL MAC CLIENT UNIT TESTS PASSED (10/10) <<<")
 exit(0)

@@ -198,3 +198,115 @@ func TestWebSocketUnauthorizedWithoutValidToken(t *testing.T) {
 		t.Fatalf("expected 401 Unauthorized with invalid token, got %d", rec.Code)
 	}
 }
+
+func TestDeviceStatusEndpoint(t *testing.T) {
+	s := NewServer(DefaultConfig(), nil)
+
+	// Generate Mac and Android keypairs
+	macPub, _, _ := ed25519.GenerateKey(rand.Reader)
+	macDeviceID := auth.DeriveDeviceID(macPub)
+
+	andPub, _, _ := ed25519.GenerateKey(rand.Reader)
+	andDeviceID := auth.DeriveDeviceID(andPub)
+
+	// Register Mac
+	_ = s.Registry().RegisterDevice(auth.DeviceRecord{
+		DeviceID:     macDeviceID,
+		DeviceType:   auth.DeviceTypeMac,
+		PublicKey:    macPub,
+		KeyAlgorithm: auth.AlgorithmEd25519,
+	})
+
+	// Register Android
+	_ = s.Registry().RegisterDevice(auth.DeviceRecord{
+		DeviceID:     andDeviceID,
+		DeviceType:   auth.DeviceTypeAndroid,
+		PublicKey:    andPub,
+		KeyAlgorithm: auth.AlgorithmEd25519,
+	})
+
+	macToken, _ := s.Registry().CreateSession(macDeviceID, 1*time.Hour)
+
+	// 1. Missing token -> 401
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/devices/status", nil)
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 Unauthorized for missing token, got %d", rec.Code)
+	}
+
+	// 2. Query Mac status before pairing
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/devices/status?token="+macToken, nil)
+	rec = httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var statusResp DeviceStatusResponse
+	_ = json.NewDecoder(rec.Body).Decode(&statusResp)
+	if statusResp.DeviceID != macDeviceID {
+		t.Errorf("expected device_id %s, got %s", macDeviceID, statusResp.DeviceID)
+	}
+	if statusResp.IsPaired {
+		t.Errorf("expected is_paired false before pairing")
+	}
+	if statusResp.PeerOnline {
+		t.Errorf("expected peer_online false before pairing")
+	}
+
+	// 3. Pair Mac and Android
+	_ = s.Registry().PairDevices(macDeviceID, andDeviceID)
+
+	// 4. Query Mac status when paired, but peer offline
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/devices/status", nil)
+	req.Header.Set("Authorization", "Bearer "+macToken)
+	rec = httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", rec.Code)
+	}
+
+	statusResp = DeviceStatusResponse{}
+	_ = json.NewDecoder(rec.Body).Decode(&statusResp)
+	if !statusResp.IsPaired {
+		t.Errorf("expected is_paired true after pairing")
+	}
+	if statusResp.PeerDeviceID != andDeviceID {
+		t.Errorf("expected peer_device_id %s, got %s", andDeviceID, statusResp.PeerDeviceID)
+	}
+	if statusResp.PeerOnline {
+		t.Errorf("expected peer_online false before Android connects")
+	}
+
+	// 5. Connect Android session in coordinator
+	andSendChan := make(chan []byte, 10)
+	_, err := s.Coordinator().ConnectSession(andDeviceID, andSendChan, nil)
+	if err != nil {
+		t.Fatalf("failed to connect Android session: %v", err)
+	}
+
+	// Query Mac status now -> peer_online must be true
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/devices/status?token="+macToken, nil)
+	rec = httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+
+	statusResp = DeviceStatusResponse{}
+	_ = json.NewDecoder(rec.Body).Decode(&statusResp)
+	if !statusResp.PeerOnline {
+		t.Errorf("expected peer_online true after Android connected")
+	}
+
+	// 6. Disconnect Android session -> peer_online must become false
+	s.Coordinator().DisconnectSession(andDeviceID)
+
+	req = httptest.NewRequest(http.MethodGet, "/api/v1/devices/status?token="+macToken, nil)
+	rec = httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+
+	statusResp = DeviceStatusResponse{}
+	_ = json.NewDecoder(rec.Body).Decode(&statusResp)
+	if statusResp.PeerOnline {
+		t.Errorf("expected peer_online false after Android disconnected")
+	}
+}

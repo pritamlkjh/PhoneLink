@@ -179,4 +179,47 @@ class AuthClient(
             Result.failure(e)
         }
     }
+
+    data class DeviceStatus(
+        val deviceId: String,
+        val isOnline: Boolean,
+        val isPaired: Boolean,
+        val peerDeviceId: String?,
+        val peerOnline: Boolean,
+        val timestamp: Long
+    )
+
+    /**
+     * Queries the VPS relay for real-time status of this device and its paired peer.
+     */
+    fun getDeviceStatus(vpsBaseUrl: String, sessionToken: String): Result<DeviceStatus> {
+        val request = Request.Builder()
+            .url("$vpsBaseUrl/api/v1/devices/status")
+            .header("Authorization", "Bearer $sessionToken")
+            .get()
+            .build()
+
+        return try {
+            val response = okHttpClient.newCall(request).execute()
+            response.use { resp ->
+                if (!resp.isSuccessful) {
+                    val body = resp.body?.string() ?: ""
+                    return Result.failure(AuthenticationException("Status query failed (HTTP ${resp.code}): $body"))
+                }
+                val json = JSONObject(resp.body?.string() ?: "{}")
+                Result.success(
+                    DeviceStatus(
+                        deviceId = json.getString("device_id"),
+                        isOnline = json.getBoolean("is_online"),
+                        isPaired = json.getBoolean("is_paired"),
+                        peerDeviceId = if (json.has("peer_device_id")) json.getString("peer_device_id") else null,
+                        peerOnline = json.getBoolean("peer_online"),
+                        timestamp = json.getLong("timestamp")
+                    )
+                )
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
 }

@@ -968,7 +968,7 @@
       "id": "INT-2",
       "name": "Device Discovery & Status Reporting",
       "category": "integration",
-      "status": "PENDING",
+      "status": "COMPLETE",
       "depends_on": [
         "INT-1"
       ],

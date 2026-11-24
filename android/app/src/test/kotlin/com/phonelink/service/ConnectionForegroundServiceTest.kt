@@ -22,4 +22,34 @@ class ConnectionForegroundServiceTest {
         assertTrue(android.app.Service::class.java.isAssignableFrom(serviceClass))
         assertNotNull(serviceClass.constructors)
     }
+
+    @Test
+    fun testHandleControlMessagePeerStatus() {
+        var observedPeerId = ""
+        var observedOnline: Boolean? = null
+
+        ConnectionForegroundService.peerStatusListener = { peerId, isOnline ->
+            observedPeerId = peerId
+            observedOnline = isOnline
+        }
+
+        val service = ConnectionForegroundService()
+
+        // 1. Peer comes online
+        val onlineJson = "{\"type\":\"PEER_STATUS\",\"peer_device_id\":\"mac-peer-123\",\"is_online\":true,\"timestamp\":123456}"
+        service.handleControlMessage(onlineJson)
+
+        assertEquals("mac-peer-123", observedPeerId)
+        assertEquals(true, observedOnline)
+
+        // 2. Peer goes offline
+        val offlineJson = "{\"type\":\"PEER_STATUS\",\"peer_device_id\":\"mac-peer-123\",\"is_online\":false,\"timestamp\":123460}"
+        service.handleControlMessage(offlineJson)
+
+        assertEquals("mac-peer-123", observedPeerId)
+        assertEquals(false, observedOnline)
+
+        // Cleanup
+        ConnectionForegroundService.peerStatusListener = null
+    }
 }

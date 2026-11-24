@@ -21,6 +21,7 @@ func printUsage() {
       info          Show local Mac device identity, public key, and relay config
       pair          Initiate pairing ceremony (generates pairing token & short code)
       status        Check relay connectivity and Android phone online/offline state
+                    Options: --watch (stream real-time updates), --json, --vps <url>
       ping          Send an end-to-end encrypted round-trip ping to the phone
       wipe          Wipe stored credentials and reset Mac device identity
       files         Browse and transfer files (FILE-2, FILE-3)
@@ -144,49 +145,93 @@ func handlePair(args: [String], identity: DeviceIdentityManager, client: AuthCli
 
 func handleStatus(args: [String], identity: DeviceIdentityManager, client: AuthClient) async {
     let isJSON = parseFlag("--json", in: args)
+    let isWatch = parseFlag("--watch", in: args)
     let vpsStr = parseOption("--vps", in: args) ?? Config.defaultRelayURL
     guard let vpsURL = URL(string: vpsStr) else {
         fputs("ERROR: Invalid VPS relay URL: \(vpsStr)\n", stderr)
         exit(2)
     }
 
-    let manager = ConnectionManager(vpsBaseURL: vpsURL, identity: identity, authClient: client)
-    await manager.connect()
+    if isWatch {
+        let manager = ConnectionManager(vpsBaseURL: vpsURL, identity: identity, authClient: client)
+        if !isJSON {
+            print("Connecting to PhoneLink Relay at \(vpsURL)...")
+            print("Listening for real-time presence events (Press Ctrl+C to stop)")
+            print("--------------------------------------------------")
+        }
 
-    // Brief wait for presence negotiation
-    try? await Task.sleep(nanoseconds: 500_000_000)
+        manager.onStateChange = { newState in
+            let dateStr = ISO8601DateFormatter().string(from: Date())
+            switch newState {
+            case .peerOnline(let id):
+                if isJSON {
+                    print("{\"timestamp\":\"\(dateStr)\",\"event\":\"PEER_ONLINE\",\"peer_device_id\":\"\(id)\",\"is_online\":true}")
+                    fflush(stdout)
+                } else {
+                    print("[\(dateStr)] Phone is ONLINE (\(id))")
+                }
+            case .peerOffline(let id):
+                if isJSON {
+                    print("{\"timestamp\":\"\(dateStr)\",\"event\":\"PEER_OFFLINE\",\"peer_device_id\":\"\(id)\",\"is_online\":false}")
+                    fflush(stdout)
+                } else {
+                    print("[\(dateStr)] Phone is OFFLINE (\(id))")
+                }
+            case .error(let msg):
+                if isJSON {
+                    print("{\"timestamp\":\"\(dateStr)\",\"event\":\"ERROR\",\"message\":\"\(msg)\"}")
+                    fflush(stdout)
+                } else {
+                    print("[\(dateStr)] Error: \(msg)")
+                }
+            default:
+                break
+            }
+        }
 
-    let finalState = manager.state
-    manager.disconnect()
+        await manager.connect()
 
-    let isConnected = manager.state.isConnected || finalState.isConnected
-    var peerOnline = false
-    var peerID = "Unknown"
-
-    if case .peerOnline(let id) = finalState {
-        peerOnline = true
-        peerID = id
-    } else if case .peerOffline(let id) = finalState {
-        peerOnline = false
-        peerID = id
-    }
-
-    if isJSON {
-        let dict: [String: Any] = [
-            "relay_connected": isConnected,
-            "peer_online": peerOnline,
-            "peer_device_id": peerID,
-            "state": "\(finalState)"
-        ]
-        let data = try! JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted])
-        print(String(data: data, encoding: .utf8)!)
+        while true {
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+        }
     } else {
-        print("PhoneLink Status Report")
-        print("--------------------------------------------------")
-        print("VPS Relay:      \(isConnected ? "Connected (OK)" : "Unreachable / Disconnected")")
-        print("Paired Phone:   \(peerOnline ? "ONLINE" : "OFFLINE") (\(peerID))")
+        let startTime = Date()
+        let manager = ConnectionManager(vpsBaseURL: vpsURL, identity: identity, authClient: client)
+        let finalState = await manager.connectAndWaitForPresence(timeoutSeconds: 2.0)
+        let latencyMs = Int(Date().timeIntervalSince(startTime) * 1000)
+        manager.disconnect()
+
+        let isConnected = manager.state.isConnected || finalState.isConnected
+        var peerOnline = false
+        var peerID = "Unknown"
+
+        if case .peerOnline(let id) = finalState {
+            peerOnline = true
+            peerID = id
+        } else if case .peerOffline(let id) = finalState {
+            peerOnline = false
+            peerID = id
+        }
+
+        if isJSON {
+            let dict: [String: Any] = [
+                "relay_connected": isConnected,
+                "peer_online": peerOnline,
+                "peer_device_id": peerID,
+                "latency_ms": latencyMs,
+                "state": "\(finalState)"
+            ]
+            let data = try! JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted])
+            print(String(data: data, encoding: .utf8)!)
+        } else {
+            print("PhoneLink Status Report")
+            print("--------------------------------------------------")
+            print("VPS Relay:      \(isConnected ? "Connected (OK)" : "Unreachable / Disconnected")")
+            print("Paired Phone:   \(peerOnline ? "ONLINE" : "OFFLINE") (\(peerID))")
+            print("Query Latency:  \(latencyMs) ms")
+        }
+        exit(0)
     }
-    exit(0)
 }
 
 func handlePing(args: [String], identity: DeviceIdentityManager, client: AuthClient) async {

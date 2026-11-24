@@ -34,6 +34,8 @@ class ConnectionForegroundService : Service() {
         const val ACTION_START = "com.phonelink.service.ACTION_START"
         const val ACTION_STOP = "com.phonelink.service.ACTION_STOP"
 
+        var peerStatusListener: ((peerId: String, isOnline: Boolean) -> Unit)? = null
+
         fun start(context: Context) {
             val intent = Intent(context, ConnectionForegroundService::class.java).apply {
                 action = ACTION_START
@@ -107,9 +109,39 @@ class ConnectionForegroundService : Service() {
                     }
                     updateNotification(statusText)
                 }
+
+                override fun onMessageReceived(text: String) {
+                    handleControlMessage(text)
+                }
+
+                override fun onMessageReceived(bytes: ByteArray) {
+                    try {
+                        val text = String(bytes, Charsets.UTF_8)
+                        handleControlMessage(text)
+                    } catch (_: Exception) {}
+                }
             })
             connect(relayUrl)
         }
+    }
+
+    internal fun handleControlMessage(text: String) {
+        try {
+            val json = org.json.JSONObject(text)
+            if (json.optString("type") == "PEER_STATUS") {
+                val isOnline = json.optBoolean("is_online", false)
+                val peerId = json.optString("peer_device_id", "")
+                val statusText = if (isOnline) {
+                    "Connected to VPS • Mac is ONLINE"
+                } else {
+                    "Connected to VPS • Paired Mac is OFFLINE"
+                }
+                peerStatusListener?.invoke(peerId, isOnline)
+                try {
+                    updateNotification(statusText)
+                } catch (_: Exception) {}
+            }
+        } catch (_: Exception) {}
     }
 
     private fun stopForegroundService() {

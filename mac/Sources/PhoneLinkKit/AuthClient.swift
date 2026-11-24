@@ -135,4 +135,43 @@ public struct AuthClient: Sendable {
 
         return token
     }
+
+    /// Real-time status response from VPS-3 / INT-2 status endpoint.
+    public struct DeviceStatus: Codable, Sendable {
+        public let deviceId: String
+        public let isOnline: Bool
+        public let isPaired: Bool
+        public let peerDeviceId: String?
+        public let peerOnline: Bool
+        public let timestamp: Int64
+
+        enum CodingKeys: String, CodingKey {
+            case deviceId = "device_id"
+            case isOnline = "is_online"
+            case isPaired = "is_paired"
+            case peerDeviceId = "peer_device_id"
+            case peerOnline = "peer_online"
+            case timestamp
+        }
+    }
+
+    /// Fetches the real-time device status and paired peer presence via REST.
+    public func getDeviceStatus(vpsBaseURL: URL, sessionToken: String) async throws -> DeviceStatus {
+        let endpoint = vpsBaseURL.appendingPathComponent("/api/v1/devices/status")
+        var req = URLRequest(url: endpoint)
+        req.httpMethod = "GET"
+        req.setValue("Bearer \(sessionToken)", forHTTPHeaderField: "Authorization")
+
+        let (data, response) = try await urlSession.data(for: req)
+        guard let http = response as? HTTPURLResponse else {
+            throw AuthClientError.invalidResponse("Not an HTTP response")
+        }
+        guard http.statusCode == 200 else {
+            let msg = String(data: data, encoding: .utf8) ?? ""
+            throw AuthClientError.serverError(statusCode: http.statusCode, message: msg)
+        }
+
+        let decoder = JSONDecoder()
+        return try decoder.decode(DeviceStatus.self, from: data)
+    }
 }
