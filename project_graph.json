@@ -1323,7 +1323,7 @@
       "id": "REL-1",
       "name": "VPS Production Deployment",
       "category": "release",
-      "status": "PENDING",
+      "status": "COMPLETE",
       "depends_on": [
         "SEC-2",
         "TEST-3",
