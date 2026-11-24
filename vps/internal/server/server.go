@@ -8,9 +8,12 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/pritamlkjh/phonelink/vps/internal/auth"
+	"github.com/pritamlkjh/phonelink/vps/internal/coordinator"
 )
 
 const (
@@ -40,13 +43,15 @@ func DefaultConfig() Config {
 
 // Server represents the VPS relay HTTP/WebSocket server
 type Server struct {
-	cfg        Config
-	httpServer *http.Server
-	mux        *http.ServeMux
-	logger     *slog.Logger
-	startTime  time.Time
-	registry   *auth.Registry
-	tracker    *auth.ChallengeTracker
+	cfg         Config
+	httpServer  *http.Server
+	mux         *http.ServeMux
+	logger      *slog.Logger
+	startTime   time.Time
+	registry    *auth.Registry
+	tracker     *auth.ChallengeTracker
+	coordinator *coordinator.Coordinator
+	upgrader    websocket.Upgrader
 }
 
 // HealthResponse represents health check status
@@ -65,13 +70,22 @@ func NewServer(cfg Config, logger *slog.Logger) *Server {
 	}
 
 	mux := http.NewServeMux()
+	reg := auth.NewRegistry()
 	s := &Server{
-		cfg:       cfg,
-		mux:       mux,
-		logger:    logger,
-		startTime: time.Now(),
-		registry:  auth.NewRegistry(),
-		tracker:   auth.NewChallengeTracker(),
+		cfg:         cfg,
+		mux:         mux,
+		logger:      logger,
+		startTime:   time.Now(),
+		registry:    reg,
+		tracker:     auth.NewChallengeTracker(),
+		coordinator: coordinator.NewCoordinator(reg),
+		upgrader: websocket.Upgrader{
+			CheckOrigin: func(r *http.Request) bool {
+				return true // Origin checked via TLS & Auth Token
+			},
+			ReadBufferSize:  64 * 1024,
+			WriteBufferSize: 64 * 1024,
+		},
 	}
 
 	s.registerRoutes()
@@ -97,6 +111,11 @@ func (s *Server) Registry() *auth.Registry {
 // Tracker returns the underlying auth.ChallengeTracker instance
 func (s *Server) Tracker() *auth.ChallengeTracker {
 	return s.tracker
+}
+
+// Coordinator returns the underlying coordinator.Coordinator instance
+func (s *Server) Coordinator() *coordinator.Coordinator {
+	return s.coordinator
 }
 
 // registerRoutes configures all HTTP and WebSocket endpoints
@@ -136,13 +155,67 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleWebSocketConnect(w http.ResponseWriter, r *http.Request) {
-	// WebSocket connection handler — handshake placeholder for VPS-2/3
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(map[string]string{
-		"message": "PhoneLink WebSocket Relay Endpoint Ready",
-		"version": Version,
+	// Extract session token from query string (?token=...) or Authorization header
+	token := r.URL.Query().Get("token")
+	if token == "" {
+		authHeader := r.Header.Get("Authorization")
+		if strings.HasPrefix(authHeader, "Bearer ") {
+			token = strings.TrimPrefix(authHeader, "Bearer ")
+		}
+	}
+
+	if token == "" {
+		http.Error(w, `{"error":"session token is required"}`, http.StatusUnauthorized)
+		return
+	}
+
+	deviceID, err := s.registry.ValidateSession(token)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"unauthorized: %s"}`, err.Error()), http.StatusUnauthorized)
+		return
+	}
+
+	conn, err := s.upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		s.logger.Error("WebSocket upgrade failed", "err", err)
+		return
+	}
+	defer conn.Close()
+
+	sendChan := make(chan []byte, 64)
+	sess, err := s.coordinator.ConnectSession(deviceID, sendChan, func() {
+		_ = conn.Close()
 	})
+	if err != nil {
+		_ = conn.WriteJSON(map[string]string{"error": err.Error()})
+		return
+	}
+	defer s.coordinator.DisconnectSession(deviceID)
+
+	// Writer pump
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for msg := range sendChan {
+			_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+			if err := conn.WriteMessage(websocket.BinaryMessage, msg); err != nil {
+				return
+			}
+		}
+	}()
+
+	// Reader pump: forward opaque payload directly to paired peer
+	for {
+		messageType, payload, err := conn.ReadMessage()
+		if err != nil {
+			break
+		}
+		if messageType == websocket.BinaryMessage || messageType == websocket.TextMessage {
+			_ = s.coordinator.ForwardPayload(deviceID, sess.PeerDeviceID, payload)
+		}
+	}
+
+	<-done
 }
 
 // Device registration request

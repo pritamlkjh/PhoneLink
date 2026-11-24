@@ -558,7 +558,7 @@
       "id": "VPS-3",
       "name": "VPS Session Coordination & Signaling",
       "category": "vps",
-      "status": "PENDING",
+      "status": "COMPLETE",
       "depends_on": [
         "VPS-2",
         "ARCH-2"
@@ -702,7 +702,7 @@
       "id": "VPS-4",
       "name": "VPS Relay Data Path",
       "category": "vps",
-      "status": "PENDING",
+      "status": "COMPLETE",
       "depends_on": [
         "VPS-3",
         "ARCH-3"

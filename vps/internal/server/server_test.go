@@ -178,3 +178,23 @@ func TestDeviceRegistrationAndAuthLifecycle(t *testing.T) {
 		t.Fatalf("expected 401 Unauthorized post-revocation, got %d", chRec.Code)
 	}
 }
+
+func TestWebSocketUnauthorizedWithoutValidToken(t *testing.T) {
+	s := NewServer(DefaultConfig(), nil)
+
+	// 1. Missing token
+	req := httptest.NewRequest(http.MethodGet, "/ws/v1/connect", nil)
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 Unauthorized without token, got %d", rec.Code)
+	}
+
+	// 2. Invalid/expired token
+	req = httptest.NewRequest(http.MethodGet, "/ws/v1/connect?token=invalid-fake-token", nil)
+	rec = httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 Unauthorized with invalid token, got %d", rec.Code)
+	}
+}
