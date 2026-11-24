@@ -1,0 +1,39 @@
+[Unit]
+Description=PhoneLink VPS Relay Daemon
+Documentation=https://github.com/pritamlkjh/PhoneLink
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=phonelink
+Group=phonelink
+WorkingDirectory=/opt/phonelink/relay
+ExecStart=/opt/phonelink/relay/bin/phonelink-relay
+Restart=always
+RestartSec=5s
+
+# Security Hardening & Sandboxing
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+MemoryDenyWriteExecute=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+# Environment & Limits
+Environment=PHONELINK_HOST=127.0.0.1
+Environment=PHONELINK_PORT=8443
+LimitNOFILE=65536
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=phonelink-relay
+
+[Install]
+WantedBy=multi-user.target

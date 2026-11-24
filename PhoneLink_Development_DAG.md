@@ -1026,7 +1026,7 @@ Format per node: Purpose → Dependencies/Blocks/Parallelizable → Inputs/Outpu
 ### 4.11 Release
 
 #### `REL-1` — VPS Production Deployment
-**Category:** Release · **Priority:** P1
+**Category:** Release · **Priority:** P1 · **Status:** COMPLETE
 
 **Purpose:** Deploy production using the same reproducible process as `VPS-1`, with monitoring live and a tested rollback path.
 

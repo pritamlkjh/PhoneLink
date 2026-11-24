@@ -125,9 +125,13 @@ run_step "TEST-3 Network Failure & Chaos Testing" \
 run_step "TEST-4 Android Compatibility Matrix Testing" \
     "$REPO_ROOT/tests/test_test4_compatibility.sh"
 
+# 24. REL-1 VPS Production Deployment & Rollback
+run_step "REL-1 VPS Production Deployment & Rollback" \
+    "$REPO_ROOT/tests/test_rel1_vps_deploy.sh"
+
 echo "=========================================================="
 if [ $FAILURES -eq 0 ]; then
-    echo "   ALL REGRESSION SUITES PASSED (23/23)"
+    echo "   ALL REGRESSION SUITES PASSED (24/24)"
     echo "=========================================================="
     exit 0
 else
