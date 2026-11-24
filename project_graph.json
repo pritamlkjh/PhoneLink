@@ -239,7 +239,7 @@
       "id": "AND-5",
       "name": "Android Core Network Transport Layer",
       "category": "android",
-      "status": "PENDING",
+      "status": "COMPLETE",
       "depends_on": [
         "AND-1",
         "ARCH-2"
