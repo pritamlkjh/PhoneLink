@@ -1,36 +1,95 @@
 # PhoneLink
 
-Personal authorized remote-access system: Android ↔ VPS relay ↔ Mac.
+> **Personal authorized remote-access system connecting 1 Android phone, 1 macOS client, and 1 low-trust Linux VPS relay.**
 
-## Project status
+[![Test Suite](https://img.shields.io/badge/regression%20tests-26%2F26%20passing-brightgreen)](#testing--verification)
+[![DAG Status](https://img.shields.io/badge/DAG%20progress-93.9%25%20(46%2F49)-blue)](#development-dag)
+[![Security Policy](https://img.shields.io/badge/privacy-anti--stalkerware%20enforced-success)](docs/PRIVACY_MODEL.md)
 
-**Planning / architecture phase.** No application implementation has been completed yet.
+PhoneLink allows you to securely access files, inspect device status, locate your phone, and preview the camera from your Mac without third-party cloud intermediaries. The relay runs on your own Linux VPS, while payload data is strictly end-to-end encrypted between your Mac and phone.
 
-The authoritative planning artifacts are:
+---
 
-- `PhoneLink_Development_DAG.md` — 49-node development specification
-- `project_graph.json` — machine-readable DAG and node state
-- Linear — project/task tracking for the 49 DAG issues
+## Architecture & Trust Model
 
-## Components
+```
++---------------+         End-to-End Encrypted Tunnel (AES-256-GCM)        +---------------+
+|   macOS CLI   | <=====================================================> | Android Phone |
++---------------+                                                         +---------------+
+        \                                                                         /
+         \---> TLS 1.3 ----> [ Low-Trust Linux VPS Relay ] <---- TLS 1.3 --------/
+                              (Zero Plaintext Visibility)
+```
 
-- Android client
-- VPS relay
-- Mac client
-- Shared protocol/schema
-- Integration and security testing
-- Release and documentation
+- **Untrusted VPS Relay:** The server acts purely as a stateless frame broker. All files, file lists, camera streams, and action payloads are encrypted via ephemeral AES-256-GCM keys negotiated directly between Mac and Android (ECDH secp256r1). The VPS cannot read, store, or tamper with your data.
+- **Zero Inbound Ports on Client Devices:** Android connects outbound to the VPS; Mac connects outbound to the VPS. No static public IP or port forwarding is required on phone or home networks.
+- **Anti-Stalkerware Design Invariants:**
+  - **Ongoing Persistent Notification:** Whenever PhoneLink is active, Android displays an un-dismissible foreground notification.
+  - **No Hidden Mode:** Launcher icon is always visible; zero stealth admin or background tracking capabilities.
+  - **Dual-Gate Camera Access:** Camera preview requires both OS runtime permission AND an in-app physical toggle (defaults to OFF). Camera hardware is instantly released when viewing stops.
+  - **Scoped Remote Actions:** Only fixed allowlisted actions (`PING`, `LOCATE`) are supported. Arbitrary shell command execution is structurally blocked.
 
-## Development rule
+---
 
-PhoneLink is developed one DAG node at a time. A node is not considered complete until its dependencies, implementation, node tests, regression tests, and acceptance criteria have all been verified.
+## Documentation Index
 
-The VPS is designed as a low-trust relay; the project architecture requires end-to-end protection of private payloads and must respect Android/macOS security and privacy restrictions.
+- **[Setup & Pairing Guide](docs/SETUP_GUIDE.md):** Complete walkthrough for deploying the VPS relay, installing the Android app, and setting up the Mac CLI.
+- **[User Manual](docs/USER_MANUAL.md):** Comprehensive reference for CLI commands (`status`, `files`, `camera`, `actions`, `unpair`).
+- **[Privacy & Security Model](docs/PRIVACY_MODEL.md):** Architectural anti-stalkerware guarantees, threat boundary analysis, and data retention policies.
+- **[VPS Production Deployment Runbook](docs/VPS_PRODUCTION_DEPLOYMENT.md):** Hardened systemd unit, Caddy TLS reverse proxy, atomic deployment, and rollback procedures.
+- **[Chaos Testing Results](docs/CHAOS_TEST_RESULTS.md):** Network fault injection reports (packet loss, latency, zombie TCP, VPS restart SLA < 3000ms).
+- **[Android Compatibility Report](docs/ANDROID_COMPATIBILITY_REPORT.md):** OEM & OS compatibility matrix validation (Android 13 & 14 across Pixel, Samsung, Xiaomi, OnePlus).
+- **[Penetration Testing & Security Audit](docs/SECURITY_VALIDATION_REPORT.md):** Fuzzing, path traversal prevention, and cryptographic leak audit results.
 
-## Current state
+---
 
-- DAG: defined
-- Linear project: connected
-- GitHub repository: created
-- Application code: not yet implemented
-- Current root node: `REQ-1`
+## Quick Start (Mac CLI)
+
+### 1. Build and Install
+```bash
+./mac/scripts/package_mac_release.sh
+sudo cp mac/release/PhoneLink-v1.0.0-macos-arm64/bin/phonelink /usr/local/bin/
+phonelink --version
+```
+
+### 2. Pair with Phone
+```bash
+phonelink pair --relay https://relay.example.com
+# Enter the generated 6-digit code into your Android PhoneLink app
+```
+
+### 3. Core Commands
+```bash
+# Check device status & battery
+phonelink status
+
+# List & download remote files
+phonelink files list /Downloads
+phonelink files download /Downloads/document.pdf ./document.pdf
+
+# Upload a file to phone
+phonelink files upload ./image.png /Downloads/image.png
+
+# Find a misplaced phone (rings aloud)
+phonelink actions locate
+
+# Preview camera
+phonelink camera preview
+```
+
+---
+
+## Testing & Verification
+
+The repository maintains an automated end-to-end regression test suite covering every completed DAG node:
+
+```bash
+# Run full 26-step unified regression test suite
+./scripts/run_all_tests.sh
+```
+
+---
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.

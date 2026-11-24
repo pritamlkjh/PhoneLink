@@ -1299,7 +1299,7 @@
       "id": "DOC-1",
       "name": "Consolidated Documentation & Setup Guide",
       "category": "documentation",
-      "status": "PENDING",
+      "status": "COMPLETE",
       "depends_on": [
         "SEC-2",
         "TEST-2"

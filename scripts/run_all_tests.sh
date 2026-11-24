@@ -137,9 +137,13 @@ run_step "REL-2 Android Release Build & Signing" \
 run_step "REL-3 Mac Release Build & Packaging" \
     "$REPO_ROOT/tests/test_rel3_mac_release.sh"
 
+# 27. DOC-1 Consolidated Documentation & Setup Guide
+run_step "DOC-1 Consolidated Documentation & Setup Guide" \
+    "$REPO_ROOT/tests/test_doc1_docs.sh"
+
 echo "=========================================================="
 if [ $FAILURES -eq 0 ]; then
-    echo "   ALL REGRESSION SUITES PASSED (26/26)"
+    echo "   ALL REGRESSION SUITES PASSED (27/27)"
     echo "=========================================================="
     exit 0
 else
