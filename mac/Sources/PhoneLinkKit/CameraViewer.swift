@@ -156,7 +156,7 @@ public final class CameraViewerController: @unchecked Sendable {
 }
 
 public struct CameraTerminalRenderer: Sendable {
-    private static let shadedChars: [Character] = [" ", "░", "▒", "▓", "█"]
+    private static let shadedChars: [Character] = [" ", ".", ":", "░", "▒", "▓", "█"]
 
     /// Generates a structured terminal status banner for live stream viewing.
     public static func renderBanner(
@@ -265,6 +265,16 @@ public struct CameraTerminalRenderer: Sendable {
         context.interpolationQuality = .medium
         context.draw(cgImage, in: CGRect(x: 0, y: 0, width: columns, height: rows))
 
+        var minLum = 255
+        var maxLum = 0
+        for px in pixels {
+            let v = Int(px)
+            if v < minLum { minLum = v }
+            if v > maxLum { maxLum = v }
+        }
+        let spread = maxLum - minLum
+        let stretchContrast = (spread >= 16 && maxLum < 220)
+
         var out: [String] = []
         out.reserveCapacity(rows)
         let denom = max(1, shadedChars.count - 1)
@@ -272,8 +282,9 @@ public struct CameraTerminalRenderer: Sendable {
             var chars: [Character] = []
             chars.reserveCapacity(columns)
             for c in 0..<columns {
-                let lum = Int(pixels[r * columns + c])
-                let idx = min(denom, (lum * shadedChars.count) / 256)
+                let rawLum = Int(pixels[r * columns + c])
+                let lum = stretchContrast ? (((rawLum - minLum) * 255) / spread) : rawLum
+                let idx = min(denom, (max(0, lum) * shadedChars.count) / 256)
                 chars.append(shadedChars[idx])
             }
             out.append(String(chars))

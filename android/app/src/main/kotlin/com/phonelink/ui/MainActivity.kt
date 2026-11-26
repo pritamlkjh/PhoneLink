@@ -85,11 +85,24 @@ class MainActivity : AppCompatActivity() {
         bindViews()
         setupListeners()
         updateUIState()
+        ensureServiceRunningIfPaired()
     }
 
     override fun onResume() {
         super.onResume()
         updateUIState()
+        ensureServiceRunningIfPaired()
+    }
+
+    private fun ensureServiceRunningIfPaired() {
+        if (!secureStorage.isPaired()) return
+        val normalizedRelay = RelayUrlHelper.normalizeHttpBaseUrl(secureStorage.getRelayUrl())
+        if (normalizedRelay.isEmpty()) return
+        try {
+            ConnectionForegroundService.start(this)
+        } catch (_: Throwable) {
+            // Foreground service may require user interaction on locked/restricted states
+        }
     }
 
     override fun onDestroy() {
@@ -303,18 +316,35 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun requestIgnoreBatteryOptimizations() {
+        val hint = oemBatteryGuidance(Build.MANUFACTURER)
         try {
-            val intent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
-            startActivity(intent)
+            val detailsIntent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.parse("package:$packageName")
+            }
+            startActivity(detailsIntent)
+            Toast.makeText(this, hint, Toast.LENGTH_LONG).show()
         } catch (_: Exception) {
             try {
-                val fallback = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                    data = Uri.parse("package:$packageName")
-                }
-                startActivity(fallback)
+                startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                Toast.makeText(this, hint, Toast.LENGTH_LONG).show()
             } catch (e: Exception) {
                 Toast.makeText(this, "Unable to open battery settings: ${e.message}", Toast.LENGTH_SHORT).show()
             }
+        }
+    }
+
+    private fun oemBatteryGuidance(manufacturer: String?): String {
+        return when (manufacturer?.lowercase()?.trim()) {
+            "realme", "oppo", "oneplus" ->
+                "Open Battery usage -> Allow background activity & Auto-launch"
+            "vivo", "iqoo" ->
+                "Open Battery -> Allow high background power usage & Autostart"
+            "xiaomi", "redmi", "poco" ->
+                "Open Battery saver -> No restrictions, and enable Autostart"
+            "samsung" ->
+                "Open Battery -> select Unrestricted"
+            else ->
+                "Set App Battery usage to Unrestricted so PhoneLink stays connected"
         }
     }
 

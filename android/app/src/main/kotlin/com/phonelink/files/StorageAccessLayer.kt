@@ -22,6 +22,7 @@ class StorageAccessLayer(
     private val safContext: Context? = null,
     private val safTreeUri: Uri? = null,
     private val stagingCacheDir: File? = null,
+    private val safTreeUriProvider: (() -> Uri?)? = null,
     private val permissionChecker: () -> Boolean = { true }
 ) {
     companion object {
@@ -40,29 +41,32 @@ class StorageAccessLayer(
         )
 
         fun fromContext(context: Context): StorageAccessLayer {
-            val secureStorage = SecureStorage.fromContext(context)
-            val treeStr = secureStorage.getScopedTreeUri()
-            val treeUri = if (!treeStr.isNullOrEmpty()) {
-                try {
-                    val uri = Uri.parse(treeStr)
-                    val hasPersistedGrant = context.contentResolver.persistedUriPermissions.any {
-                        it.uri == uri && it.isReadPermission
+            val appCtx = context.applicationContext ?: context
+            val scopedDir = appCtx.getExternalFilesDir(null) ?: appCtx.filesDir
+            val cacheStage = File(appCtx.cacheDir, "phonelink_uploads").apply { mkdirs() }
+            val resolvePersistedSafUri: () -> Uri? = {
+                val treeStr = SecureStorage.fromContext(appCtx).getScopedTreeUri()
+                if (!treeStr.isNullOrEmpty()) {
+                    try {
+                        val uri = Uri.parse(treeStr)
+                        val hasPersistedGrant = appCtx.contentResolver.persistedUriPermissions.any {
+                            it.uri == uri && it.isReadPermission
+                        }
+                        if (hasPersistedGrant) uri else null
+                    } catch (_: Exception) {
+                        null
                     }
-                    if (hasPersistedGrant) uri else null
-                } catch (_: Exception) {
+                } else {
                     null
                 }
-            } else {
-                null
             }
-            val scopedDir = context.getExternalFilesDir(null) ?: context.filesDir
-            val cacheStage = File(context.cacheDir, "phonelink_uploads").apply { mkdirs() }
             return StorageAccessLayer(
                 scopedRootDirectory = scopedDir,
-                permissionChecker = { true },
-                safContext = context.applicationContext,
-                safTreeUri = treeUri,
-                stagingCacheDir = cacheStage
+                safContext = appCtx,
+                safTreeUri = resolvePersistedSafUri(),
+                stagingCacheDir = cacheStage,
+                safTreeUriProvider = resolvePersistedSafUri,
+                permissionChecker = { true }
             )
         }
 
@@ -92,7 +96,9 @@ class StorageAccessLayer(
 
     class StorageAccessException(message: String) : SecurityException(message)
 
-    fun isUsingSaf(): Boolean = safContext != null && safTreeUri != null
+    private fun activeSafTreeUri(): Uri? = safTreeUriProvider?.invoke() ?: safTreeUri
+
+    fun isUsingSaf(): Boolean = safContext != null && activeSafTreeUri() != null
 
     fun hasPermission(): Boolean {
         return permissionChecker()
@@ -191,7 +197,8 @@ class StorageAccessLayer(
 
         if (isUsingSaf()) {
             val ctx = safContext!!
-            val tree = safTreeUri!!
+            val tree = activeSafTreeUri()
+                ?: return Result.failure(StorageAccessException("SAF tree URI unavailable"))
             val resolved = safResolveDocument(relativePath)
             if (resolved.isFailure) return Result.failure(resolved.exceptionOrNull()!!)
             val (_, docId, _) = resolved.getOrThrow()
@@ -310,7 +317,9 @@ class StorageAccessLayer(
             if (info.isDirectory) {
                 return Result.failure(StorageAccessException("Target path is a directory, not a readable file: $relativePath"))
             }
-            val docUri = DocumentsContract.buildDocumentUriUsingTree(safTreeUri!!, docId)
+            val tree = activeSafTreeUri()
+                ?: return Result.failure(StorageAccessException("SAF tree URI unavailable"))
+            val docUri = DocumentsContract.buildDocumentUriUsingTree(tree, docId)
             return try {
                 val stream = safContext!!.contentResolver.openInputStream(docUri)
                     ?: return Result.failure(StorageAccessException("Failed to open input stream for: $relativePath"))
@@ -429,7 +438,7 @@ class StorageAccessLayer(
         val cleaned = cleanedRes.getOrThrow()
 
         val ctx = safContext ?: return Result.failure(StorageAccessException("SAF context unavailable"))
-        val tree = safTreeUri ?: return Result.failure(StorageAccessException("SAF tree URI unavailable"))
+        val tree = activeSafTreeUri() ?: return Result.failure(StorageAccessException("SAF tree URI unavailable"))
         var currentDocId = DocumentsContract.getTreeDocumentId(tree)
         var currentInfo = ScopedFileInfo("", "", true, 0L, 0L)
 
@@ -497,7 +506,7 @@ class StorageAccessLayer(
 
     private fun safListFiles(relativePath: String): Result<List<ScopedFileInfo>> {
         val ctx = safContext ?: return Result.failure(StorageAccessException("SAF context unavailable"))
-        val tree = safTreeUri ?: return Result.failure(StorageAccessException("SAF tree URI unavailable"))
+        val tree = activeSafTreeUri() ?: return Result.failure(StorageAccessException("SAF tree URI unavailable"))
         val resolved = safResolveDocument(relativePath)
         if (resolved.isFailure) return Result.failure(resolved.exceptionOrNull()!!)
         val (_, docId, info) = resolved.getOrThrow()
@@ -539,7 +548,7 @@ class StorageAccessLayer(
 
     private fun safCommitFile(partFile: File, safRelativePath: String): Result<Unit> {
         val ctx = safContext ?: return Result.failure(StorageAccessException("SAF context unavailable"))
-        val tree = safTreeUri ?: return Result.failure(StorageAccessException("SAF tree URI unavailable"))
+        val tree = activeSafTreeUri() ?: return Result.failure(StorageAccessException("SAF tree URI unavailable"))
         val cleaned = safRelativePath.trim().trimStart('/', '\\')
         val segments = cleaned.split('/').filter { it.isNotEmpty() }
         if (segments.isEmpty()) {

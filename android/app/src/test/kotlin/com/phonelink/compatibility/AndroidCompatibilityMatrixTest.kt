@@ -35,7 +35,10 @@ class AndroidCompatibilityMatrixTest {
         STANDARD_AOSP,
         SAMSUNG_SLEEPING_APPS,
         XIAOMI_MIUI_BATTERY_SAVER,
-        ONEPLUS_DEEP_OPTIMIZATION
+        ONEPLUS_DEEP_OPTIMIZATION,
+        REALME_COLOROS_BACKGROUND,
+        OPPO_AUTO_LAUNCH,
+        VIVO_HIGH_POWER_CONTROL
     }
 
     data class DeviceProfile(
@@ -79,6 +82,38 @@ class AndroidCompatibilityMatrixTest {
             osName = "Android 14 (OxygenOS 14)",
             hasHardwareStrongBox = true,
             batteryPolicy = OemBatteryPolicy.ONEPLUS_DEEP_OPTIMIZATION
+        ),
+        DeviceProfile(
+            oem = "Samsung",
+            model = "Galaxy SM-E156B",
+            apiLevel = 36,
+            osName = "Android 16 (One UI 8)",
+            hasHardwareStrongBox = true,
+            batteryPolicy = OemBatteryPolicy.SAMSUNG_SLEEPING_APPS
+        ),
+        DeviceProfile(
+            oem = "Realme",
+            model = "Realme 12 Pro",
+            apiLevel = 34,
+            osName = "Android 14 (Realme UI 5)",
+            hasHardwareStrongBox = false,
+            batteryPolicy = OemBatteryPolicy.REALME_COLOROS_BACKGROUND
+        ),
+        DeviceProfile(
+            oem = "Oppo",
+            model = "Oppo Reno 12",
+            apiLevel = 35,
+            osName = "Android 15 (ColorOS 15)",
+            hasHardwareStrongBox = true,
+            batteryPolicy = OemBatteryPolicy.OPPO_AUTO_LAUNCH
+        ),
+        DeviceProfile(
+            oem = "Vivo",
+            model = "Vivo V30",
+            apiLevel = 34,
+            osName = "Android 14 (FuntouchOS 14)",
+            hasHardwareStrongBox = false,
+            batteryPolicy = OemBatteryPolicy.VIVO_HIGH_POWER_CONTROL
         )
     )
 
@@ -240,7 +275,10 @@ class AndroidCompatibilityMatrixTest {
                 }
                 OemBatteryPolicy.SAMSUNG_SLEEPING_APPS,
                 OemBatteryPolicy.XIAOMI_MIUI_BATTERY_SAVER,
-                OemBatteryPolicy.ONEPLUS_DEEP_OPTIMIZATION -> {
+                OemBatteryPolicy.ONEPLUS_DEEP_OPTIMIZATION,
+                OemBatteryPolicy.REALME_COLOROS_BACKGROUND,
+                OemBatteryPolicy.OPPO_AUTO_LAUNCH,
+                OemBatteryPolicy.VIVO_HIGH_POWER_CONTROL -> {
                     // Aggressive OEM battery killers: If background start throws BackgroundServiceStartNotAllowedException,
                     // PhoneLink falls back to a high-priority user-visible notification prompt (BOOT_PROMPT_NOTIFICATION_ID)
                     assertEquals(1002, BootReceiver.BOOT_PROMPT_NOTIFICATION_ID)

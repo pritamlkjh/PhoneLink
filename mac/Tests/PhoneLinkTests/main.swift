@@ -929,5 +929,112 @@ let pinnedSess = PinnedURLSessionDelegate.makeSession(pinnedSHA256: "47DEQpj8HBS
 assertFalse(pinnedSess === URLSession.shared, "Non-empty SPKI pin must configure delegate session")
 print("PASS: testPinnedURLSessionDelegateFactory")
 
-print(">>> ALL MAC CLIENT UNIT TESTS PASSED (45/45) <<<")
+// Test 46: FILE-2 Safe File List Table Formatting (No %s SIGSEGV)
+let emptyListResp = FileListResponse(requestId: "req-0", status: "STATUS_OK", currentDirectory: "", items: [])
+let emptyLines = FileClient.formatFileListLines(emptyListResp)
+assertTrue(emptyLines.first?.contains("Remote Directory: / (0 items)") == true, "Empty directory header must format")
+assertEqual(emptyLines.count, 5, "Empty directory table should contain header + separator rows")
+
+let populatedResp = FileListResponse(
+    requestId: "req-1",
+    status: "STATUS_OK",
+    currentDirectory: "Documents",
+    items: [
+        FileItem(path: "Documents/Sub", name: "Sub", isDirectory: true, sizeBytes: 0, modifiedTime: 1_760_000_000_000, mimeType: "inode/directory"),
+        FileItem(path: "Documents/verylongfilename_exceeding_columns.bin", name: "verylongfilename_exceeding_columns.bin", isDirectory: false, sizeBytes: 2_097_152, modifiedTime: 1_760_000_000_000, mimeType: "application/octet-stream")
+    ]
+)
+let populatedLines = FileClient.formatFileListLines(populatedResp)
+assertTrue(populatedLines.contains(where: { $0.contains("DIR") && $0.contains("Sub/") }), "Formatted table must list directories")
+assertTrue(populatedLines.contains(where: { $0.contains("FILE") && $0.contains("2.0 MB") && $0.contains("verylongfilename_exceeding_columns.bin") }), "Formatted table must list files safely")
+print("PASS: testFileListTableFormattingSafety")
+
+// Test 47: FILE-3/4 Progress Line ANSI Clear-to-EOL & Formatting
+let progressLine = FileClient.formatTransferProgressLine(bytesTransferred: 1_048_576, totalBytes: 2_097_152, bytesPerSecond: 1_468_006)
+assertTrue(progressLine.hasPrefix("\r\u{001B}[K["), "Progress line must clear trailing terminal characters with ESC[K")
+assertTrue(progressLine.contains("50.0%"), "Progress line must render percentage")
+assertTrue(progressLine.contains("/s"), "Progress line must end with single /s unit")
+print("PASS: testTransferProgressLineIncludesEraseAndFormatsCleanly")
+
+// Test 48: CAM-4 Low-Light Contrast Stretching in ASCII Canvas
+#if canImport(ImageIO) && canImport(CoreGraphics)
+func makeSyntheticRangeJPEG(minVal: UInt8, maxVal: UInt8, width: Int = 32, height: Int = 16) -> Data? {
+    var pixels = [UInt8](repeating: 0, count: width * height)
+    for y in 0..<height {
+        for x in 0..<width {
+            pixels[y * width + x] = x < (width / 2) ? minVal : maxVal
+        }
+    }
+    let cs = CGColorSpaceCreateDeviceGray()
+    guard let ctx = CGContext(
+        data: &pixels,
+        width: width,
+        height: height,
+        bitsPerComponent: 8,
+        bytesPerRow: width,
+        space: cs,
+        bitmapInfo: CGImageAlphaInfo.none.rawValue
+    ), let cgImg = ctx.makeImage() else {
+        return nil
+    }
+    let outData = NSMutableData()
+    guard let dest = CGImageDestinationCreateWithData(outData, "public.jpeg" as CFString, 1, nil) else {
+        return nil
+    }
+    CGImageDestinationAddImage(dest, cgImg, nil)
+    guard CGImageDestinationFinalize(dest) else { return nil }
+    return outData as Data
+}
+
+if let dimJpeg = makeSyntheticRangeJPEG(minVal: 15, maxVal: 45) {
+    let dimFrame = CameraFrame(
+        sessionId: "sess-dim-jpeg",
+        frameNumber: 3,
+        timestampMs: Int64(Date().timeIntervalSince1970 * 1000),
+        jpegData: dimJpeg,
+        width: 32,
+        height: 16,
+        lens: .back
+    )
+    let dimCanvas = CameraTerminalRenderer.renderAsciiCanvas(
+        frame: dimFrame,
+        state: .active(frameNumber: 3, latencyMs: 12, fps: 2.0, timestamp: Date()),
+        columns: 20,
+        rows: 4
+    )
+    let dimRows = dimCanvas.split(separator: "\n").filter { $0.contains("|") }
+    assertEqual(dimRows.count, 4, "Dim JPEG canvas must have 4 rows")
+    assertTrue(dimRows.allSatisfy { line in
+        let inner = String(line.dropFirst(3).dropLast(1))
+        return inner.prefix(6) == "      " && inner.suffix(6) == "██████"
+    }, "Dim scene with dynamic range must contrast-stretch dark vs bright halves instead of blanking out")
+}
+
+if let blackJpeg = makeSyntheticRangeJPEG(minVal: 0, maxVal: 0) {
+    let blackFrame = CameraFrame(
+        sessionId: "sess-black-jpeg",
+        frameNumber: 4,
+        timestampMs: Int64(Date().timeIntervalSince1970 * 1000),
+        jpegData: blackJpeg,
+        width: 32,
+        height: 16,
+        lens: .back
+    )
+    let blackCanvas = CameraTerminalRenderer.renderAsciiCanvas(
+        frame: blackFrame,
+        state: .active(frameNumber: 4, latencyMs: 12, fps: 2.0, timestamp: Date()),
+        columns: 20,
+        rows: 4
+    )
+    let blackRows = blackCanvas.split(separator: "\n").filter { $0.contains("|") }
+    assertTrue(blackRows.allSatisfy { line in
+        String(line.dropFirst(3).dropLast(1)) == String(repeating: " ", count: 20)
+    }, "Uniform pitch-black frame must stay spaces")
+}
+print("PASS: testCameraLowLightContrastAsciiRendering")
+#else
+print("PASS: testCameraLowLightContrastAsciiRendering (skipped non-CoreGraphics)")
+#endif
+
+print(">>> ALL MAC CLIENT UNIT TESTS PASSED (48/48) <<<")
 exit(0)

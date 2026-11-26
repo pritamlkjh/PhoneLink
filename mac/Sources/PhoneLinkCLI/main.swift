@@ -637,8 +637,9 @@ func handleFilesPut(args: [String], identity: DeviceIdentityManager, client: Aut
     let fileName = localURL.lastPathComponent
 
     if !isJSON {
+        let targetDisplay = remoteDirectory.isEmpty ? fileName : "\(remoteDirectory)/\(fileName)"
         print("Connecting to Android device via relay...")
-        print("Uploading: \(localURL.path) -> Android:/\(remoteDirectory)/\(fileName)")
+        print("Uploading: \(localURL.path) -> Android:/\(targetDisplay)")
     }
 
     let startTime = Date()
@@ -653,16 +654,11 @@ func handleFilesPut(args: [String], identity: DeviceIdentityManager, client: Aut
             timeoutSeconds: timeout,
             progressHandler: { progress in
                 if !isJSON {
-                    let pct = progress.totalBytes > 0 ? (Double(progress.bytesTransferred) / Double(progress.totalBytes)) * 100.0 : 100.0
-                    let transferredStr = FileClient.formatByteSize(progress.bytesTransferred)
-                    let totalStr = FileClient.formatByteSize(progress.totalBytes)
-                    let speedStr = FileClient.formatByteSize(UInt64(max(0, progress.bytesPerSecond))) + "/s"
-                    let barWidth = 30
-                    let completedChars = Int((pct / 100.0) * Double(barWidth))
-                    let bar = String(repeating: "=", count: max(0, min(barWidth, completedChars))) +
-                              (completedChars < barWidth ? ">" : "") +
-                              String(repeating: " ", count: max(0, barWidth - completedChars - 1))
-                    let line = String(format: "\r[%@] %5.1f%% (%@ / %@) %@", bar, pct, transferredStr, totalStr, speedStr)
+                    let line = FileClient.formatTransferProgressLine(
+                        bytesTransferred: progress.bytesTransferred,
+                        totalBytes: progress.totalBytes,
+                        bytesPerSecond: progress.bytesPerSecond
+                    )
                     fputs(line, stdout)
                     fflush(stdout)
                 }
@@ -755,16 +751,11 @@ func handleFilesGet(args: [String], identity: DeviceIdentityManager, client: Aut
             timeoutSeconds: timeout,
             progressHandler: { progress in
                 if !isJSON {
-                    let pct = progress.totalBytes > 0 ? (Double(progress.bytesTransferred) / Double(progress.totalBytes)) * 100.0 : 100.0
-                    let transferredStr = FileClient.formatByteSize(progress.bytesTransferred)
-                    let totalStr = FileClient.formatByteSize(progress.totalBytes)
-                    let speedStr = FileClient.formatByteSize(UInt64(max(0, progress.bytesPerSecond))) + "/s"
-                    let barWidth = 30
-                    let completedChars = Int((pct / 100.0) * Double(barWidth))
-                    let bar = String(repeating: "=", count: max(0, min(barWidth, completedChars))) +
-                              (completedChars < barWidth ? ">" : "") +
-                              String(repeating: " ", count: max(0, barWidth - completedChars - 1))
-                    let line = String(format: "\r[%@] %5.1f%% (%@ / %@) %@", bar, pct, transferredStr, totalStr, speedStr)
+                    let line = FileClient.formatTransferProgressLine(
+                        bytesTransferred: progress.bytesTransferred,
+                        totalBytes: progress.totalBytes,
+                        bytesPerSecond: progress.bytesPerSecond
+                    )
                     fputs(line, stdout)
                     fflush(stdout)
                 }
@@ -869,21 +860,9 @@ func handleFilesList(args: [String], identity: DeviceIdentityManager, client: Au
             let data = try JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted])
             print(String(data: data, encoding: .utf8)!)
         } else {
-            let dirDisplay = response.currentDirectory.isEmpty ? "/" : "/\(response.currentDirectory)"
-            print("Remote Directory: \(dirDisplay) (\(response.items.count) item\(response.items.count == 1 ? "" : "s"))")
-            print("--------------------------------------------------------------------------------")
-            print(String(format: "%-5s %-12s %-20s %@", "TYPE", "SIZE", "MODIFIED", "NAME"))
-            print("--------------------------------------------------------------------------------")
-
-            for item in response.items {
-                let typeStr = item.isDirectory ? "DIR" : "FILE"
-                let sizeStr = item.isDirectory ? "-" : FileClient.formatByteSize(item.sizeBytes)
-                let dateStr = FileClient.formatDate(item.modifiedTime)
-                let nameStr = item.isDirectory ? "\(item.name)/" : item.name
-
-                print(String(format: "%-5s %-12s %-20s %@", typeStr, sizeStr, dateStr, nameStr))
+            for line in FileClient.formatFileListLines(response) {
+                print(line)
             }
-            print("--------------------------------------------------------------------------------")
         }
         exit(0)
     } catch {

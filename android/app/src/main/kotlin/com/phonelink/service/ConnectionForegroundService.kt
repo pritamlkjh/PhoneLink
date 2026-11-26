@@ -78,31 +78,43 @@ class ConnectionForegroundService : Service() {
         cameraAuthGate = com.phonelink.camera.CameraAuthorizationGate.fromContext(this, secureStorage)
 
         val serviceController = object : com.phonelink.camera.CameraCaptureModule.ForegroundServiceController {
+            @Volatile
+            private var cameraForegroundReady = true
+
+            override fun isCameraForegroundReady(): Boolean = cameraForegroundReady
+
             override fun onCameraCaptureStarted() {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                     val cameraServiceType = ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
                     val notification = buildNotification("PhoneLink: Camera streaming active")
                     try {
                         startForeground(NOTIFICATION_ID, notification, cameraServiceType)
+                        cameraForegroundReady = true
                     } catch (_: SecurityException) {
+                        cameraForegroundReady = false
                         updateNotification("PhoneLink: Camera permission required for stream")
                     } catch (_: IllegalStateException) {
-                        updateNotification("PhoneLink: Reopen app to allow background camera")
+                        cameraForegroundReady = false
+                        updateNotification("PhoneLink: Unlock & open app to stream camera")
                     }
                 } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     val qServiceType = ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
                     val notification = buildNotification("PhoneLink: Camera streaming active")
                     try {
                         startForeground(NOTIFICATION_ID, notification, qServiceType)
+                        cameraForegroundReady = true
                     } catch (_: Exception) {
+                        cameraForegroundReady = true
                         updateNotification("PhoneLink: Camera streaming active")
                     }
                 } else {
+                    cameraForegroundReady = true
                     updateNotification("PhoneLink: Camera streaming active")
                 }
             }
 
             override fun onCameraCaptureStopped() {
+                cameraForegroundReady = true
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     val defaultServiceType = ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
                     val notification = buildNotification("Connected to VPS relay")

@@ -5,6 +5,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
 import android.graphics.ImageFormat
+import android.hardware.camera2.CameraAccessException
 import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraDevice
@@ -127,6 +128,7 @@ class CameraCaptureModule(
     interface ForegroundServiceController {
         fun onCameraCaptureStarted()
         fun onCameraCaptureStopped()
+        fun isCameraForegroundReady(): Boolean = true
     }
 
     interface CameraSource {
@@ -219,6 +221,22 @@ class CameraCaptureModule(
         val source = cameraSource ?: DefaultMockCameraSource()
         activeCameraSource = source
 
+        // Elevate foreground service to FOREGROUND_SERVICE_TYPE_CAMERA before Camera2 openCamera(),
+        // so Android 14–16 background camera policy checks see the active camera FGS type.
+        serviceController?.onCameraCaptureStarted()
+        if (serviceController != null && !serviceController.isCameraForegroundReady()) {
+            isCapturing.set(false)
+            activeSessionId = null
+            activeCameraSource = null
+            serviceController.onCameraCaptureStopped()
+            return CameraStartResponseDto(
+                sessionId = request.sessionId,
+                status = STATUS_CAMERA_PERMISSION_DENIED,
+                errorMessage = "Android blocked background camera access: unlock the phone and open PhoneLink on screen before starting remote camera.",
+                actualFps = 0
+            )
+        }
+
         val openResult = source.open(
             lens = request.lens,
             width = width,
@@ -268,6 +286,7 @@ class CameraCaptureModule(
             isCapturing.set(false)
             activeSessionId = null
             activeCameraSource = null
+            serviceController?.onCameraCaptureStopped()
             return CameraStartResponseDto(
                 sessionId = request.sessionId,
                 status = STATUS_ERROR_UNKNOWN,
@@ -275,9 +294,6 @@ class CameraCaptureModule(
                 actualFps = 0
             )
         }
-
-        // Elevate foreground service to FOREGROUND_SERVICE_TYPE_CAMERA
-        serviceController?.onCameraCaptureStarted()
 
         // Start session watchdog timer for auto-deactivation and peer notification
         sessionTimeoutTask?.cancel(false)
@@ -497,12 +513,14 @@ class CameraCaptureModule(
  * creates CameraCaptureSession, and delivers repeating JPEG frames off the UI thread.
  */
 class AndroidCameraSource(private val context: Context) : CameraCaptureModule.CameraSource {
+    private val cameraLock = Any()
     private val capturing = AtomicBoolean(false)
     private var cameraDevice: CameraDevice? = null
     private var captureSession: CameraCaptureSession? = null
     private var imageReader: ImageReader? = null
     private var backgroundThread: HandlerThread? = null
     private var backgroundHandler: Handler? = null
+    private var closeLatch: CountDownLatch? = null
 
     @SuppressLint("MissingPermission")
     override fun open(
@@ -512,7 +530,7 @@ class AndroidCameraSource(private val context: Context) : CameraCaptureModule.Ca
         jpegQuality: Int,
         targetFps: Int,
         onFrame: (jpegData: ByteArray, width: Int, height: Int) -> Unit
-    ): Result<Unit> {
+    ): Result<Unit> = synchronized(cameraLock) {
         if (context.checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
             return Result.failure(SecurityException("CAMERA runtime permission not granted"))
         }
@@ -606,6 +624,10 @@ class AndroidCameraSource(private val context: Context) : CameraCaptureModule.Ca
                     openError.compareAndSet(null, IllegalStateException("Camera open error code: $error"))
                     openLatch.countDown()
                 }
+
+                override fun onClosed(device: CameraDevice) {
+                    closeLatch?.countDown()
+                }
             }, handler)
 
             if (!openLatch.await(5, TimeUnit.SECONDS)) {
@@ -619,6 +641,17 @@ class AndroidCameraSource(private val context: Context) : CameraCaptureModule.Ca
             }
 
             return Result.success(Unit)
+        } catch (ex: CameraAccessException) {
+            close()
+            val friendlyMsg = when (ex.reason) {
+                CameraAccessException.CAMERA_DISABLED ->
+                    "Camera blocked by Android privacy/background policy (${ex.message}): unlock phone, ensure 'Camera access' Quick Setting is ON, and keep PhoneLink open/recent."
+                CameraAccessException.CAMERA_IN_USE,
+                CameraAccessException.MAX_CAMERAS_IN_USE ->
+                    "Camera is currently in use by another app (${ex.message})"
+                else -> ex.message ?: "Camera access failed (${ex.reason})"
+            }
+            return Result.failure(IllegalStateException(friendlyMsg, ex))
         } catch (ex: Exception) {
             close()
             return Result.failure(ex)
@@ -646,6 +679,8 @@ class AndroidCameraSource(private val context: Context) : CameraCaptureModule.Ca
                     val reqBuilder = device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
                         addTarget(reader.surface)
                         set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
+                        set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON)
+                        set(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO)
                         set(CaptureRequest.JPEG_QUALITY, jpegQuality.coerceIn(10, 100).toByte())
                         if (fpsRange != null) {
                             set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, fpsRange)
@@ -696,15 +731,28 @@ class AndroidCameraSource(private val context: Context) : CameraCaptureModule.Ca
         return if (best != null) best.width to best.height else maxW to maxH
     }
 
-    private fun selectFpsRange(chars: CameraCharacteristics, targetFps: Int): Range<Int>? {
-        val ranges = chars.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES) ?: return null
-        return ranges
-            .filter { targetFps in it.lower..it.upper }
-            .minByOrNull { it.upper - it.lower }
-            ?: ranges.minByOrNull { kotlin.math.abs(it.upper - targetFps) }
+    companion object {
+        /**
+         * Selects an AE FPS range containing [targetFps] with minimal span, or falls back to
+         * the range with the lowest minimum FPS so auto-exposure can extend shutter in low light.
+         */
+        internal fun selectPreferredFpsRange(ranges: List<Pair<Int, Int>>, targetFps: Int): Pair<Int, Int>? {
+            if (ranges.isEmpty()) return null
+            return ranges
+                .filter { targetFps in it.first..it.second }
+                .minWithOrNull(compareBy<Pair<Int, Int>> { it.second - it.first }.thenBy { it.first })
+                ?: ranges.minWithOrNull(compareBy<Pair<Int, Int>> { it.first }.thenBy { it.second })
+        }
     }
 
-    override fun close() {
+    private fun selectFpsRange(chars: CameraCharacteristics, targetFps: Int): Range<Int>? {
+        val ranges = chars.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES) ?: return null
+        val pairs = ranges.map { it.lower to it.upper }
+        val chosen = selectPreferredFpsRange(pairs, targetFps) ?: return null
+        return Range(chosen.first, chosen.second)
+    }
+
+    override fun close() = synchronized(cameraLock) {
         capturing.set(false)
         try {
             captureSession?.stopRepeating()
@@ -712,8 +760,22 @@ class AndroidCameraSource(private val context: Context) : CameraCaptureModule.Ca
         try {
             captureSession?.close()
             captureSession = null
-            cameraDevice?.close()
-            cameraDevice = null
+        } catch (_: Exception) {}
+        val dev = cameraDevice
+        cameraDevice = null
+        if (dev != null) {
+            val latch = CountDownLatch(1)
+            closeLatch = latch
+            try {
+                dev.close()
+                // Wait briefly for vendor Camera HAL (Oppo/Realme/Vivo) onClosed callback
+                latch.await(500, TimeUnit.MILLISECONDS)
+            } catch (_: Exception) {
+            } finally {
+                closeLatch = null
+            }
+        }
+        try {
             imageReader?.close()
             imageReader = null
             backgroundThread?.quitSafely()

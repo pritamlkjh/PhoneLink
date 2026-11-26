@@ -437,6 +437,54 @@ public final class FileClient: @unchecked Sendable {
         return sharedDateFormatter.string(from: date)
     }
 
+    /// Formats a file transfer progress bar line with ANSI clear-to-EOL so shrinking speed text leaves no artifacts.
+    public static func formatTransferProgressLine(
+        bytesTransferred: UInt64,
+        totalBytes: UInt64,
+        bytesPerSecond: Double,
+        barWidth: Int = 30
+    ) -> String {
+        let pct = totalBytes > 0 ? (Double(bytesTransferred) / Double(totalBytes)) * 100.0 : 100.0
+        let transferredStr = formatByteSize(bytesTransferred)
+        let totalStr = formatByteSize(totalBytes)
+        let speedStr = formatByteSize(UInt64(max(0, bytesPerSecond))) + "/s"
+        let completedChars = Int((pct / 100.0) * Double(barWidth))
+        let fillCount = max(0, min(barWidth, completedChars))
+        let arrowCount = completedChars < barWidth ? 1 : 0
+        let spaceCount = max(0, barWidth - fillCount - arrowCount)
+        let bar = String(repeating: "=", count: fillCount)
+            + (arrowCount > 0 ? ">" : "")
+            + String(repeating: " ", count: spaceCount)
+        let pctStr = String(format: "%5.1f", pct)
+        return "\r\u{001B}[K[\(bar)] \(pctStr)% (\(transferredStr) / \(totalStr)) \(speedStr)"
+    }
+
+    private static func padColumn(_ value: String, width: Int) -> String {
+        guard value.count < width else { return value }
+        return value + String(repeating: " ", count: width - value.count)
+    }
+
+    /// Formats a directory listing table safely using native Swift padding (never C %s varargs).
+    public static func formatFileListLines(_ response: FileListResponse) -> [String] {
+        let dirDisplay = response.currentDirectory.isEmpty ? "/" : "/\(response.currentDirectory)"
+        let separator = String(repeating: "-", count: 80)
+        var lines: [String] = [
+            "Remote Directory: \(dirDisplay) (\(response.items.count) item\(response.items.count == 1 ? "" : "s"))",
+            separator,
+            "\(padColumn("TYPE", width: 5)) \(padColumn("SIZE", width: 12)) \(padColumn("MODIFIED", width: 20)) NAME",
+            separator
+        ]
+        for item in response.items {
+            let typeStr = item.isDirectory ? "DIR" : "FILE"
+            let sizeStr = item.isDirectory ? "-" : formatByteSize(item.sizeBytes)
+            let dateStr = formatDate(item.modifiedTime)
+            let nameStr = item.isDirectory ? "\(item.name)/" : item.name
+            lines.append("\(padColumn(typeStr, width: 5)) \(padColumn(sizeStr, width: 12)) \(padColumn(dateStr, width: 20)) \(nameStr)")
+        }
+        lines.append(separator)
+        return lines
+    }
+
     /// Executes end-to-end directory listing against the connected Android device.
     public static func isExpectedFinalUploadAck(
         expectedTransferId: String,

@@ -85,4 +85,13 @@ class SecureStorageTest {
         val result = storage.getString("test_key", "fallback_default")
         assertEquals("fallback_default", result, "Tampered ciphertext must fail authentication and return fallback")
     }
+
+    @Test
+    fun testCorruptedKeystoreMetadataRecoversGracefully() {
+        val corruptedPrefs = InMemorySharedPreferences()
+        corruptedPrefs.edit().putString("__secure_master_key_wrapped__", "not_valid_base64!!!").apply()
+        val recoveredStorage = SecureStorage(corruptedPrefs)
+        recoveredStorage.saveSessionToken("token_after_recovery")
+        assertEquals("token_after_recovery", recoveredStorage.getSessionToken())
+    }
 }

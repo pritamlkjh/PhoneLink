@@ -107,39 +107,64 @@ class SecureStorage(
             if (hasAndroidKeyStore()) {
                 val wrapped = prefs.getString(PREF_KEY_WRAPPED_MASTER_KEY, null)
                 if (wrapped != null) {
-                    return unwrapMasterKeyWithKeystore(wrapped)
+                    try {
+                        return unwrapMasterKeyWithKeystore(wrapped)
+                    } catch (_: Throwable) {
+                        // Vendor Keystore corruption/invalidation (e.g., OEM OTA or lock-screen reset):
+                        // scrub unreadable wrapped blob rather than crash-looping on startup.
+                        prefs.edit().remove(PREF_KEY_WRAPPED_MASTER_KEY).apply()
+                    }
                 }
 
-                // Migrate any legacy key to AndroidKeyStore-wrapped storage and scrub plaintext entry
+                // Reuse any existing app-private software fallback key, or generate a new 256-bit key
                 val legacyEncoded = prefs.getString(PREF_KEY_MASTER_KEY, null)
                 val rawKey = if (legacyEncoded != null) {
-                    Base64.getDecoder().decode(legacyEncoded)
+                    try {
+                        Base64.getDecoder().decode(legacyEncoded)
+                    } catch (_: Throwable) {
+                        generateRawAes256Key()
+                    }
                 } else {
-                    val kg = KeyGenerator.getInstance("AES")
-                    kg.init(256, SecureRandom())
-                    kg.generateKey().encoded
+                    generateRawAes256Key()
                 }
-                val newWrapped = wrapMasterKeyWithKeystore(rawKey)
-                prefs.edit()
-                    .putString(PREF_KEY_WRAPPED_MASTER_KEY, newWrapped)
-                    .remove(PREF_KEY_MASTER_KEY)
-                    .apply()
-                return SecretKeySpec(rawKey, "AES")
+
+                try {
+                    val newWrapped = wrapMasterKeyWithKeystore(rawKey)
+                    prefs.edit()
+                        .putString(PREF_KEY_WRAPPED_MASTER_KEY, newWrapped)
+                        .remove(PREF_KEY_MASTER_KEY)
+                        .apply()
+                    return SecretKeySpec(rawKey, "AES")
+                } catch (_: Throwable) {
+                    // Vendor Keystore unavailable/broken for AES/GCM wrapping: fall through to app-private fallback
+                    val b64 = Base64.getEncoder().encodeToString(rawKey)
+                    prefs.edit().putString(PREF_KEY_MASTER_KEY, b64).apply()
+                    return SecretKeySpec(rawKey, "AES")
+                }
             }
 
-            // Host JVM unit-test fallback (AndroidKeyStore unavailable)
+            // Host JVM / software fallback when AndroidKeyStore provider is unavailable
             val encodedKey = prefs.getString(PREF_KEY_MASTER_KEY, null)
             if (encodedKey != null) {
-                val raw = Base64.getDecoder().decode(encodedKey)
-                return SecretKeySpec(raw, "AES")
+                try {
+                    val raw = Base64.getDecoder().decode(encodedKey)
+                    return SecretKeySpec(raw, "AES")
+                } catch (_: Throwable) {}
             }
+            val rawKey = generateRawAes256Key()
+            val b64 = Base64.getEncoder().encodeToString(rawKey)
+            prefs.edit().putString(PREF_KEY_MASTER_KEY, b64).apply()
+            return SecretKeySpec(rawKey, "AES")
+        }
+
+        private fun generateRawAes256Key(): ByteArray {
             val kg = KeyGenerator.getInstance("AES")
             kg.init(256, SecureRandom())
-            val key = kg.generateKey()
-            val b64 = Base64.getEncoder().encodeToString(key.encoded)
-            prefs.edit().putString(PREF_KEY_MASTER_KEY, b64).apply()
-            return key
+            return kg.generateKey().encoded
         }
+
+        internal fun hasWrappedKey(prefs: SharedPreferences): Boolean =
+            prefs.contains(PREF_KEY_WRAPPED_MASTER_KEY)
 
         fun fromContext(context: Context): SecureStorage {
             val prefs = context.getSharedPreferences(PREFS_FILE, Context.MODE_PRIVATE)

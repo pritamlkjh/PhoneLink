@@ -521,4 +521,89 @@ class CameraCaptureModuleTest {
         }
         assertEquals("Frames must not increase after stop", countBeforeStop, countAfterStop)
     }
+
+    @Test
+    fun testServiceElevatedBeforeCameraOpenAndRolledBackOnOpenFailure() {
+        osPermissionGranted = true
+        storage.setCameraAllowed(true)
+
+        var sawElevatedServiceDuringOpen = false
+        val failingSource = object : CameraCaptureModule.CameraSource {
+            override fun open(
+                lens: CameraCaptureModule.CameraLens,
+                width: Int,
+                height: Int,
+                jpegQuality: Int,
+                targetFps: Int,
+                onFrame: (jpegData: ByteArray, width: Int, height: Int) -> Unit
+            ): Result<Unit> {
+                sawElevatedServiceDuringOpen = (testServiceController.startedCount.get() == 1)
+                return Result.failure(IllegalStateException("Simulated CAMERA_DISABLED"))
+            }
+
+            override fun close() {}
+            override fun isCapturing(): Boolean = false
+        }
+
+        val failModule = CameraCaptureModule(
+            cameraAuthGate = authGate,
+            cameraSource = failingSource,
+            serviceController = testServiceController
+        )
+        val req = CameraCaptureModule.CameraStartRequestDto(
+            sessionId = "sess-fail-open",
+            lens = CameraCaptureModule.CameraLens.LENS_BACK,
+            targetFps = 2,
+            jpegQuality = 80,
+            maxWidth = 1280,
+            maxHeight = 720
+        )
+
+        val resp = failModule.startCapture(req) {}
+        assertEquals(CameraCaptureModule.STATUS_ERROR_UNKNOWN, resp.status)
+        assertTrue(resp.errorMessage.contains("Simulated CAMERA_DISABLED"))
+        assertTrue("Service must elevate to camera FGS before Camera2 openCamera()", sawElevatedServiceDuringOpen)
+        assertEquals(1, testServiceController.startedCount.get())
+        assertEquals(1, testServiceController.stoppedCount.get())
+        assertFalse(failModule.isCapturing())
+    }
+
+    @Test
+    fun testSelectPreferredFpsRangePrefersVariableLowLightFallback() {
+        val hwRanges = listOf(15 to 15, 7 to 30, 30 to 30)
+        assertEquals(7 to 30, AndroidCameraSource.selectPreferredFpsRange(hwRanges, 2))
+        assertEquals(15 to 15, AndroidCameraSource.selectPreferredFpsRange(hwRanges, 15))
+    }
+
+    @Test
+    fun testCameraStartFailsFastWhenForegroundServicePromotionBlocked() {
+        osPermissionGranted = true
+        storage.setCameraAllowed(true)
+
+        val blockedController = object : CameraCaptureModule.ForegroundServiceController {
+            override fun onCameraCaptureStarted() {}
+            override fun onCameraCaptureStopped() {}
+            override fun isCameraForegroundReady(): Boolean = false
+        }
+
+        val blockedModule = CameraCaptureModule(
+            cameraAuthGate = authGate,
+            cameraSource = testCameraSource,
+            serviceController = blockedController
+        )
+        val req = CameraCaptureModule.CameraStartRequestDto(
+            sessionId = "sess-fgs-blocked",
+            lens = CameraCaptureModule.CameraLens.LENS_BACK,
+            targetFps = 2,
+            jpegQuality = 80,
+            maxWidth = 1280,
+            maxHeight = 720
+        )
+
+        val resp = blockedModule.startCapture(req) {}
+        assertEquals(CameraCaptureModule.STATUS_CAMERA_PERMISSION_DENIED, resp.status)
+        assertTrue(resp.errorMessage.contains("open PhoneLink on screen"))
+        assertFalse(testCameraSource.isCapturing())
+        assertFalse(blockedModule.isCapturing())
+    }
 }
