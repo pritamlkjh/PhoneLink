@@ -37,6 +37,26 @@ class ConnectionForegroundService : Service() {
         const val ACTION_START = "com.phonelink.service.ACTION_START"
         const val ACTION_STOP = "com.phonelink.service.ACTION_STOP"
 
+        internal fun computeForegroundNotificationText(cameraActive: Boolean, micActive: Boolean): String {
+            return when {
+                cameraActive && micActive -> "PhoneLink: Camera & Microphone streaming"
+                cameraActive -> "PhoneLink: Camera streaming active"
+                micActive -> "PhoneLink: Microphone streaming active"
+                else -> "Connected to VPS relay"
+            }
+        }
+
+        internal fun computeForegroundServiceTypes(cameraActive: Boolean, micActive: Boolean): Int {
+            var flags = ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+            if (cameraActive) {
+                flags = flags or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
+            }
+            if (micActive) {
+                flags = flags or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+            }
+            return flags
+        }
+
         var peerStatusListener: ((peerId: String, isOnline: Boolean) -> Unit)? = null
 
         fun start(context: Context) {
@@ -65,9 +85,15 @@ class ConnectionForegroundService : Service() {
     private lateinit var remoteActionRegistry: com.phonelink.actions.RemoteActionRegistry
     private lateinit var cameraAuthGate: com.phonelink.camera.CameraAuthorizationGate
     private lateinit var cameraCaptureModule: com.phonelink.camera.CameraCaptureModule
+    private lateinit var micAuthGate: com.phonelink.mic.MicAuthorizationGate
+    private lateinit var micCaptureModule: com.phonelink.mic.MicCaptureModule
     private var replayFilter = com.phonelink.security.ReplayProtectionFilter()
     private var peerSession: com.phonelink.crypto.E2EPeerSession? = null
     private var isRunning = false
+    @Volatile private var cameraCaptureActive = false
+    @Volatile private var micCaptureActive = false
+    @Volatile private var cameraForegroundReady = true
+    @Volatile private var micForegroundReady = true
 
     override fun onCreate() {
         super.onCreate()
@@ -76,56 +102,41 @@ class ConnectionForegroundService : Service() {
         fileOperationHandler = FileOperationHandler(storageAccessLayer)
         remoteActionRegistry = com.phonelink.actions.RemoteActionRegistry.fromContext(this)
         cameraAuthGate = com.phonelink.camera.CameraAuthorizationGate.fromContext(this, secureStorage)
+        micAuthGate = com.phonelink.mic.MicAuthorizationGate.fromContext(this, secureStorage)
 
         val serviceController = object : com.phonelink.camera.CameraCaptureModule.ForegroundServiceController {
-            @Volatile
-            private var cameraForegroundReady = true
-
             override fun isCameraForegroundReady(): Boolean = cameraForegroundReady
 
             override fun onCameraCaptureStarted() {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    val cameraServiceType = ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
-                    val notification = buildNotification("PhoneLink: Camera streaming active")
-                    try {
-                        startForeground(NOTIFICATION_ID, notification, cameraServiceType)
-                        cameraForegroundReady = true
-                    } catch (_: SecurityException) {
-                        cameraForegroundReady = false
-                        updateNotification("PhoneLink: Camera permission required for stream")
-                    } catch (_: IllegalStateException) {
-                        cameraForegroundReady = false
-                        updateNotification("PhoneLink: Unlock & open app to stream camera")
-                    }
-                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    val qServiceType = ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
-                    val notification = buildNotification("PhoneLink: Camera streaming active")
-                    try {
-                        startForeground(NOTIFICATION_ID, notification, qServiceType)
-                        cameraForegroundReady = true
-                    } catch (_: Exception) {
-                        cameraForegroundReady = true
-                        updateNotification("PhoneLink: Camera streaming active")
-                    }
-                } else {
-                    cameraForegroundReady = true
-                    updateNotification("PhoneLink: Camera streaming active")
+                cameraCaptureActive = true
+                cameraForegroundReady = applyActiveForegroundCapabilities(triggerType = "camera")
+                if (!cameraForegroundReady) {
+                    cameraCaptureActive = false
                 }
             }
 
             override fun onCameraCaptureStopped() {
+                cameraCaptureActive = false
                 cameraForegroundReady = true
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    val defaultServiceType = ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
-                    val notification = buildNotification("Connected to VPS relay")
-                    try {
-                        startForeground(NOTIFICATION_ID, notification, defaultServiceType)
-                    } catch (_: Exception) {
-                        updateNotification("Connected to VPS relay")
-                    }
-                } else {
-                    updateNotification("Connected to VPS relay")
+                applyActiveForegroundCapabilities(triggerType = null)
+            }
+        }
+
+        val micServiceController = object : com.phonelink.mic.MicCaptureModule.ForegroundServiceController {
+            override fun isMicForegroundReady(): Boolean = micForegroundReady
+
+            override fun onMicCaptureStarted() {
+                micCaptureActive = true
+                micForegroundReady = applyActiveForegroundCapabilities(triggerType = "microphone")
+                if (!micForegroundReady) {
+                    micCaptureActive = false
                 }
+            }
+
+            override fun onMicCaptureStopped() {
+                micCaptureActive = false
+                micForegroundReady = true
+                applyActiveForegroundCapabilities(triggerType = null)
             }
         }
 
@@ -135,7 +146,62 @@ class ConnectionForegroundService : Service() {
             serviceController = serviceController
         )
 
+        micCaptureModule = com.phonelink.mic.MicCaptureModule(
+            micAuthGate = micAuthGate,
+            micSource = com.phonelink.mic.AndroidMicSource(this),
+            serviceController = micServiceController
+        )
+
         createNotificationChannel()
+    }
+
+    @Synchronized
+    private fun applyActiveForegroundCapabilities(triggerType: String?): Boolean {
+        val text = computeForegroundNotificationText(cameraCaptureActive, micCaptureActive)
+        val notification = buildNotification(text)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val flags = computeForegroundServiceTypes(cameraCaptureActive, micCaptureActive)
+            return try {
+                startForeground(NOTIFICATION_ID, notification, flags)
+                true
+            } catch (_: SecurityException) {
+                val permLabel = triggerType ?: "media"
+                updateNotification("PhoneLink: $permLabel permission required for stream")
+                false
+            } catch (_: IllegalStateException) {
+                val targetLabel = triggerType ?: "media"
+                updateNotification("PhoneLink: Unlock & open app to stream $targetLabel")
+                false
+            }
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val qFlags = if (cameraCaptureActive || micCaptureActive) {
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            } else {
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+            }
+            try {
+                startForeground(NOTIFICATION_ID, notification, qFlags)
+            } catch (_: Exception) {
+                updateNotification(text)
+            }
+            return true
+        } else {
+            updateNotification(text)
+            return true
+        }
+    }
+
+    private fun stopActiveMediaCapture(reason: String) {
+        if (::cameraCaptureModule.isInitialized && cameraCaptureModule.isCapturing()) {
+            try {
+                cameraCaptureModule.stopCapture("disconnect", reason)
+            } catch (_: Exception) {}
+        }
+        if (::micCaptureModule.isInitialized && micCaptureModule.isCapturing()) {
+            try {
+                micCaptureModule.stopCapture("disconnect", reason)
+            } catch (_: Exception) {}
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -184,6 +250,7 @@ class ConnectionForegroundService : Service() {
                     replayFilter.buildErrorResponse(validation.status, validation.message)
                 } else {
                     cameraCaptureModule.processApplicationMessage(plaintext, sendAppMsg)
+                        ?: micCaptureModule.processApplicationMessage(plaintext, sendAppMsg)
                         ?: fileOperationHandler.processApplicationMessage(plaintext, sendAppMsg)
                         ?: remoteActionRegistry.processApplicationMessage(plaintext)
                 }
@@ -246,7 +313,7 @@ class ConnectionForegroundService : Service() {
                         updateNotification("Connected to VPS relay")
                     }
                     is NetworkTransport.ConnectionState.Disconnected -> {
-                        cameraCaptureModule.stopCapture("disconnected", "transport_disconnected")
+                        stopActiveMediaCapture("transport_disconnected")
                         replayFilter.reset()
                         peerSession?.reset()
                         if (isRunning) {
@@ -255,7 +322,7 @@ class ConnectionForegroundService : Service() {
                         }
                     }
                     is NetworkTransport.ConnectionState.Error -> {
-                        cameraCaptureModule.stopCapture("error", "transport_error")
+                        stopActiveMediaCapture("transport_error")
                         replayFilter.reset()
                         peerSession?.reset()
                         if (isRunning) {
@@ -300,6 +367,7 @@ class ConnectionForegroundService : Service() {
                 val statusText = if (isOnline) {
                     "Connected to VPS • Mac is ONLINE"
                 } else {
+                    stopActiveMediaCapture("peer_offline")
                     "Connected to VPS • Paired Mac is OFFLINE"
                 }
                 peerStatusListener?.invoke(peerId, isOnline)
@@ -328,7 +396,12 @@ class ConnectionForegroundService : Service() {
         }
         isRunning = false
         try {
-            cameraCaptureModule.shutdown()
+            if (::cameraCaptureModule.isInitialized) {
+                cameraCaptureModule.shutdown()
+            }
+            if (::micCaptureModule.isInitialized) {
+                micCaptureModule.shutdown()
+            }
         } catch (_: Exception) {}
         reconnectionManager?.stop()
         reconnectionManager = null

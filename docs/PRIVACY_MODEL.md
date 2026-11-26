@@ -28,7 +28,7 @@ PhoneLink incorporates hardware and operating-system-level constraints that make
 ### A. Permanent, Un-dismissible Foreground Notification
 Whenever PhoneLink is running, connected, or listening on Android:
 - Android requires a persistent Ongoing Foreground Notification in the system tray (`ConnectionForegroundService`).
-- If data is actively streaming (file transfer or camera preview), the notification text immediately updates to reflect the active operation (e.g. `Streaming camera preview to paired Mac...`).
+- If data is actively streaming (file transfer, camera preview, or microphone audio), the notification text immediately updates to reflect the active operation (e.g. `Streaming camera preview to paired Mac...` or `Streaming microphone audio to paired Mac...`).
 - The notification cannot be swiped away or hidden.
 
 ### B. Visible App Launcher Icon
@@ -43,6 +43,14 @@ Remote camera activation cannot occur silently:
    - **Default:** Always `OFF` upon fresh install.
    - **No Remote Toggle:** The toggle can **never** be enabled remotely via Mac commands.
 3. **Immediate Hardware Release:** When the Mac stops viewing or the session drops, the camera hardware session is immediately closed and the lens released.
+
+### C2. Independent Dual-Gate Microphone Activation (`FS-13`)
+Remote microphone streaming cannot occur silently and all approvals happen manually post-install:
+1. **Gate 1 (OS Permission):** The owner must manually grant Android's runtime microphone permission (`android.permission.RECORD_AUDIO`) after installation.
+2. **Gate 2 (Explicit Local In-App Toggle):** The owner must physically toggle **Allow Remote Microphone Access** inside the PhoneLink Android app.
+   - **Default:** Always `OFF` upon fresh install.
+   - **No Remote Toggle:** The toggle can **never** be enabled remotely via Mac or VPS commands.
+3. **Foreground Microphone Service & Auto-Stop:** Active capture elevates the ongoing foreground notification with `FOREGROUND_SERVICE_MICROPHONE`, triggers Android's green OS mic dot, and immediately stops & releases `AudioRecord` on `mic_stop_req`, peer offline disconnect, or watchdog timeout.
 
 ### D. Scoped Remote Actions Allowlist (`FILE-5`)
 Remote execution is restricted to a hardcoded enum:
@@ -64,10 +72,10 @@ Remote execution is restricted to a hardcoded enum:
 1. **VPS Untrusted Relay Model:**
    - The VPS relay terminates only the outer TLS transport.
    - The payload itself is encrypted using symmetric session keys derived via **X25519 (RFC 7748)** key agreement with identity-signed handshakes directly between Mac and Android.
-   - The VPS holds no private keys, derives no session keys, and possesses zero cryptographic ability to decrypt relayed files, file listings, camera frames, or action payloads.
+   - The VPS holds no private keys, derives no session keys, and possesses zero cryptographic ability to decrypt relayed files, file listings, camera frames, microphone audio chunks, or action payloads.
 
 2. **Zero Plaintext Persistence at Rest:**
-   - The VPS never writes payload bytes, camera frames, or file contents to disk.
+   - The VPS never writes payload bytes, camera frames, microphone audio, or file contents to disk.
    - In-flight buffers reside only in transient volatile memory.
    - The audit log records only high-level transport metadata (source device ID, target device ID, byte counts, and timestamps).
 

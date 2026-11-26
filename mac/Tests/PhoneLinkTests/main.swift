@@ -1036,5 +1036,95 @@ print("PASS: testCameraLowLightContrastAsciiRendering")
 print("PASS: testCameraLowLightContrastAsciiRendering (skipped non-CoreGraphics)")
 #endif
 
-print(">>> ALL MAC CLIENT UNIT TESTS PASSED (48/48) <<<")
+// Test 49: MIC Protocol Serialization Round-Trip
+let micReqData = try! MicClient.buildMicStartRequest(sessionId: "mic-sess-1", sampleRateHz: 16000, channels: 1, chunkDurationMs: 200)
+let micReqObj = try! JSONSerialization.jsonObject(with: micReqData) as! [String: Any]
+let micReqBody = micReqObj["mic_start_req"] as! [String: Any]
+assertEqual(micReqBody["session_id"] as! String, "mic-sess-1")
+assertEqual((micReqBody["sample_rate_hz"] as! NSNumber).uint32Value, 16000)
+
+let micStartRespJSON = """
+{
+    "schema_version": 1,
+    "message_id": "msg-mic-start",
+    "timestamp": 1774427000000,
+    "mic_start_resp": {
+        "session_id": "mic-sess-1",
+        "status": "STATUS_OK",
+        "actual_sample_rate_hz": 16000,
+        "actual_channels": 1,
+        "bits_per_sample": 16
+    }
+}
+""".data(using: .utf8)!
+let parsedMicStart = try! MicClient.parseMicStartResponse(data: micStartRespJSON)
+assertEqual(parsedMicStart.status, "STATUS_OK")
+assertEqual(parsedMicStart.actualSampleRateHz, 16000)
+
+let pcmSample = Data([0x01, 0x02, 0x03, 0x04])
+let micChunkJSON = """
+{
+    "schema_version": 1,
+    "message_id": "msg-mic-chunk-1",
+    "timestamp": 1774427000200,
+    "mic_chunk": {
+        "session_id": "mic-sess-1",
+        "chunk_number": 1,
+        "timestamp_ms": 1774427000200,
+        "data": "\(pcmSample.base64EncodedString())",
+        "sample_rate_hz": 16000,
+        "channels": 1,
+        "bits_per_sample": 16
+    }
+}
+""".data(using: .utf8)!
+let parsedMicChunk = try! MicClient.parseMicAudioChunk(data: micChunkJSON)
+assertEqual(parsedMicChunk.chunkNumber, 1)
+assertEqual(parsedMicChunk.pcmData, pcmSample)
+
+let micStopReq = try! MicClient.buildMicStopRequest(sessionId: "mic-sess-1", reason: "user_stopped")
+let micStopReqObj = try! JSONSerialization.jsonObject(with: micStopReq) as! [String: Any]
+assertEqual((micStopReqObj["mic_stop_req"] as! [String: Any])["reason"] as! String, "user_stopped")
+print("PASS: testMicRequestResponseAndChunkRoundTrip")
+
+// Test 50: MIC WAV Header & Finalization Patch
+let tempWavURL = FileManager.default.temporaryDirectory.appendingPathComponent("phonelink_test_\(UUID().uuidString).wav")
+defer { try? FileManager.default.removeItem(at: tempWavURL) }
+let wavWriter = try! MicWavWriter(url: tempWavURL, sampleRateHz: 16000, channels: 1, bitsPerSample: 16)
+let chunk1 = Data(repeating: 0x10, count: 6400)
+let chunk2 = Data(repeating: 0x20, count: 6400)
+try! wavWriter.append(pcmData: chunk1)
+try! wavWriter.append(pcmData: chunk2)
+let writtenPcmBytes = wavWriter.finalize()
+assertEqual(writtenPcmBytes, 12800)
+
+let wavBytes = try! Data(contentsOf: tempWavURL)
+assertEqual(wavBytes.count, 44 + 12800)
+assertEqual(String(data: wavBytes.subdata(in: 0..<4), encoding: .ascii), "RIFF")
+assertEqual(String(data: wavBytes.subdata(in: 8..<12), encoding: .ascii), "WAVE")
+let riffSize = wavBytes.subdata(in: 4..<8).withUnsafeBytes { $0.load(as: UInt32.self).littleEndian }
+let dataSize = wavBytes.subdata(in: 40..<44).withUnsafeBytes { $0.load(as: UInt32.self).littleEndian }
+assertEqual(riffSize, UInt32(36 + 12800))
+assertEqual(dataSize, UInt32(12800))
+print("PASS: testMicWavWriterHeaderAndFinalizationPatch")
+
+// Test 51: MIC PCM Int16 -> Float32 Conversion & Stream Control Stop Ordering
+let pcmPairs = Data([0x00, 0x80, 0x00, 0x00, 0xFF, 0x7F]) // -32768, 0, +32767
+let floats = MicLivePlayer.convertInt16PcmToFloat32(pcmPairs)
+assertEqual(floats.count, 3)
+assertTrue(abs(floats[0] - (-1.0)) < 0.0001)
+assertTrue(abs(floats[1] - 0.0) < 0.0001)
+assertTrue(abs(floats[2] - 0.9999695) < 0.001)
+
+final class FlagBox: @unchecked Sendable {
+    var reason: String? = nil
+}
+let box = FlagBox()
+let ctrl = MicStreamControl()
+ctrl.requestStop(reason: "early_interrupt")
+ctrl.attachStopHandler { r in box.reason = r }
+assertEqual(box.reason, "early_interrupt")
+print("PASS: testMicPcmToFloat32AndControlStopHandler")
+
+print(">>> ALL MAC CLIENT UNIT TESTS PASSED (51/51) <<<")
 exit(0)

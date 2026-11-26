@@ -4,6 +4,7 @@ package phonelink.app;
 
 import "file.proto";
 import "camera.proto";
+import "mic.proto";
 import "actions.proto";
 import "common.proto";
 
@@ -34,6 +35,13 @@ message ApplicationMessage {
     phonelink.camera.CameraStopRequest camera_stop_req = 22;
     phonelink.camera.CameraStopResponse camera_stop_resp = 23;
     phonelink.camera.CameraFrame camera_frame = 24;
+
+    // Microphone operations (owner-approved explicit opt-in)
+    phonelink.mic.MicStartRequest mic_start_req = 40;
+    phonelink.mic.MicStartResponse mic_start_resp = 41;
+    phonelink.mic.MicStopRequest mic_stop_req = 42;
+    phonelink.mic.MicStopResponse mic_stop_resp = 43;
+    phonelink.mic.MicAudioChunk mic_chunk = 44;
 
     // Scoped Remote Actions
     phonelink.actions.DevicePingRequest device_ping_req = 30;

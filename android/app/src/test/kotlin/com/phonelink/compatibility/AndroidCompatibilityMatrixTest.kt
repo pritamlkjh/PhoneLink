@@ -3,6 +3,7 @@ package com.phonelink.compatibility
 import com.phonelink.camera.CameraAuthorizationGate
 import com.phonelink.crypto.KeyManager
 import com.phonelink.crypto.SoftwareEcKeySigner
+import com.phonelink.mic.MicAuthorizationGate
 import com.phonelink.receiver.BootReceiver
 import com.phonelink.service.ConnectionForegroundService
 import com.phonelink.storage.SecureStorage
@@ -249,10 +250,13 @@ class AndroidCompatibilityMatrixTest {
                 val text = manifest.readText()
                 assertTrue(
                     text.contains("FOREGROUND_SERVICE_CONNECTED_DEVICE") &&
+                        text.contains("FOREGROUND_SERVICE_MICROPHONE") &&
+                        text.contains("android.permission.RECORD_AUDIO") &&
                         text.contains("connectedDevice") &&
                         text.contains("dataSync") &&
-                        text.contains("camera"),
-                    "Android 14+ devices require FOREGROUND_SERVICE_CONNECTED_DEVICE and foregroundServiceType connectedDevice|dataSync|camera"
+                        text.contains("camera") &&
+                        text.contains("microphone"),
+                    "Android 14+ devices require foregroundServiceType connectedDevice|dataSync|camera|microphone and RECORD_AUDIO"
                 )
             }
         }
@@ -315,6 +319,15 @@ class AndroidCompatibilityMatrixTest {
             osPermission = true
             gate.setInAppToggle(true)
             assertTrue(gate.isRemoteActivationPermitted(), "${device.model}: Both gates granted must be PERMITTED")
+
+            // Microphone dual-gate consistency across all OEM profiles
+            val micGate = MicAuthorizationGate(secureStorage, permissionChecker = { osPermission })
+            assertFalse(micGate.isRemoteActivationPermitted(), "${device.model}: Mic toggle must default OFF")
+            osPermission = false
+            micGate.setInAppToggle(true)
+            assertFalse(micGate.isRemoteActivationPermitted(), "${device.model}: Mic without RECORD_AUDIO must be DENIED")
+            osPermission = true
+            assertTrue(micGate.isRemoteActivationPermitted(), "${device.model}: Both mic gates granted must be PERMITTED")
         }
     }
 }

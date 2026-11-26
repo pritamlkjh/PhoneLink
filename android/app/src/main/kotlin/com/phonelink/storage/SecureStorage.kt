@@ -39,6 +39,7 @@ class SecureStorage(
         const val KEY_PAIRED_PUBLIC_KEY = "paired_public_key"
         const val KEY_RELAY_URL = "relay_url"
         const val KEY_CAMERA_ALLOWED = "camera_allowed_toggle" // Defaults to false
+        const val KEY_MIC_ALLOWED = "mic_allowed_toggle" // Defaults to false
         const val KEY_REMOTE_PING_ALLOWED = "remote_ping_allowed_toggle" // Defaults to true
         const val KEY_REMOTE_INFO_ALLOWED = "remote_info_allowed_toggle" // Defaults to true
         const val KEY_RESUMPTION_TOKEN = "resumption_token"
@@ -276,56 +277,50 @@ class SecureStorage(
         saveString(KEY_RELAY_URL, url)
     }
 
+    private fun getBooleanFlag(key: String, defaultValue: Boolean): Boolean {
+        val encrypted = preferences.getString(key, null) ?: return defaultValue
+        return try {
+            decrypt(encrypted).toBoolean()
+        } catch (_: Exception) {
+            defaultValue
+        }
+    }
+
+    private fun setBooleanFlag(key: String, allowed: Boolean) {
+        saveString(key, allowed.toString())
+    }
+
     /**
      * In-app Camera Authorization Gate (CAM-1 requirement).
      * Must default to FALSE.
      */
-    fun isCameraAllowed(): Boolean {
-        val encrypted = preferences.getString(KEY_CAMERA_ALLOWED, null) ?: return false
-        return try {
-            decrypt(encrypted).toBoolean()
-        } catch (e: Exception) {
-            false
-        }
-    }
+    fun isCameraAllowed(): Boolean = getBooleanFlag(KEY_CAMERA_ALLOWED, defaultValue = false)
 
-    fun setCameraAllowed(allowed: Boolean) {
-        saveString(KEY_CAMERA_ALLOWED, allowed.toString())
-    }
+    fun setCameraAllowed(allowed: Boolean) = setBooleanFlag(KEY_CAMERA_ALLOWED, allowed)
+
+    /**
+     * In-app Microphone Authorization Gate (owner-approved post-install opt-in).
+     * Must default to FALSE.
+     */
+    fun isMicAllowed(): Boolean = getBooleanFlag(KEY_MIC_ALLOWED, defaultValue = false)
+
+    fun setMicAllowed(allowed: Boolean) = setBooleanFlag(KEY_MIC_ALLOWED, allowed)
 
     /**
      * In-app Remote Ping Authorization Gate (FILE-5 requirement).
      * Defaults to TRUE.
      */
-    fun isRemotePingAllowed(): Boolean {
-        val encrypted = preferences.getString(KEY_REMOTE_PING_ALLOWED, null) ?: return true
-        return try {
-            decrypt(encrypted).toBoolean()
-        } catch (_: Exception) {
-            true
-        }
-    }
+    fun isRemotePingAllowed(): Boolean = getBooleanFlag(KEY_REMOTE_PING_ALLOWED, defaultValue = true)
 
-    fun setRemotePingAllowed(allowed: Boolean) {
-        saveString(KEY_REMOTE_PING_ALLOWED, allowed.toString())
-    }
+    fun setRemotePingAllowed(allowed: Boolean) = setBooleanFlag(KEY_REMOTE_PING_ALLOWED, allowed)
 
     /**
      * In-app Remote Info Authorization Gate (FILE-5 requirement).
      * Defaults to TRUE.
      */
-    fun isRemoteInfoAllowed(): Boolean {
-        val encrypted = preferences.getString(KEY_REMOTE_INFO_ALLOWED, null) ?: return true
-        return try {
-            decrypt(encrypted).toBoolean()
-        } catch (_: Exception) {
-            true
-        }
-    }
+    fun isRemoteInfoAllowed(): Boolean = getBooleanFlag(KEY_REMOTE_INFO_ALLOWED, defaultValue = true)
 
-    fun setRemoteInfoAllowed(allowed: Boolean) {
-        saveString(KEY_REMOTE_INFO_ALLOWED, allowed.toString())
-    }
+    fun setRemoteInfoAllowed(allowed: Boolean) = setBooleanFlag(KEY_REMOTE_INFO_ALLOWED, allowed)
 
     /**
      * Session Resumption Token Storage (AND-8 / VPS-6).

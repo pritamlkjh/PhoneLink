@@ -191,6 +191,24 @@
                     android:textColor="#757575"
                     android:layout_marginBottom="12dp" />
 
+                <!-- Remote Microphone Toggle -->
+                <com.google.android.material.switchmaterial.SwitchMaterial
+                    android:id="@+id/switchMic"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Allow Remote Microphone Access"
+                    android:textSize="14sp"
+                    android:textColor="#212121"
+                    android:layout_marginBottom="4dp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Off by default. When enabled, your paired Mac can listen to or record microphone audio."
+                    android:textSize="12sp"
+                    android:textColor="#757575"
+                    android:layout_marginBottom="12dp" />
+
                 <!-- Boot Auto-Start Toggle -->
                 <com.google.android.material.switchmaterial.SwitchMaterial
                     android:id="@+id/switchBoot"
@@ -224,6 +242,15 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="Grant Camera Permission"
+                    android:textAllCaps="false"
+                    android:textSize="13sp"
+                    style="@style/Widget.MaterialComponents.Button.TextButton" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnPermMic"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Grant Microphone Permission"
                     android:textAllCaps="false"
                     android:textSize="13sp"
                     style="@style/Widget.MaterialComponents.Button.TextButton" />

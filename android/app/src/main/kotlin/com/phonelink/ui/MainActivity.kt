@@ -36,6 +36,7 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val REQ_CODE_NOTIFICATIONS = 101
         private const val REQ_CODE_CAMERA = 102
+        private const val REQ_CODE_MIC = 103
     }
 
     private val executor = Executors.newSingleThreadExecutor()
@@ -52,9 +53,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnConnectPair: MaterialButton
     private lateinit var btnUnpair: MaterialButton
     private lateinit var switchCamera: SwitchMaterial
+    private lateinit var switchMic: SwitchMaterial
     private lateinit var switchBoot: SwitchMaterial
     private lateinit var btnPermNotification: MaterialButton
     private lateinit var btnPermCamera: MaterialButton
+    private lateinit var btnPermMic: MaterialButton
     private lateinit var btnPermBattery: MaterialButton
     private lateinit var btnSelectFolder: MaterialButton
 
@@ -119,9 +122,11 @@ class MainActivity : AppCompatActivity() {
         btnConnectPair = findViewById(R.id.btnConnectPair)
         btnUnpair = findViewById(R.id.btnUnpair)
         switchCamera = findViewById(R.id.switchCamera)
+        switchMic = findViewById(R.id.switchMic)
         switchBoot = findViewById(R.id.switchBoot)
         btnPermNotification = findViewById(R.id.btnPermNotification)
         btnPermCamera = findViewById(R.id.btnPermCamera)
+        btnPermMic = findViewById(R.id.btnPermMic)
         btnPermBattery = findViewById(R.id.btnPermBattery)
         btnSelectFolder = findViewById(R.id.btnSelectFolder)
 
@@ -132,6 +137,7 @@ class MainActivity : AppCompatActivity() {
         // Set initial field values
         etRelayUrl.setText(secureStorage.getRelayUrl())
         switchCamera.isChecked = secureStorage.isCameraAllowed()
+        switchMic.isChecked = secureStorage.isMicAllowed()
         switchBoot.isChecked = secureStorage.isAutoStartOnBoot()
     }
 
@@ -141,6 +147,14 @@ class MainActivity : AppCompatActivity() {
             secureStorage.setCameraAllowed(isChecked)
             if (isChecked && ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
                 ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), REQ_CODE_CAMERA)
+            }
+        }
+
+        // Microphone toggle
+        switchMic.setOnCheckedChangeListener { _, isChecked ->
+            secureStorage.setMicAllowed(isChecked)
+            if (isChecked && ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), REQ_CODE_MIC)
             }
         }
 
@@ -160,6 +174,10 @@ class MainActivity : AppCompatActivity() {
 
         btnPermCamera.setOnClickListener {
             ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), REQ_CODE_CAMERA)
+        }
+
+        btnPermMic.setOnClickListener {
+            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), REQ_CODE_MIC)
         }
 
         btnPermBattery.setOnClickListener {
@@ -210,6 +228,10 @@ class MainActivity : AppCompatActivity() {
         val hasCamera = ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
         btnPermCamera.text = if (hasCamera) "✓ Camera Permission (Granted)" else "Grant Camera Permission"
         btnPermCamera.isEnabled = !hasCamera
+
+        val hasMic = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+        btnPermMic.text = if (hasMic) "✓ Microphone Permission (Granted)" else "Grant Microphone Permission"
+        btnPermMic.isEnabled = !hasMic
 
         val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
         if (powerManager != null && powerManager.isIgnoringBatteryOptimizations(packageName)) {
@@ -357,6 +379,13 @@ class MainActivity : AppCompatActivity() {
                 switchCamera.isChecked = false
                 secureStorage.setCameraAllowed(false)
                 Toast.makeText(this, "Camera permission denied; remote camera toggle disabled", Toast.LENGTH_SHORT).show()
+            }
+        } else if (requestCode == REQ_CODE_MIC) {
+            val granted = grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED
+            if (!granted) {
+                switchMic.isChecked = false
+                secureStorage.setMicAllowed(false)
+                Toast.makeText(this, "Microphone permission denied; remote mic toggle disabled", Toast.LENGTH_SHORT).show()
             }
         }
     }

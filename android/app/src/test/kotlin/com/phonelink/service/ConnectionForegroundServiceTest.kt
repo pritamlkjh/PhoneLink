@@ -52,4 +52,30 @@ class ConnectionForegroundServiceTest {
         // Cleanup
         ConnectionForegroundService.peerStatusListener = null
     }
+
+    @Test
+    fun testForegroundNotificationTextAndCapabilityBitmask() {
+        assertEquals(
+            "Connected to VPS relay",
+            ConnectionForegroundService.computeForegroundNotificationText(cameraActive = false, micActive = false)
+        )
+        assertEquals(
+            "PhoneLink: Camera streaming active",
+            ConnectionForegroundService.computeForegroundNotificationText(cameraActive = true, micActive = false)
+        )
+        assertEquals(
+            "PhoneLink: Microphone streaming active",
+            ConnectionForegroundService.computeForegroundNotificationText(cameraActive = false, micActive = true)
+        )
+        assertEquals(
+            "PhoneLink: Camera & Microphone streaming",
+            ConnectionForegroundService.computeForegroundNotificationText(cameraActive = true, micActive = true)
+        )
+
+        val base = ConnectionForegroundService.computeForegroundServiceTypes(cameraActive = false, micActive = false)
+        val withCam = ConnectionForegroundService.computeForegroundServiceTypes(cameraActive = true, micActive = false)
+        val withMic = ConnectionForegroundService.computeForegroundServiceTypes(cameraActive = false, micActive = true)
+        val withBoth = ConnectionForegroundService.computeForegroundServiceTypes(cameraActive = true, micActive = true)
+        assertTrue(withCam != base && withMic != base && withBoth != withCam && withBoth != withMic)
+    }
 }

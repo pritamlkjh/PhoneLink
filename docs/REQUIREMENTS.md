@@ -37,6 +37,7 @@ The system enables the authorized owner to:
 | FS-10 | Device Revocation | Ability to revoke a paired device's access |
 | FS-11 | Secure Installation | Signed APK and packaged Mac release |
 | FS-12 | Scoped Remote Actions | A fixed, build-time allowlist of safe remote actions (no arbitrary commands) |
+| FS-13 | Remote Microphone Listening & Recording | Stream live encrypted PCM audio or save WAV recordings from the Android microphone with post-install dual-gate owner authorization |
 
 ### 2.2 Explicitly Out of Scope (Non-Goals)
 
@@ -45,12 +46,12 @@ The following are **not** part of the current project and must **not** be implem
 | ID | Non-Goal | Rationale |
 |----|----------|-----------|
 | NG-01 | Stealth or hidden operation | Violates consent-first design |
-| NG-02 | Silent camera activation | Requires dual-gate explicit auth |
+| NG-02 | Silent camera or mic activation | Requires dual-gate explicit auth |
 | NG-03 | Bypassing Android/macOS security | Binding constraint |
 | NG-04 | Arbitrary remote shell/command execution | Security risk; FILE-5 allowlist only |
 | NG-05 | Screen mirroring/sharing | Out of scope |
 | NG-06 | Clipboard synchronization | Out of scope |
-| NG-07 | Audio streaming | Out of scope |
+| NG-07 | Unconsented / background covert audio streaming | Out of scope; remote mic access (`FS-13`) strictly requires post-install dual-gate owner consent + foreground service indicator |
 | NG-08 | Automatic folder synchronization | Out of scope |
 | NG-09 | Multi-phone or multi-Mac support | Current scope is one pair |
 | NG-10 | Browser-based fallback client | Out of scope |
@@ -182,6 +183,17 @@ These are **binding constraints**, not aspirational goals. Each is stated as a t
 | Auto-deactivation on session end/timeout | Camera stops within 1 second of session termination |
 | Authorization enforced on Android, not by trusting Mac/VPS | Crafted raw protocol message cannot bypass the Android-side gates |
 
+### 6.3b Microphone Authorization (Dual-Gate)
+
+| Requirement | Test |
+|-------------|------|
+| Microphone is OFF by default | Fresh install: `Allow Remote Microphone Access` toggle is `OFF` |
+| Gate 1: Android OS runtime `RECORD_AUDIO` permission | Mic capture fails (`STATUS_MIC_PERMISSION_DENIED`) until owner grants runtime permission post-install |
+| Gate 2: Separate in-app opt-in toggle, defaults `OFF` | Mic capture fails (`STATUS_MIC_TOGGLE_DISABLED`) if toggle is `OFF`, even with OS permission |
+| No silent or remote activation | Remote start request never enables the in-app toggle |
+| Visible mic-use indicator | Android OS mic indicator + `FOREGROUND_SERVICE_MICROPHONE` ongoing notification active for entire stream |
+| Auto-deactivation on stop, disconnect, or max duration | `AudioRecord` stops & releases immediately on `mic_stop_req`, WebSocket disconnect, peer offline, or watchdog timeout |
+
 ### 6.4 File Access
 
 | Requirement | Test |
@@ -197,6 +209,7 @@ These are **binding constraints**, not aspirational goals. Each is stated as a t
 | Scenario | Required Structural Prevention |
 |----------|-------------------------------|
 | Hidden camera activation | Dual-gate auth + OS indicator + foreground service notification |
+| Hidden microphone activation | Post-install dual-gate auth + OS mic indicator + `FOREGROUND_SERVICE_MICROPHONE` notification |
 | Silent remote file access | Visible foreground-service notification whenever data flows |
 | Unapproved pairing | Explicit pairing ceremony required |
 | Authorization bypass via raw protocol messages | Authorization enforced on the Android device, not merely by client behavior |
@@ -351,6 +364,7 @@ Every requirement above traces to one or more DAG nodes:
 | E2E encryption | ARCH-2, AND-5, VPS-4, INT-1 |
 | File operations | FILE-1, FILE-2, FILE-3, FILE-4 |
 | Camera operations | CAM-1, CAM-2, CAM-3, CAM-4 |
+| Microphone operations | FS-13 (`mic.proto`, `MicCaptureModule`, `MicClient`) |
 | Scoped remote actions | FILE-5 |
 | Connection recovery | AND-8, VPS-6, MAC-3, INT-3 |
 | Device revocation | VPS-2, MAC-4 |

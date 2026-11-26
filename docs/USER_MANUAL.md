@@ -33,6 +33,8 @@ phonelink <subcommand> [options] [arguments]
 | `files put` | Uploads a local file to an Android directory (`remote_directory`) | `phonelink files put ./photo.jpg Downloads` |
 | `camera view` | Captures live JPEG frames and renders terminal ASCII preview | `phonelink camera view --fps 2 --duration 10` |
 | `camera stream` | Streams encrypted JPEG frames to stdout / `--save <dir>` without UI | `phonelink camera stream --save ./frames --max-frames 30` |
+| `mic listen` | Streams live encrypted Android microphone audio to Mac speakers (with optional `--save <file.wav>`) | `phonelink mic listen --duration 15 --vps https://relay.example.com` |
+| `mic record` | Records Android microphone audio directly to a WAV file on Mac | `phonelink mic record --save ./recording.wav --duration 30` |
 | `revoke` | Immediately revokes the paired Android device (or `--self --confirm`) | `phonelink revoke --vps https://relay.example.com` |
 | `wipe` | Wipes local Keychain identity credentials and generates a new keypair | `phonelink wipe --confirm` |
 | `install-phone` | Prints `/install` URL or starts `--local` Wi-Fi QR OTA installer | `phonelink install-phone --local` |
@@ -82,6 +84,27 @@ phonelink camera view --lens back --fps 2 --duration 10 --vps https://relay.exam
 
 ---
 
+### B2. Remote Microphone Listening & Recording (`FS-13`)
+
+#### Post-Install Requirements (Dual-Gate Owner Consent)
+1. Install PhoneLink on Android, open it, and tap **Grant Microphone Permission** (`RECORD_AUDIO`).
+2. Switch **Allow Remote Microphone Access** to **ON** in the PhoneLink app (always defaults to **OFF** after install).
+3. Keep the persistent foreground notification active.
+
+#### Live Listen or WAV Recording
+```bash
+# Listen live over Mac speakers (default 16 kHz mono PCM, 15s timeout):
+phonelink mic listen --duration 15 --vps https://relay.example.com
+
+# Record directly to a WAV file without speaker playback:
+phonelink mic record --save ./voice_note.wav --rate 16000 --duration 30 --vps https://relay.example.com
+```
+- Supports `--rate <8000-48000>`, `--duration <1-300>`, `--max-chunks <n>`, `--save <file.wav>`, `--no-play`, and `--json`.
+- While streaming, Android shows the microphone notification (`FOREGROUND_SERVICE_MICROPHONE`) and OS privacy dot.
+- Pressing `Ctrl+C` (or waiting for `--duration` / `--max-chunks` completion) sends `mic_stop_req`, releases Android's `AudioRecord` hardware immediately, and finalizes the 44-byte WAV RIFF header cleanly.
+
+---
+
 ### C. Finding a Misplaced Device (`FILE-5`)
 
 If your phone is lost nearby:
@@ -114,6 +137,7 @@ phonelink revoke --self --confirm --vps https://relay.example.com
 - **VPS Relay Server URL:** Supports `https://...`, `wss://...`, `http://...`, or `host:port` (normalized safely).
 - **8-Character Pairing Code:** Enter the 8-character short code (or full token) printed by `phonelink pair` and tap **Connect & Pair**.
 - **Remote Camera Access Toggle:** Master opt-in switch; always defaults to **OFF**.
+- **Allow Remote Microphone Access Toggle & Grant Microphone Permission Button:** Owner-controlled post-install dual gate for remote microphone streaming; toggle always defaults to **OFF**.
 - **Select Shared Folder (SAF):** Optionally grant Storage Access Framework (`ACTION_OPEN_DOCUMENT_TREE`) access to a user-chosen folder (such as Downloads or Documents) in addition to app-scoped external storage.
 - **Notification Permission & Background Access:** Grant Notification permission and adjust OEM battery optimization in App Info settings so Android preserves the foreground connection.
 
@@ -128,6 +152,10 @@ phonelink revoke --self --confirm --vps https://relay.example.com
 ### Problem 2: Camera preview fails with camera permission/toggle denied
 - Grant the Android Camera runtime permission when prompted.
 - Turn **Remote Camera Access** ON inside the Android PhoneLink app.
+
+### Problem 2b: Microphone stream fails with mic permission/toggle denied
+- Open PhoneLink on Android and tap **Grant Microphone Permission** (`RECORD_AUDIO`).
+- Switch **Allow Remote Microphone Access** to **ON** inside the PhoneLink Android app.
 
 ### Problem 3: Reconnection after Wi-Fi / cellular handoff
 - PhoneLink uses full-jitter exponential backoff (`ReconnectionManager` on Android, `ConnectionManager` on Mac) and single-use session resumption tokens (`POST /api/v1/auth/resume`).

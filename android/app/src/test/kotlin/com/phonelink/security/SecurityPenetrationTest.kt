@@ -7,6 +7,9 @@ import com.phonelink.camera.CameraCaptureModuleTest
 import com.phonelink.files.FileOperationHandler
 import com.phonelink.files.StorageAccessLayer
 import com.phonelink.identity.InMemorySharedPreferences
+import com.phonelink.mic.MicAuthorizationGate
+import com.phonelink.mic.MicCaptureModule
+import com.phonelink.mic.MicCaptureModuleTest
 import com.phonelink.storage.SecureStorage
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -39,6 +42,10 @@ class SecurityPenetrationTest {
     private lateinit var testCameraSource: CameraCaptureModuleTest.TestCameraSource
     private lateinit var testServiceController: CameraCaptureModuleTest.TestServiceController
     private lateinit var cameraModule: CameraCaptureModule
+    private lateinit var micAuthGate: MicAuthorizationGate
+    private lateinit var testMicSource: MicCaptureModuleTest.TestMicSource
+    private lateinit var testMicServiceController: MicCaptureModuleTest.TestServiceController
+    private lateinit var micModule: MicCaptureModule
 
     private lateinit var scopedRootDir: File
     private lateinit var storageLayer: StorageAccessLayer
@@ -63,6 +70,18 @@ class SecurityPenetrationTest {
             cameraAuthGate = authGate,
             cameraSource = testCameraSource,
             serviceController = testServiceController
+        )
+
+        micAuthGate = MicAuthorizationGate(
+            secureStorage = storage,
+            permissionChecker = { osPermissionGranted }
+        )
+        testMicSource = MicCaptureModuleTest.TestMicSource()
+        testMicServiceController = MicCaptureModuleTest.TestServiceController()
+        micModule = MicCaptureModule(
+            micAuthGate = micAuthGate,
+            micSource = testMicSource,
+            serviceController = testMicServiceController
         )
 
         scopedRootDir = tempFolder.newFolder("PhoneLinkDownload")
@@ -128,6 +147,57 @@ class SecurityPenetrationTest {
         )
         assertFalse("Camera hardware must NOT be capturing", testCameraSource.capturing.get())
         assertFalse("Module must not report active capturing", cameraModule.isCapturing())
+    }
+
+    @Test
+    fun testRawMicStartRejectedWhenUserToggleDisabled() {
+        osPermissionGranted = true
+        micAuthGate.setInAppToggle(false)
+
+        val rawPayload = JSONObject().apply {
+            put("mic_start_req", JSONObject().apply {
+                put("session_id", "pen-mic-01")
+                put("sample_rate_hz", 16000)
+                put("bypass_auth", true)
+            })
+        }.toString().toByteArray(Charsets.UTF_8)
+
+        val responseBytes = micModule.processApplicationMessage(rawPayload)
+        assertNotNull("Must return response", responseBytes)
+
+        val startResp = JSONObject(String(responseBytes!!, Charsets.UTF_8)).getJSONObject("mic_start_resp")
+        assertEquals(
+            "Must reject with STATUS_MIC_TOGGLE_DISABLED",
+            MicCaptureModule.STATUS_MIC_TOGGLE_DISABLED,
+            startResp.getString("status")
+        )
+        assertFalse("Microphone hardware must NOT be capturing", testMicSource.capturing.get())
+        assertFalse("Module must not report active capturing", micModule.isCapturing())
+    }
+
+    @Test
+    fun testRawMicStartRejectedWhenOsPermissionDenied() {
+        osPermissionGranted = false
+        micAuthGate.setInAppToggle(true)
+
+        val rawPayload = JSONObject().apply {
+            put("mic_start_req", JSONObject().apply {
+                put("session_id", "pen-mic-02")
+                put("sample_rate_hz", 16000)
+            })
+        }.toString().toByteArray(Charsets.UTF_8)
+
+        val responseBytes = micModule.processApplicationMessage(rawPayload)
+        assertNotNull("Must return response", responseBytes)
+
+        val startResp = JSONObject(String(responseBytes!!, Charsets.UTF_8)).getJSONObject("mic_start_resp")
+        assertEquals(
+            "Must reject with STATUS_MIC_PERMISSION_DENIED",
+            MicCaptureModule.STATUS_MIC_PERMISSION_DENIED,
+            startResp.getString("status")
+        )
+        assertFalse("Microphone hardware must NOT be capturing", testMicSource.capturing.get())
+        assertFalse("Module must not report active capturing", micModule.isCapturing())
     }
 
     // --- PEN-TEST 2: T-09 / DC-07 File System Scope & Path Traversal Bypass Attempts ---

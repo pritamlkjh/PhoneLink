@@ -88,5 +88,39 @@ protoc -I"$SCHEMA_DIR" --decode=phonelink.app.ApplicationMessage "$SCHEMA_DIR/ap
 diff -u "$TMP_DIR/app_input.txtpb" "$TMP_DIR/app_output.txtpb"
 echo "PASS: ApplicationMessage round-trip verified."
 
+echo "=== 6. Testing MicAudioChunk & Mic ApplicationMessage round-trip ==="
+cat << 'EOF' > "$TMP_DIR/mic_input.txtpb"
+session_id: "mic_sess_12345"
+chunk_number: 1
+timestamp_ms: 1774422004000
+pcm_data: "\001\002\003\004"
+sample_rate_hz: 16000
+channels: 1
+bits_per_sample: 16
+EOF
+
+protoc -I"$SCHEMA_DIR" --encode=phonelink.mic.MicAudioChunk "$SCHEMA_DIR/mic.proto" < "$TMP_DIR/mic_input.txtpb" > "$TMP_DIR/mic.bin"
+protoc -I"$SCHEMA_DIR" --decode=phonelink.mic.MicAudioChunk "$SCHEMA_DIR/mic.proto" < "$TMP_DIR/mic.bin" > "$TMP_DIR/mic_output.txtpb"
+
+diff -u "$TMP_DIR/mic_input.txtpb" "$TMP_DIR/mic_output.txtpb"
+
+cat << 'EOF' > "$TMP_DIR/app_mic_input.txtpb"
+schema_version: 1
+message_id: "msg_mic_001"
+timestamp: 1774422004100
+mic_start_req {
+  session_id: "mic_sess_12345"
+  sample_rate_hz: 16000
+  channels: 1
+  chunk_duration_ms: 200
+}
+EOF
+
+protoc -I"$SCHEMA_DIR" --encode=phonelink.app.ApplicationMessage "$SCHEMA_DIR/app.proto" < "$TMP_DIR/app_mic_input.txtpb" > "$TMP_DIR/app_mic.bin"
+protoc -I"$SCHEMA_DIR" --decode=phonelink.app.ApplicationMessage "$SCHEMA_DIR/app.proto" < "$TMP_DIR/app_mic.bin" > "$TMP_DIR/app_mic_output.txtpb"
+
+diff -u "$TMP_DIR/app_mic_input.txtpb" "$TMP_DIR/app_mic_output.txtpb"
+echo "PASS: MicAudioChunk & ApplicationMessage mic_start_req round-trip verified."
+
 echo ""
 echo ">>> ALL ARCH-3 SCHEMA ROUND-TRIP TESTS PASSED! <<<"

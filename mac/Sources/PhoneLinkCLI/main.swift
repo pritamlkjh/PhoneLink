@@ -39,6 +39,7 @@ func printUsage() {
       wipe          Wipe stored credentials and reset Mac device identity
       files         Browse and transfer files (FILE-2, FILE-3, FILE-4)
       camera        Live camera streaming and capture (CAM-3, CAM-4)
+      mic           Live microphone listening and WAV recording (owner opt-in)
       install-phone 1-tap OTA phone installation URL & local Wi-Fi QR server
       version       Show PhoneLink version information
       help          Show help information
@@ -1055,6 +1056,248 @@ func handleCamera(args: [String], identity: DeviceIdentityManager, client: AuthC
     }
 }
 
+// MARK: - Microphone Audio Stream & Recorder Command
+
+private final class MicOutputCoordinator: @unchecked Sendable {
+    private let lock = NSLock()
+    private let saveURL: URL?
+    private let enablePlayback: Bool
+    private var wavWriter: MicWavWriter? = nil
+    private var livePlayer: MicLivePlayer? = nil
+
+    init(saveURL: URL?, enablePlayback: Bool) {
+        self.saveURL = saveURL
+        self.enablePlayback = enablePlayback
+    }
+
+    func configure(sampleRateHz: UInt32, channels: UInt32, bitsPerSample: UInt32) -> (wavError: String?, playbackWarning: String?) {
+        lock.withLock {
+            var wavErr: String? = nil
+            var playWarn: String? = nil
+
+            if let url = saveURL {
+                do {
+                    wavWriter = try MicWavWriter(
+                        url: url,
+                        sampleRateHz: sampleRateHz,
+                        channels: UInt16(max(1, channels)),
+                        bitsPerSample: UInt16(max(8, bitsPerSample))
+                    )
+                } catch {
+                    wavErr = error.localizedDescription
+                }
+            }
+
+            if enablePlayback {
+                let player = MicLivePlayer(sampleRateHz: sampleRateHz, channels: channels)
+                if let warn = player.startupErrorMessage {
+                    playWarn = warn
+                }
+                if player.isAvailable {
+                    livePlayer = player
+                }
+            }
+            return (wavErr, playWarn)
+        }
+    }
+
+    func writeAndPlay(pcmData: Data) {
+        let (writer, player) = lock.withLock { (wavWriter, livePlayer) }
+        try? writer?.append(pcmData: pcmData)
+        player?.enqueue(pcmData: pcmData)
+    }
+
+    @discardableResult
+    func finishAll() -> UInt64 {
+        let (writer, player) = lock.withLock {
+            let w = wavWriter
+            let p = livePlayer
+            wavWriter = nil
+            livePlayer = nil
+            return (w, p)
+        }
+        player?.stop()
+        return writer?.finalize() ?? 0
+    }
+}
+
+func handleMic(args: [String], identity: DeviceIdentityManager, client: AuthClient) async {
+    let isJSON = parseFlag("--json", in: args)
+    let isHelp = parseFlag("-h", in: args) || parseFlag("--help", in: args)
+
+    if isHelp {
+        print("""
+        Usage: phonelink mic [listen|record] [options]
+
+        Stream live encrypted PCM audio from paired Android phone microphone or save to WAV.
+
+        COMMANDS:
+          listen                Stream live audio to Mac speakers (default; supports --save)
+          record                Save audio directly to a WAV file without speaker playback
+
+        OPTIONS:
+          --rate <8000-48000>   Target sample rate in Hz (default: 16000)
+          --duration <sec>      Maximum streaming duration in seconds (default: 15, max: 300)
+          --max-chunks <n>      Stop after receiving n audio chunks
+          --save <file.wav>     Save audio stream to a WAV file
+          --no-play             Disable live Mac speaker playback in listen mode
+          --vps <url>           VPS relay URL override
+          --tls-pin <hash>      Require SHA-256 SPKI pin on HTTPS/WSS connections
+          --json                Output stream summary as JSON
+        """)
+        exit(0)
+    }
+
+    let positional = parsePositionalArgs(in: args, valuedOptions: ["--rate", "--duration", "--max-chunks", "--save", "--vps", "--tls-pin"])
+    let mode = positional.first?.lowercased() ?? "listen"
+    if mode != "listen" && mode != "record" {
+        fputs("ERROR: Unknown mic mode '\(mode)'. Expected 'listen' or 'record'. Run 'phonelink mic --help'.\n", stderr)
+        exit(2)
+    }
+
+    let isRecordMode = (mode == "record")
+    let enablePlayback = !isRecordMode && !parseFlag("--no-play", in: args)
+
+    let vpsStr = parseOption("--vps", in: args) ?? Config.defaultRelayURL
+    guard let vpsURL = URL(string: vpsStr) else {
+        fputs("ERROR: Invalid VPS relay URL: \(vpsStr)\n", stderr)
+        exit(2)
+    }
+
+    let requestedRate = UInt32(parseOption("--rate", in: args) ?? "16000") ?? 16000
+    let sampleRateHz = min(max(requestedRate, 8000), 48000)
+
+    let rawDuration = Double(parseOption("--duration", in: args) ?? "15.0") ?? 15.0
+    let durationSeconds = min(max(rawDuration, 1.0), 300.0)
+
+    var maxChunks: UInt64? = nil
+    if let mcStr = parseOption("--max-chunks", in: args), let mcVal = UInt64(mcStr) {
+        maxChunks = mcVal
+    }
+
+    var saveURL: URL? = nil
+    if let saveOpt = parseOption("--save", in: args), !saveOpt.isEmpty {
+        saveURL = URL(fileURLWithPath: (saveOpt as NSString).expandingTildeInPath)
+    } else if isRecordMode {
+        let ts = Int(Date().timeIntervalSince1970)
+        saveURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("phonelink_mic_\(ts).wav")
+    }
+
+    let output = MicOutputCoordinator(saveURL: saveURL, enablePlayback: enablePlayback)
+    let control = MicStreamControl()
+
+    // Ensure Ctrl+C stops Android mic cleanly and finalizes WAV RIFF header
+    signal(SIGINT, SIG_IGN)
+    let sigintSource = DispatchSource.makeSignalSource(signal: SIGINT, queue: .global())
+    sigintSource.setEventHandler {
+        control.requestStop(reason: "user_interrupted")
+    }
+    sigintSource.resume()
+    defer {
+        sigintSource.cancel()
+        signal(SIGINT, SIG_DFL)
+    }
+
+    if !isJSON {
+        print("PhoneLink Remote Microphone (\(mode.uppercased()))")
+        print("--------------------------------------------------")
+        if let path = saveURL?.path {
+            print("Recording WAV: \(path)")
+        }
+        print("Live Playback: \(enablePlayback ? "Enabled (Mac Speakers)" : "Disabled")")
+    }
+
+    do {
+        let summary = try await MicClient.streamMic(
+            vpsBaseURL: vpsURL,
+            identity: identity,
+            client: client,
+            sampleRateHz: sampleRateHz,
+            channels: 1,
+            chunkDurationMs: 200,
+            maxDurationSeconds: durationSeconds,
+            maxChunks: maxChunks,
+            control: control,
+            onStarted: { startResp in
+                let result = output.configure(
+                    sampleRateHz: startResp.actualSampleRateHz > 0 ? startResp.actualSampleRateHz : sampleRateHz,
+                    channels: startResp.actualChannels > 0 ? startResp.actualChannels : 1,
+                    bitsPerSample: startResp.bitsPerSample > 0 ? startResp.bitsPerSample : 16
+                )
+                if let wavErr = result.wavError {
+                    fputs("WARN: Failed to initialize WAV output: \(wavErr)\n", stderr)
+                }
+                if let playWarn = result.playbackWarning, enablePlayback && !isJSON {
+                    fputs("WARN: Audio playback unavailable (\(playWarn)); continuing stream without speaker output.\n", stderr)
+                }
+            },
+            onChunk: { chunk, stats in
+                output.writeAndPlay(pcmData: chunk.pcmData)
+                if !isJSON {
+                    let kb = Double(stats.bytesReceived) / 1024.0
+                    let line = String(
+                        format: "\r\u{001B}[K● LIVE MIC | Chunk #%llu | %.1f KB | Rate: %.1f kbps | Latency: %lld ms (Ctrl+C to stop)",
+                        stats.chunksReceived, kb, stats.rateKbps, stats.lastLatencyMs
+                    )
+                    fputs(line, stdout)
+                    fflush(stdout)
+                }
+            },
+            onStatusChange: { status in
+                if !isJSON {
+                    print("\n>> \(status)")
+                }
+            }
+        )
+
+        let wavBytes = output.finishAll()
+
+        if isJSON {
+            var dict: [String: Any] = [
+                "status": "OK",
+                "session_id": summary.sessionId,
+                "total_chunks": summary.totalChunks,
+                "dropped_chunks": summary.droppedChunks,
+                "total_bytes": summary.totalBytes,
+                "sample_rate_hz": summary.actualSampleRateHz,
+                "channels": summary.actualChannels,
+                "bits_per_sample": summary.bitsPerSample,
+                "average_latency_ms": summary.averageLatencyMs,
+                "duration_seconds": summary.durationSeconds,
+                "stop_reason": summary.stopReason
+            ]
+            if let path = saveURL?.path {
+                dict["saved_wav_path"] = path
+                dict["saved_pcm_bytes"] = wavBytes
+            }
+            printJSON(dict)
+        } else {
+            print("\n--------------------------------------------------")
+            print("Microphone stream stopped (\(summary.stopReason)).")
+            print("Format:          \(summary.actualSampleRateHz) Hz mono, \(summary.bitsPerSample)-bit PCM")
+            print("Chunks Received: \(summary.totalChunks) (dropped: \(summary.droppedChunks))")
+            print("Audio Received:  \(FileClient.formatByteSize(summary.totalBytes))")
+            print(String(format: "Average Latency: %.1f ms | Duration: %.2f s", summary.averageLatencyMs, summary.durationSeconds))
+            if let path = saveURL?.path {
+                print("Saved WAV File:  \(path)")
+            }
+        }
+        exit(0)
+    } catch {
+        _ = output.finishAll()
+        if isJSON {
+            printJSON([
+                "status": "ERROR",
+                "error": error.localizedDescription
+            ])
+        } else {
+            fputs("\nERROR: \(error.localizedDescription)\n", stderr)
+        }
+        exit(1)
+    }
+}
+
 func resolveInstallerScriptPath() -> String? {
     var candidates: [String] = [
         "./scripts/serve_phone_installer.py",
@@ -1203,6 +1446,9 @@ case "files":
 
 case "camera":
     await handleCamera(args: subArgs, identity: identity, client: client)
+
+case "mic":
+    await handleMic(args: subArgs, identity: identity, client: client)
 
 case "install", "install-phone":
     handleInstallPhone(args: subArgs)

@@ -67,6 +67,17 @@ class SecureStorageTest {
     }
 
     @Test
+    fun testMicAllowedDefaultsToFalse() {
+        assertFalse(storage.isMicAllowed(), "Microphone toggle MUST default to false on fresh install")
+
+        storage.setMicAllowed(true)
+        assertTrue(storage.isMicAllowed(), "Microphone toggle should be true after explicit enablement")
+
+        storage.setMicAllowed(false)
+        assertFalse(storage.isMicAllowed(), "Microphone toggle should be false after explicit disablement")
+    }
+
+    @Test
     fun testRelayUrlDefaultAndCustom() {
         assertEquals(SecureStorage.DEFAULT_RELAY_URL, storage.getRelayUrl())
 

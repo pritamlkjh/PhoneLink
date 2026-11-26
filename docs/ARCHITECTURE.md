@@ -116,6 +116,9 @@ android/
 │       │   ├── camera/                       # CAM-1/CAM-2: Camera
 │       │   │   ├── CameraAuthorizationGate.kt
 │       │   │   └── CameraCaptureModule.kt
+│       │   ├── mic/                          # FS-13: Remote Microphone
+│       │   │   ├── MicAuthorizationGate.kt
+│       │   │   └── MicCaptureModule.kt
 │       │   ├── actions/                      # FILE-5: Scoped actions
 │       │   │   └── RemoteActionRegistry.kt
 │       │   └── ui/                           # Minimal UI
@@ -143,6 +146,8 @@ mac/
 │       ├── E2EEncryptionManager.swift       # X25519 + HKDF + AES-256-GCM + AAD
 │       ├── E2ESessionHelper.swift           # Authenticated E2E session transport
 │       ├── FileClient.swift                 # FILE-2/3/4: Listing, chunked download & upload
+│       ├── MicAudioEngine.swift             # FS-13: WAV writer & AVAudioEngine playback
+│       ├── MicClient.swift                  # FS-13: Remote microphone stream client
 │       └── ReplayProtection.swift         # SEC-1: Replay protection filter
 ├── Tests/
 │   └── PhoneLinkTests/
@@ -276,6 +281,33 @@ Mac CLI                          VPS Relay                        Android
    │                              │               11. Remove FG svc │
 ```
 
+### 4.3b Microphone Streaming Flow
+
+```
+Mac CLI                          VPS Relay                        Android
+   │                              │                                │
+   │  1. mic_start_req            │                                │
+   │  (E2E encrypted)            │  2. Forward                    │
+   │─────────────────────────────►│───────────────────────────────►│
+   │                              │                                │
+   │                              │             3. Check dual-gate auth
+   │                              │             4. If authorized:
+   │                              │                Elevate FGS_MICROPHONE
+   │                              │                Start AudioRecord PCM
+   │  5. mic_start_resp           │  6. Forward                    │
+   │  (accepted/denied + rate)   │◄───────────────────────────────│
+   │◄─────────────────────────────│                                │
+   │                              │                                │
+   │  7. mic_chunk (200ms 16-bit PCM, E2E encrypted)              │
+   │◄═════════════════════════════╪════════════════════════════════│
+   │  8. Play audio / write WAV   │   (VPS sees ciphertext only)   │
+   │                              │                                │
+   │  9. mic_stop_req (or Ctrl+C / offline)                       │
+   │─────────────────────────────►│───────────────────────────────►│
+   │                              │               10. Release mic   │
+   │                              │               11. Revert FGS    │
+```
+
 ---
 
 ## 5. Trust Boundaries
@@ -288,7 +320,7 @@ Mac CLI                          VPS Relay                        Android
 │  │  ───────────────│                          │  ───────────────│     │
 │  │  • Private keys  │                          │  • Private keys │     │
 │  │  • Plaintext data│                          │  • Plaintext    │     │
-│  │  • Camera access │                          │  • File storage │     │
+│  │  • Camera/Mic    │                          │  • File storage │     │
 │  │  • Auth decisions│                          │  • CLI commands │     │
 │  └────────┬─────────┘                          └────────┬────────┘     │
 └───────────┼──────────────────────────────────────────────┼─────────────┘
@@ -299,7 +331,7 @@ Mac CLI                          VPS Relay                        Android
 │  │                      VPS Relay                             │        │
 │  │  ─────────────────────────────────────────────────────────│        │
 │  │  CAN see:  device IDs, connection times, message sizes    │        │
-│  │  CANNOT see:  file contents, camera frames, app payloads  │        │
+│  │  CANNOT see:  file contents, camera frames, mic PCM audio │        │
 │  │  CANNOT do:  decrypt E2E payloads, forge auth, store data │        │
 │  └────────────────────────────────────────────────────────────┘        │
 └───────────────────────────────────────────────────────────────────────┘
@@ -317,6 +349,7 @@ Mac CLI                          VPS Relay                        Android
 | FS-04 Device Status | VPS presence tracking | VPS-3, INT-2 |
 | FS-05/06/07 Files | SAF/MediaStore + E2E chunks | FILE-1–4 |
 | FS-08 Camera | CameraX + JPEG frames | CAM-1–4 |
+| FS-13 Microphone | AudioRecord + 16-bit PCM + AVAudioEngine/WAV | mic.proto, MicCaptureModule, MicClient |
 | FS-09 Recovery | Resumption tokens + backoff | AND-8, VPS-6, INT-3 |
 | FS-10 Revocation | VPS registry removal | VPS-2, MAC-4 |
 | FS-12 Scoped Actions | Fixed allowlist in RemoteActionRegistry | FILE-5 |

@@ -58,7 +58,7 @@ Production messages between Android, macOS, and the VPS relay are exchanged as *
 ---
 
 ### 2.3 Application Layer (Mac $\leftrightarrow$ Android, End-to-End Encrypted)
-*Source schema: `shared/schema/app.proto`, `file.proto`, `camera.proto`, `actions.proto`*
+*Source schema: `shared/schema/app.proto`, `file.proto`, `camera.proto`, `mic.proto`, `actions.proto`*
 
 #### A. File Operations
 1. **Directory Listing:**
@@ -90,6 +90,22 @@ Production messages between Android, macOS, and the VPS relay are exchanged as *
    - Request: `CameraStopRequest(session_id, reason)`
    - Response: `CameraStopResponse(status)`
    - Causes immediate camera release and foreground camera service termination.
+
+#### B2. Microphone Operations
+1. **Microphone Start:**
+   - Request: `MicStartRequest(session_id, sample_rate_hz, channels, chunk_duration_ms)`
+   - Response: `MicStartResponse(session_id, status, error_message, actual_sample_rate_hz, actual_channels, bits_per_sample)`
+   - **Preconditions on Android (Post-Install Dual-Gate):**
+     - Runtime `RECORD_AUDIO` permission must be granted.
+     - App-level **Allow Remote Microphone Access** toggle must be explicitly `ON`.
+     - Foreground service elevates to `FOREGROUND_SERVICE_MICROPHONE` displaying active microphone notification + OS indicator.
+2. **Audio Chunk Streaming:**
+   - Stream: `repeated MicAudioChunk(session_id, chunk_number, timestamp_ms, pcm_data, sample_rate_hz, channels, bits_per_sample)`
+   - Format: Mono (`channels=1`), 16-bit signed linear little-endian PCM, `8000–48000 Hz` (default `16000 Hz`, `200 ms` chunks).
+3. **Microphone Stop:**
+   - Request: `MicStopRequest(session_id, reason)`
+   - Response: `MicStopResponse(session_id, status, error_message)`
+   - Immediately stops & releases `AudioRecord` and clears microphone foreground service state.
 
 #### C. Scoped Remote Actions
 1. **Device Ping (`device.ping`):**
@@ -184,3 +200,5 @@ Production messages between Android, macOS, and the VPS relay are exchanged as *
 | `STATUS_STORAGE_ACCESS_DENIED` | 12 | Target file path outside scoped storage | Disallow operation; security violation logged |
 | `STATUS_INTEGRITY_MISMATCH` | 13 | File chunk SHA-256 does not match | Re-request chunk |
 | `STATUS_ACTION_NOT_PERMITTED` | 14 | Remote action not in fixed allowlist | Reject immediately |
+| `STATUS_MIC_PERMISSION_DENIED` | 15 | Android OS `RECORD_AUDIO` permission missing | Prompt owner to tap **Grant Microphone Permission** in Android app |
+| `STATUS_MIC_TOGGLE_DISABLED` | 16 | In-app microphone toggle is OFF on Android | Prompt owner to switch **Allow Remote Microphone Access** ON in Android app |
