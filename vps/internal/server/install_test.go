@@ -37,9 +37,6 @@ func TestHandleInstallPage(t *testing.T) {
 }
 
 func TestHandleDownloadApk(t *testing.T) {
-	cfg := DefaultConfig()
-	s := NewServer(cfg, nil)
-
 	// Create a dummy APK file in a temporary location
 	tmpDir := t.TempDir()
 	dummyApk := filepath.Join(tmpDir, "PhoneLink.apk")
@@ -47,9 +44,9 @@ func TestHandleDownloadApk(t *testing.T) {
 		t.Fatalf("failed to write dummy APK: %v", err)
 	}
 
-	origDir, _ := os.Getwd()
-	_ = os.Chdir(tmpDir)
-	defer func() { _ = os.Chdir(origDir) }()
+	cfg := DefaultConfig()
+	cfg.APKSearchPaths = []string{dummyApk}
+	s := NewServer(cfg, nil)
 
 	req := httptest.NewRequest("GET", "/download/PhoneLink.apk", nil)
 	rec := httptest.NewRecorder()

@@ -124,3 +124,39 @@ func (r *largeZeroReader) Read(p []byte) (n int, err error) {
 	}
 	return int(toRead), nil
 }
+
+func TestRateLimiterIPv6AndStop(t *testing.T) {
+	if got := ExtractClientIP("[::1]:54321"); got != "::1" {
+		t.Fatalf("expected IPv6 host ::1, got %q", got)
+	}
+	if got := ExtractClientIP("203.0.113.5:8080"); got != "203.0.113.5" {
+		t.Fatalf("expected IPv4 host 203.0.113.5, got %q", got)
+	}
+
+	rl := NewRateLimiter(2, 150*time.Millisecond)
+	defer rl.Stop()
+	handler := rl.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest(http.MethodGet, "/ok", nil)
+		req.RemoteAddr = "[::1]:4242"
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 on request %d, got %d", i+1, rec.Code)
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/ok", nil)
+	req.RemoteAddr = "[::1]:4243"
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 on 3rd IPv6 request, got %d", rec.Code)
+	}
+
+	rl.Stop()
+	rl.Stop() // Idempotent stop must not panic
+}

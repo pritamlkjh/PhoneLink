@@ -151,18 +151,15 @@ class NetworkTransport(
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                if (activeWebSocket !== webSocket && activeWebSocket != null) {
+                    return
+                }
                 activeWebSocket = null
-                val isRecoverable = currentRetryAttempt < config.maxRetryAttempts
-
-                setState(ConnectionState.Error(t, isRecoverable))
-                listeners.forEach { it.onError(t) }
-
-                if (isRecoverable && activeUrl != null) {
-                    currentRetryAttempt++
-                    val delay = config.retryBackoffBaseMillis * (1L shl (currentRetryAttempt - 1))
-                    setState(ConnectionState.Reconnecting(currentRetryAttempt, config.maxRetryAttempts, delay))
-                } else {
-                    setState(ConnectionState.Disconnected)
+                setState(ConnectionState.Error(t, isRecoverable = true))
+                listeners.forEach { listener ->
+                    try {
+                        listener.onError(t)
+                    } catch (_: Throwable) {}
                 }
             }
         })

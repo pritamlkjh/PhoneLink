@@ -9,6 +9,16 @@ import PhoneLinkKit
 
 struct Config {
     static let defaultRelayURL = ProcessInfo.processInfo.environment["PHONELINK_RELAY_URL"] ?? "http://127.0.0.1:8443"
+
+    static func resolvePinnedSHA256(args: [String]) -> String? {
+        if let cliPin = parseOption("--tls-pin", in: args), !cliPin.isEmpty {
+            return cliPin
+        }
+        if let envPin = ProcessInfo.processInfo.environment["PHONELINK_TLS_PIN"], !envPin.isEmpty {
+            return envPin
+        }
+        return nil
+    }
 }
 
 func printUsage() {
@@ -21,10 +31,11 @@ func printUsage() {
       info          Show local Mac device identity (use '--device' for remote phone info)
       device        Execute scoped remote actions on phone (info, ping)
       pair          Initiate pairing ceremony (generates pairing token & short code)
+      revoke        Immediately revoke the paired Android device (or '--self' with '--confirm')
       status        Check relay connectivity and Android phone online/offline state
                     Options: --watch (stream real-time updates), --json, --vps <url>
       ping          Send an end-to-end encrypted round-trip ping to the phone
-                    Options: --duration <seconds>, --relay (ping relay only), --json
+                    Options: --duration <seconds>, --count <n>, --relay (ping relay only), --json
       wipe          Wipe stored credentials and reset Mac device identity
       files         Browse and transfer files (FILE-2, FILE-3, FILE-4)
       camera        Live camera streaming and capture (CAM-3, CAM-4)
@@ -33,16 +44,18 @@ func printUsage() {
       help          Show help information
     
     OPTIONS:
-      --vps <url>   Override VPS relay URL (default: \(Config.defaultRelayURL))
-      --json        Format output as machine-readable JSON
-      -h, --help    Show help information
-      -v, --version Show version
+      --vps <url>       Override VPS relay URL (default: \(Config.defaultRelayURL))
+      --tls-pin <hash>  Require SHA-256 SPKI pin on HTTPS/WSS connections (or PHONELINK_TLS_PIN)
+      --json            Format output as machine-readable JSON
+      -h, --help        Show help information
+      -v, --version     Show version
     
     EXAMPLES:
       phonelink info
       phonelink pair --vps http://127.0.0.1:8443
       phonelink status --json
       phonelink ping --count 3
+      phonelink revoke --vps http://127.0.0.1:8443
     """)
 }
 
@@ -55,6 +68,38 @@ func parseOption(_ option: String, in args: [String]) -> String? {
         return args[idx + 1]
     }
     return nil
+}
+
+func parsePositionalArgs(in args: [String], valuedOptions: Set<String>) -> [String] {
+    var result: [String] = []
+    var i = 0
+    while i < args.count {
+        let arg = args[i]
+        if valuedOptions.contains(arg) {
+            i += 2
+            continue
+        }
+        if arg.hasPrefix("-") {
+            if arg.contains("=") {
+                i += 1
+                continue
+            }
+            i += 1
+            continue
+        }
+        result.append(arg)
+        i += 1
+    }
+    return result
+}
+
+func printJSON(_ dict: [String: Any]) {
+    guard let data = try? JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted, .sortedKeys]),
+          let str = String(data: data, encoding: .utf8) else {
+        fputs("ERROR: Failed to serialize JSON output.\n", stderr)
+        return
+    }
+    print(str)
 }
 
 func handleInfo(args: [String], identity: DeviceIdentityManager, client: AuthClient) async {
@@ -158,11 +203,16 @@ func handlePair(args: [String], identity: DeviceIdentityManager, client: AuthCli
     }
 
     do {
-        // Register device if not yet registered
+        // Register device if not yet registered and authenticate for Bearer token
         try await client.registerDevice(vpsBaseURL: vpsURL, identity: identity)
+        let sessionToken = try await client.authenticate(vpsBaseURL: vpsURL, identity: identity)
 
         // Generate one-time pairing token
-        let token = try await client.createPairingToken(vpsBaseURL: vpsURL, deviceID: identity.deviceID)
+        let token = try await client.createPairingToken(
+            vpsBaseURL: vpsURL,
+            deviceID: identity.deviceID,
+            sessionToken: sessionToken
+        )
         let shortCode = String(token.prefix(8)).uppercased()
 
         if isJSON {
@@ -173,8 +223,7 @@ func handlePair(args: [String], identity: DeviceIdentityManager, client: AuthCli
                 "short_code": shortCode,
                 "expires_in_seconds": 300
             ]
-            let data = try JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted])
-            print(String(data: data, encoding: .utf8)!)
+            printJSON(dict)
         } else {
             print("==================================================")
             print("        PHONELINK OUT-OF-BAND PAIRING")
@@ -194,6 +243,80 @@ func handlePair(args: [String], identity: DeviceIdentityManager, client: AuthCli
     }
 }
 
+func handleRevoke(args: [String], identity: DeviceIdentityManager, client: AuthClient) async {
+    let isJSON = parseFlag("--json", in: args)
+    let revokeSelf = parseFlag("--self", in: args)
+    let confirm = parseFlag("--confirm", in: args) || parseFlag("-y", in: args)
+    let explicitDevice = parseOption("--device", in: args)
+    let vpsStr = parseOption("--vps", in: args) ?? Config.defaultRelayURL
+    guard let vpsURL = URL(string: vpsStr) else {
+        fputs("ERROR: Invalid VPS relay URL: \(vpsStr)\n", stderr)
+        exit(2)
+    }
+
+    if revokeSelf && !confirm {
+        fputs("CAUTION: Revoking this Mac's identity permanently disables it until 'wipe' + re-pair.\n", stderr)
+        fputs("Re-run with '--self --confirm' to revoke this Mac on the VPS.\n", stderr)
+        exit(2)
+    }
+
+    do {
+        let sessionToken = try await client.authenticate(vpsBaseURL: vpsURL, identity: identity)
+        var targetDeviceID = explicitDevice
+
+        if targetDeviceID == nil && !revokeSelf {
+            let status = try await client.getDeviceStatus(vpsBaseURL: vpsURL, sessionToken: sessionToken)
+            if status.isPaired, let peerID = status.peerDeviceId, !peerID.isEmpty {
+                targetDeviceID = peerID
+            } else {
+                if isJSON {
+                    printJSON([
+                        "status": "ERROR",
+                        "error_message": "No paired peer device found. Specify --device <id> or pass --self --confirm."
+                    ])
+                } else {
+                    fputs("ERROR: No paired Android device found on VPS. Specify --device <id> or use '--self --confirm'.\n", stderr)
+                }
+                exit(1)
+            }
+        }
+
+        if let peerToRevoke = targetDeviceID {
+            try await client.revokeDevice(vpsBaseURL: vpsURL, deviceID: peerToRevoke, sessionToken: sessionToken)
+        }
+        if revokeSelf {
+            try await client.revokeDevice(vpsBaseURL: vpsURL, deviceID: identity.deviceID, sessionToken: sessionToken)
+            identity.wipeIdentity()
+        }
+
+        if isJSON {
+            printJSON([
+                "status": "OK",
+                "revoked_device_id": targetDeviceID ?? identity.deviceID,
+                "revoked_self": revokeSelf
+            ])
+        } else {
+            if let revokedPeer = targetDeviceID {
+                print("SUCCESS: Device \(revokedPeer) revoked on VPS with immediate effect.")
+            }
+            if revokeSelf {
+                print("SUCCESS: Local Mac identity revoked on VPS and wiped from Keychain.")
+            }
+        }
+        exit(0)
+    } catch {
+        if isJSON {
+            printJSON([
+                "status": "ERROR",
+                "error_message": error.localizedDescription
+            ])
+        } else {
+            fputs("ERROR: Revocation failed: \(error.localizedDescription)\n", stderr)
+        }
+        exit(1)
+    }
+}
+
 func handleStatus(args: [String], identity: DeviceIdentityManager, client: AuthClient) async {
     let isJSON = parseFlag("--json", in: args)
     let isWatch = parseFlag("--watch", in: args)
@@ -204,7 +327,12 @@ func handleStatus(args: [String], identity: DeviceIdentityManager, client: AuthC
     }
 
     if isWatch {
-        let manager = ConnectionManager(vpsBaseURL: vpsURL, identity: identity, authClient: client)
+        let manager = ConnectionManager(
+            vpsBaseURL: vpsURL,
+            identity: identity,
+            authClient: client,
+            urlSession: client.configuredURLSession
+        )
         if !isJSON {
             print("Connecting to PhoneLink Relay at \(vpsURL)...")
             print("Listening for real-time presence events (Press Ctrl+C to stop)")
@@ -212,7 +340,7 @@ func handleStatus(args: [String], identity: DeviceIdentityManager, client: AuthC
         }
 
         manager.onStateChange = { newState in
-            let dateStr = ISO8601DateFormatter().string(from: Date())
+            let dateStr = Date().formatted(.iso8601)
             switch newState {
             case .peerOnline(let id):
                 if isJSON {
@@ -247,7 +375,12 @@ func handleStatus(args: [String], identity: DeviceIdentityManager, client: AuthC
         }
     } else {
         let startTime = Date()
-        let manager = ConnectionManager(vpsBaseURL: vpsURL, identity: identity, authClient: client)
+        let manager = ConnectionManager(
+            vpsBaseURL: vpsURL,
+            identity: identity,
+            authClient: client,
+            urlSession: client.configuredURLSession
+        )
         let finalState = await manager.connectAndWaitForPresence(timeoutSeconds: 2.0)
         let latencyMs = Int(Date().timeIntervalSince(startTime) * 1000)
         manager.disconnect()
@@ -272,8 +405,7 @@ func handleStatus(args: [String], identity: DeviceIdentityManager, client: AuthC
                 "latency_ms": latencyMs,
                 "state": "\(finalState)"
             ]
-            let data = try! JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted])
-            print(String(data: data, encoding: .utf8)!)
+            printJSON(dict)
         } else {
             print("PhoneLink Status Report")
             print("--------------------------------------------------")
@@ -289,6 +421,7 @@ func handlePing(args: [String], identity: DeviceIdentityManager, client: AuthCli
     let isJSON = parseFlag("--json", in: args)
     let isRelayOnly = parseFlag("--relay", in: args)
     let isDevice = parseFlag("--device", in: args)
+    let count = max(1, Int(parseOption("--count", in: args) ?? "1") ?? 1)
     let vpsStr = parseOption("--vps", in: args) ?? Config.defaultRelayURL
     guard let vpsURL = URL(string: vpsStr) else {
         fputs("ERROR: Invalid VPS relay URL: \(vpsStr)\n", stderr)
@@ -298,38 +431,53 @@ func handlePing(args: [String], identity: DeviceIdentityManager, client: AuthCli
     if isDevice || !isRelayOnly {
         let durationStr = parseOption("--duration", in: args) ?? "5"
         let duration = UInt32(durationStr) ?? 5
-        let startTime = Date()
+        var latencies: [Int] = []
+        var lastResp: DevicePingResponse? = nil
 
         do {
-            let resp = try await ActionClient.sendPing(
-                vpsBaseURL: vpsURL,
-                identity: identity,
-                client: client,
-                durationSeconds: duration
-            )
-            let latencyMs = Int(Date().timeIntervalSince(startTime) * 1000)
-
-            if isJSON {
-                let dict: [String: Any] = [
-                    "request_id": resp.requestId,
-                    "status": resp.status,
-                    "duration_seconds": duration,
-                    "message": resp.message,
-                    "rtt_ms": latencyMs
-                ]
-                if let data = try? JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted, .sortedKeys]),
-                   let str = String(data: data, encoding: .utf8) {
-                    print(str)
+            for seq in 1...count {
+                let startTime = Date()
+                let resp = try await ActionClient.sendPing(
+                    vpsBaseURL: vpsURL,
+                    identity: identity,
+                    client: client,
+                    durationSeconds: duration
+                )
+                let latencyMs = Int(Date().timeIntervalSince(startTime) * 1000)
+                latencies.append(latencyMs)
+                lastResp = resp
+                if !isJSON && count > 1 {
+                    print("[\(seq)/\(count)] Device Ping status=\(resp.status) rtt=\(latencyMs)ms")
                 }
-            } else {
-                print("PhoneLink Device Ping Response")
-                print("--------------------------------------------------")
-                print("Status:       \(resp.status)")
-                print("Duration:     \(duration)s")
-                print("Message:      \(resp.message)")
-                print("Roundtrip:    \(latencyMs) ms")
             }
-            exit(resp.status == "STATUS_OK" ? 0 : 1)
+
+            if let resp = lastResp {
+                let avgRtt = latencies.reduce(0, +) / max(1, latencies.count)
+                if isJSON {
+                    var dict: [String: Any] = [
+                        "request_id": resp.requestId,
+                        "status": resp.status,
+                        "duration_seconds": duration,
+                        "message": resp.message,
+                        "rtt_ms": avgRtt,
+                        "count": count
+                    ]
+                    if count > 1 {
+                        dict["rtts_ms"] = latencies
+                    }
+                    printJSON(dict)
+                } else if count == 1 {
+                    print("PhoneLink Device Ping Response")
+                    print("--------------------------------------------------")
+                    print("Status:       \(resp.status)")
+                    print("Duration:     \(duration)s")
+                    print("Message:      \(resp.message)")
+                    print("Roundtrip:    \(latencies[0]) ms")
+                } else {
+                    print("Completed \(count) pings (avg=\(avgRtt)ms)")
+                }
+                exit(resp.status == "STATUS_OK" ? 0 : 1)
+            }
         } catch {
             if isRelayOnly {
                 // fall through to relay ping
@@ -340,23 +488,41 @@ func handlePing(args: [String], identity: DeviceIdentityManager, client: AuthCli
         }
     }
 
-    let manager = ConnectionManager(vpsBaseURL: vpsURL, identity: identity, authClient: client)
-    let startTime = Date()
-    await manager.connect()
+    var relayLatencies: [Int] = []
+    for seq in 1...count {
+        let manager = ConnectionManager(
+            vpsBaseURL: vpsURL,
+            identity: identity,
+            authClient: client,
+            urlSession: client.configuredURLSession
+        )
+        let startTime = Date()
+        await manager.connect()
 
-    let latencyMs = Int(Date().timeIntervalSince(startTime) * 1000)
-    manager.disconnect()
+        let latencyMs = Int(Date().timeIntervalSince(startTime) * 1000)
+        manager.disconnect()
+        relayLatencies.append(latencyMs)
+        if !isJSON && count > 1 {
+            print("Ping to PhoneLink VPS [\(vpsStr)] seq=\(seq)/\(count): time=\(latencyMs)ms status=OK")
+        }
+    }
 
+    let avgLatency = relayLatencies.reduce(0, +) / max(1, relayLatencies.count)
     if isJSON {
-        let dict: [String: Any] = [
+        var dict: [String: Any] = [
             "status": "OK",
-            "rtt_ms": latencyMs,
-            "target": vpsStr
+            "rtt_ms": avgLatency,
+            "target": vpsStr,
+            "count": count
         ]
-        let data = try! JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted])
-        print(String(data: data, encoding: .utf8)!)
+        if count > 1 {
+            dict["rtts_ms"] = relayLatencies
+        }
+        printJSON(dict)
+    } else if count == 1 {
+        print("Ping to PhoneLink VPS [\(vpsStr)]: time=\(relayLatencies[0])ms status=OK")
     } else {
-        print("Ping to PhoneLink VPS [\(vpsStr)]: time=\(latencyMs)ms status=OK")
+        print("Completed \(count) relay pings to [\(vpsStr)] (avg=\(avgLatency)ms)")
     }
     exit(0)
 }
@@ -454,21 +620,7 @@ func handleFilesPut(args: [String], identity: DeviceIdentityManager, client: Aut
     let timeout = Double(timeoutStr ?? "60.0") ?? 60.0
 
     // Positional arguments: <local_path> [remote_destination_directory]
-    var positionalArgs: [String] = []
-    var i = 0
-    while i < args.count {
-        let arg = args[i]
-        if arg == "--vps" || arg == "--timeout" {
-            i += 2
-            continue
-        }
-        if arg.hasPrefix("-") {
-            i += 1
-            continue
-        }
-        positionalArgs.append(arg)
-        i += 1
-    }
+    let positionalArgs = parsePositionalArgs(in: args, valuedOptions: ["--vps", "--tls-pin", "--timeout"])
 
     guard let localPath = positionalArgs.first, !localPath.isEmpty else {
         fputs("ERROR: Missing required <local_path> argument. Run 'phonelink files put <local_path> [remote_directory]'\n", stderr)
@@ -569,21 +721,7 @@ func handleFilesGet(args: [String], identity: DeviceIdentityManager, client: Aut
     let timeout = Double(timeoutStr ?? "60.0") ?? 60.0
 
     // Positional arguments: remote_path and optional local_path
-    var positionalArgs: [String] = []
-    var i = 0
-    while i < args.count {
-        let arg = args[i]
-        if arg == "--vps" || arg == "--timeout" {
-            i += 2
-            continue
-        }
-        if arg.hasPrefix("-") {
-            i += 1
-            continue
-        }
-        positionalArgs.append(arg)
-        i += 1
-    }
+    let positionalArgs = parsePositionalArgs(in: args, valuedOptions: ["--vps", "--tls-pin", "--timeout"])
 
     guard let remotePath = positionalArgs.first, !remotePath.isEmpty else {
         fputs("ERROR: Missing required <path> argument. Run 'phonelink files get <path> [local_path]'\n", stderr)
@@ -679,14 +817,8 @@ func handleFilesList(args: [String], identity: DeviceIdentityManager, client: Au
         exit(2)
     }
 
-    // Extract target directory path (first non-flag argument)
-    var targetPath = ""
-    for arg in args {
-        if !arg.hasPrefix("-") {
-            targetPath = arg
-            break
-        }
-    }
+    // Extract target directory path (first option-aware positional argument)
+    let targetPath = parsePositionalArgs(in: args, valuedOptions: ["--vps", "--tls-pin", "--timeout"]).first ?? ""
 
     do {
         let response = try await FileClient.listRemoteFiles(
@@ -756,12 +888,10 @@ func handleFilesList(args: [String], identity: DeviceIdentityManager, client: Au
         exit(0)
     } catch {
         if isJSON {
-            let dict: [String: Any] = [
+            printJSON([
                 "status": "ERROR",
                 "error": error.localizedDescription
-            ]
-            let data = try! JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted])
-            print(String(data: data, encoding: .utf8)!)
+            ])
         } else {
             fputs("ERROR: \(error.localizedDescription)\n", stderr)
         }
@@ -934,18 +1064,50 @@ func handleCamera(args: [String], identity: DeviceIdentityManager, client: AuthC
     } catch {
         viewerController.notifyError(message: error.localizedDescription)
         if isJSON {
-            let dict: [String: Any] = [
+            printJSON([
                 "status": "ERROR",
                 "error": error.localizedDescription
-            ]
-            let data = try! JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted])
-            print(String(data: data, encoding: .utf8)!)
+            ])
         } else {
             print(CameraTerminalRenderer.renderBanner(state: viewerController.state, lens: lens))
             fputs("ERROR: \(error.localizedDescription)\n", stderr)
         }
         exit(1)
     }
+}
+
+func resolveInstallerScriptPath() -> String? {
+    var candidates: [String] = [
+        "./scripts/serve_phone_installer.py",
+        "../scripts/serve_phone_installer.py",
+        "../../scripts/serve_phone_installer.py",
+        "/opt/phonelink/scripts/serve_phone_installer.py"
+    ]
+    if let envRoot = ProcessInfo.processInfo.environment["PHONELINK_REPO_ROOT"], !envRoot.isEmpty {
+        candidates.insert(URL(fileURLWithPath: envRoot).appendingPathComponent("scripts/serve_phone_installer.py").path, at: 0)
+    }
+    // Check ancestors of resolved executable path (e.g. mac/.build/release/phonelink)
+    if let arg0 = CommandLine.arguments.first {
+        var dir = URL(fileURLWithPath: arg0).resolvingSymlinksInPath().deletingLastPathComponent()
+        for _ in 0..<6 {
+            candidates.append(dir.appendingPathComponent("scripts/serve_phone_installer.py").path)
+            dir = dir.deletingLastPathComponent()
+        }
+    }
+    // Source checkout relative fallback from mac/Sources/PhoneLinkCLI/main.swift
+    let repoFromSource = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent() // PhoneLinkCLI
+        .deletingLastPathComponent() // Sources
+        .deletingLastPathComponent() // mac
+        .deletingLastPathComponent() // PhoneLink repo root
+    candidates.append(repoFromSource.appendingPathComponent("scripts/serve_phone_installer.py").path)
+
+    for path in candidates {
+        if FileManager.default.fileExists(atPath: path) {
+            return path
+        }
+    }
+    return nil
 }
 
 func handleInstallPhone(args: [String]) {
@@ -962,45 +1124,32 @@ func handleInstallPhone(args: [String]) {
     vpsInstallUrl = vpsInstallUrl.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/install"
 
     if parseFlag("--serve", in: args) || parseFlag("--local", in: args) {
-        let scriptCandidates = [
-            "./scripts/serve_phone_installer.py",
-            "../scripts/serve_phone_installer.py",
-            "../../scripts/serve_phone_installer.py",
-            "/opt/phonelink/scripts/serve_phone_installer.py"
-        ]
-        var targetScript: String? = nil
-        for s in scriptCandidates {
-            if FileManager.default.fileExists(atPath: s) {
-                targetScript = s
-                break
-            }
+        guard let script = resolveInstallerScriptPath() else {
+            fputs("ERROR: Could not locate scripts/serve_phone_installer.py.\n", stderr)
+            fputs("Set PHONELINK_REPO_ROOT=/path/to/PhoneLink or run from the PhoneLink repo root.\n", stderr)
+            exit(1)
         }
-
-        if let script = targetScript {
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
-            process.arguments = [script, "--port", portStr]
-            do {
-                try process.run()
-                process.waitUntilExit()
-                exit(process.terminationStatus)
-            } catch {
-                fputs("Failed to launch installer server: \(error.localizedDescription)\n", stderr)
-                exit(1)
-            }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
+        process.arguments = [script, "--port", portStr]
+        do {
+            try process.run()
+            process.waitUntilExit()
+            exit(process.terminationStatus)
+        } catch {
+            fputs("ERROR: Failed to launch installer server: \(error.localizedDescription)\n", stderr)
+            exit(1)
         }
     }
 
     if isJSON {
-        let dict: [String: Any] = [
+        printJSON([
             "vps_install_url": vpsInstallUrl,
             "min_sdk": 26,
             "target_sdk": 34,
             "supported_os": "Android 8.0 Oreo through Android 14+",
             "apk_download_endpoint": "/download/PhoneLink.apk"
-        ]
-        let data = try! JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted])
-        print(String(data: data, encoding: .utf8)!)
+        ])
         exit(0)
     }
 
@@ -1037,7 +1186,8 @@ if args.count <= 1 {
 let command = args[1]
 let subArgs = Array(args.dropFirst(2))
 let identity = DeviceIdentityManager.shared
-let client = AuthClient()
+let tlsPin = Config.resolvePinnedSHA256(args: subArgs)
+let client = AuthClient(urlSession: PinnedURLSessionDelegate.makeSession(pinnedSHA256: tlsPin))
 
 switch command {
 case "-v", "--version", "version":
@@ -1059,6 +1209,9 @@ case "wipe":
 
 case "pair":
     await handlePair(args: subArgs, identity: identity, client: client)
+
+case "revoke":
+    await handleRevoke(args: subArgs, identity: identity, client: client)
 
 case "status":
     await handleStatus(args: subArgs, identity: identity, client: client)

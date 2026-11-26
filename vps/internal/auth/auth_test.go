@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -357,10 +358,11 @@ func TestResumptionTokenLifecycleAndValidation(t *testing.T) {
 	}
 
 	// 4. Token expiration: expired token must be rejected
-	expiredToken, _, err := reg.CreateResumptionToken(deviceID, -1*time.Second)
+	expiredToken, _, err := reg.CreateResumptionToken(deviceID, 1*time.Minute)
 	if err != nil {
-		t.Fatalf("failed to create expired token: %v", err)
+		t.Fatalf("failed to create token for expiration test: %v", err)
 	}
+	reg.ExpireResumptionTokenForTest(expiredToken)
 	if err := reg.ValidateAndConsumeResumptionToken(deviceID, expiredToken); err != ErrResumptionTokenNotFound {
 		t.Fatalf("expected ErrResumptionTokenNotFound on expired token, got: %v", err)
 	}
@@ -385,5 +387,102 @@ func TestResumptionTokenLifecycleAndValidation(t *testing.T) {
 	}
 	if err := reg.ValidateAndConsumeResumptionToken(deviceID, token4); err != ErrDeviceRevoked {
 		t.Fatalf("expected ErrDeviceRevoked after device revocation, got: %v", err)
+	}
+}
+
+func TestClaimPairingRejectsExpiredAndAmbiguousPrefixesAndUnpairsOldPeers(t *testing.T) {
+	reg := NewRegistry()
+	defer reg.Stop()
+
+	_, macPub1, macID1 := generateTestEd25519Key(t)
+	_, andPub1, andID1 := generateTestECDSAKey(t)
+	_, macPub2, macID2 := generateTestEd25519Key(t)
+	_, andPub2, andID2 := generateTestECDSAKey(t)
+
+	_ = reg.RegisterDevice(DeviceRecord{DeviceID: macID1, DeviceType: DeviceTypeMac, PublicKey: macPub1, KeyAlgorithm: AlgorithmEd25519})
+	_ = reg.RegisterDevice(DeviceRecord{DeviceID: andID1, DeviceType: DeviceTypeAndroid, PublicKey: andPub1, KeyAlgorithm: AlgorithmECDSAP256})
+	_ = reg.RegisterDevice(DeviceRecord{DeviceID: macID2, DeviceType: DeviceTypeMac, PublicKey: macPub2, KeyAlgorithm: AlgorithmEd25519})
+	_ = reg.RegisterDevice(DeviceRecord{DeviceID: andID2, DeviceType: DeviceTypeAndroid, PublicKey: andPub2, KeyAlgorithm: AlgorithmECDSAP256})
+
+	// Inject an expired/used token with overlapping prefix alongside an active token
+	reg.mu.Lock()
+	reg.pairingTokens["deadbe0001"] = &PairingTokenRecord{
+		Token:             "deadbe0001",
+		InitiatorDeviceID: macID1,
+		CreatedAt:         time.Now().Add(-10 * time.Minute),
+		ExpiresAt:         time.Now().Add(-1 * time.Minute),
+		Used:              false,
+	}
+	reg.pairingTokens["deadbe0002"] = &PairingTokenRecord{
+		Token:             "deadbe0002",
+		InitiatorDeviceID: macID2,
+		CreatedAt:         time.Now(),
+		ExpiresAt:         time.Now().Add(5 * time.Minute),
+		Used:              false,
+	}
+	reg.mu.Unlock()
+
+	// Prefix "deadbe00" must skip expired record and deterministically match active deadbe0002
+	if err := reg.ClaimPairing("deadbe00", andID2); err != nil {
+		t.Fatalf("expected active token with same prefix as expired token to claim, got: %v", err)
+	}
+	peerOfAnd2, err := reg.GetPairedDevice(andID2)
+	if err != nil || peerOfAnd2 != macID2 {
+		t.Fatalf("expected symmetric pairing between %s and %s, got %s (%v)", macID2, andID2, peerOfAnd2, err)
+	}
+
+	// Inject two active tokens sharing prefix "cafe1234" -> ambiguous prefix must be rejected
+	reg.mu.Lock()
+	reg.pairingTokens["cafe1234aaaa"] = &PairingTokenRecord{
+		Token:             "cafe1234aaaa",
+		InitiatorDeviceID: macID1,
+		CreatedAt:         time.Now(),
+		ExpiresAt:         time.Now().Add(5 * time.Minute),
+	}
+	reg.pairingTokens["cafe1234bbbb"] = &PairingTokenRecord{
+		Token:             "cafe1234bbbb",
+		InitiatorDeviceID: macID2,
+		CreatedAt:         time.Now(),
+		ExpiresAt:         time.Now().Add(5 * time.Minute),
+	}
+	reg.mu.Unlock()
+	if err := reg.ClaimPairing("cafe1234", andID1); err == nil {
+		t.Fatalf("expected ambiguous prefix claim to fail")
+	}
+
+	// Re-pair macID2 -> andID1; old peer andID2 must be unpaired symmetrically
+	_ = reg.PairDevices(macID1, andID1)
+	_ = reg.PairDevices(macID2, andID1)
+	if _, err := reg.GetPairedDevice(macID1); err == nil {
+		t.Fatalf("expected old peer macID1 to be symmetrically unpaired after andID1 re-paired")
+	}
+	if _, err := reg.GetPairedDevice(andID2); err == nil {
+		t.Fatalf("expected old peer andID2 to be symmetrically unpaired after macID2 re-paired")
+	}
+}
+
+func TestPersistentRegistrySurvivesRestart(t *testing.T) {
+	statePath := filepath.Join(t.TempDir(), "state", "registry_state.json")
+	reg1, err := NewPersistentRegistry(statePath)
+	if err != nil {
+		t.Fatalf("failed to create persistent registry: %v", err)
+	}
+
+	_, macPub, macID := generateTestEd25519Key(t)
+	_, andPub, andID := generateTestECDSAKey(t)
+	_ = reg1.RegisterDevice(DeviceRecord{DeviceID: macID, DeviceType: DeviceTypeMac, PublicKey: macPub, KeyAlgorithm: AlgorithmEd25519})
+	_ = reg1.RegisterDevice(DeviceRecord{DeviceID: andID, DeviceType: DeviceTypeAndroid, PublicKey: andPub, KeyAlgorithm: AlgorithmECDSAP256})
+	_ = reg1.PairDevices(macID, andID)
+	reg1.Stop()
+
+	reg2, err := NewPersistentRegistry(statePath)
+	if err != nil {
+		t.Fatalf("failed to reload persistent registry: %v", err)
+	}
+	defer reg2.Stop()
+
+	peer, err := reg2.GetPairedDevice(macID)
+	if err != nil || peer != andID {
+		t.Fatalf("expected persisted pairing %s -> %s, got %s (%v)", macID, andID, peer, err)
 	}
 }

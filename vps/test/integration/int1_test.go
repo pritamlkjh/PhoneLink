@@ -85,8 +85,11 @@ func TestINT1FirstEndToEndEncryptedConnection(t *testing.T) {
 	registerDevice(t, httpServer.URL, macDeviceID, "mac", base64.StdEncoding.EncodeToString(macPub), auth.AlgorithmEd25519)
 	registerDevice(t, httpServer.URL, andDeviceID, "android", base64.StdEncoding.EncodeToString(andPubDER), auth.AlgorithmECDSAP256)
 
-	// 5. Out-of-band Pairing Ceremony (Mac creates pairing token -> Android claims token)
-	pairingToken := createPairingToken(t, httpServer.URL, macDeviceID)
+	// 5. Authenticate first, then Out-of-band Pairing Ceremony (Mac creates pairing token -> Android claims token)
+	macSessionToken := authenticateEd25519(t, httpServer.URL, macDeviceID, macPriv)
+	andSessionToken := authenticateECDSA(t, httpServer.URL, andDeviceID, andPriv, andPubDER)
+
+	pairingToken := createPairingToken(t, httpServer.URL, macDeviceID, macSessionToken)
 	claimPairing(t, httpServer.URL, pairingToken, andDeviceID)
 
 	// Verify pairing is recognized symmetrically
@@ -99,9 +102,7 @@ func TestINT1FirstEndToEndEncryptedConnection(t *testing.T) {
 		t.Fatalf("expected paired peer of Android to be Mac %s, got: %s", macDeviceID, peerOfAnd)
 	}
 
-	// 6. Both Devices Authenticate via Challenge-Response Handshake
-	macSessionToken := authenticateEd25519(t, httpServer.URL, macDeviceID, macPriv)
-	andSessionToken := authenticateECDSA(t, httpServer.URL, andDeviceID, andPriv, andPubDER)
+	// 6. Verify non-empty session tokens
 
 	if macSessionToken == "" || andSessionToken == "" {
 		t.Fatalf("session tokens must be non-empty")
@@ -280,10 +281,18 @@ func registerDevice(t *testing.T, baseURL, deviceID, devType, pubKeyB64, alg str
 	_ = resp.Body.Close()
 }
 
-func createPairingToken(t *testing.T, baseURL, deviceID string) string {
+func createPairingToken(t *testing.T, baseURL, deviceID, sessionToken string) string {
 	t.Helper()
 	body, _ := json.Marshal(map[string]string{"device_id": deviceID})
-	resp, err := http.Post(baseURL+"/api/v1/pairing/create", "application/json", bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, baseURL+"/api/v1/pairing/create", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("failed to create pairing request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if sessionToken != "" {
+		req.Header.Set("Authorization", "Bearer "+sessionToken)
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("failed to create pairing token: %v", err)
 	}

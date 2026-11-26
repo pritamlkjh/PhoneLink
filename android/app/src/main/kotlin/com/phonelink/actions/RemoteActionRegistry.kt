@@ -1,8 +1,11 @@
 package com.phonelink.actions
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.media.Ringtone
 import android.media.RingtoneManager
 import android.os.BatteryManager
 import android.os.Build
@@ -10,9 +13,13 @@ import android.os.StatFs
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
+import androidx.core.app.NotificationCompat
 import com.phonelink.storage.SecureStorage
 import org.json.JSONObject
 import java.util.UUID
+import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.TimeUnit
 
 /**
  * FILE-5: Scoped Remote Action System.
@@ -334,7 +341,22 @@ class AndroidTelemetryProvider(private val context: Context) : RemoteActionRegis
 }
 
 class AndroidActionFeedbackController(private val context: Context) : RemoteActionRegistry.ActionFeedbackController {
+    companion object {
+        private const val ACTION_CHANNEL_ID = "phonelink_remote_actions"
+        private const val ACTION_NOTIFICATION_ID = 1003
+    }
+
+    private val stopScheduler = Executors.newSingleThreadScheduledExecutor { r ->
+        Thread(r, "PhoneLink-PingStop").apply { isDaemon = true }
+    }
+    private var activeRingtone: Ringtone? = null
+    private var scheduledStopTask: ScheduledFuture<*>? = null
+
+    @Synchronized
     override fun triggerPing(durationSeconds: Int) {
+        val clampedDuration = durationSeconds.coerceIn(1, RemoteActionRegistry.MAX_PING_DURATION_SECONDS)
+        val millis = clampedDuration * 1000L
+
         try {
             val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 val vibratorManager = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager
@@ -343,7 +365,6 @@ class AndroidActionFeedbackController(private val context: Context) : RemoteActi
                 @Suppress("DEPRECATION")
                 context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
             }
-            val millis = (durationSeconds.coerceIn(1, RemoteActionRegistry.MAX_PING_DURATION_SECONDS) * 1000).toLong()
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 vibrator?.vibrate(VibrationEffect.createOneShot(millis, VibrationEffect.DEFAULT_AMPLITUDE))
             } else {
@@ -353,14 +374,50 @@ class AndroidActionFeedbackController(private val context: Context) : RemoteActi
         } catch (_: Exception) {}
 
         try {
+            scheduledStopTask?.cancel(false)
+            activeRingtone?.stop()
             val alarmUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
                 ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
             val ringtone = RingtoneManager.getRingtone(context, alarmUri)
+            activeRingtone = ringtone
             ringtone?.play()
+            scheduledStopTask = stopScheduler.schedule({
+                synchronized(this) {
+                    try {
+                        activeRingtone?.stop()
+                    } catch (_: Exception) {}
+                    activeRingtone = null
+                }
+            }, millis, TimeUnit.MILLISECONDS)
         } catch (_: Exception) {}
     }
 
     override fun notifyActionExecuted(actionName: String) {
-        // High visibility log or notification update
+        try {
+            val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val ch = NotificationChannel(
+                    ACTION_CHANNEL_ID,
+                    "PhoneLink Remote Actions",
+                    NotificationManager.IMPORTANCE_HIGH
+                ).apply {
+                    description = "Visible alerts when paired Mac executes device actions"
+                }
+                nm.createNotificationChannel(ch)
+            }
+            val label = when (actionName) {
+                RemoteActionRegistry.ACTION_PING -> "Paired Mac pinged this device"
+                RemoteActionRegistry.ACTION_INFO -> "Paired Mac queried device info"
+                else -> "Remote action executed: $actionName"
+            }
+            val notification = NotificationCompat.Builder(context, ACTION_CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setContentTitle("PhoneLink Action")
+                .setContentText(label)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setAutoCancel(true)
+                .build()
+            nm.notify(ACTION_NOTIFICATION_ID, notification)
+        } catch (_: Exception) {}
     }
 }

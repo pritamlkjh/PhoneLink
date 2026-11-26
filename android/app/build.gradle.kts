@@ -19,18 +19,31 @@ android {
 
     signingConfigs {
         create("release") {
-            val keystorePath = System.getenv("KEYSTORE_PATH") 
-                ?: rootProject.file("keystore/phonelink-release.keystore").absolutePath
-            val keystoreFile = File(keystorePath)
-            if (keystoreFile.exists()) {
-                storeFile = keystoreFile
-                storePassword = System.getenv("KEYSTORE_PASSWORD") ?: "phonelink_release_2026"
-                keyAlias = System.getenv("KEY_ALIAS") ?: "phonelink_release"
-                keyPassword = System.getenv("KEY_PASSWORD") ?: "phonelink_release_2026"
-                enableV1Signing = true
-                enableV2Signing = true
-                enableV3Signing = true
-                enableV4Signing = false
+            val keystorePath = System.getenv("KEYSTORE_PATH")
+                ?: (project.findProperty("PHONELINK_KEYSTORE_PATH") as? String)
+            val ksPassword = System.getenv("KEYSTORE_PASSWORD")
+                ?: (project.findProperty("PHONELINK_KEYSTORE_PASSWORD") as? String)
+            val ksAlias = System.getenv("KEY_ALIAS")
+                ?: (project.findProperty("PHONELINK_KEY_ALIAS") as? String)
+            val ksKeyPassword = System.getenv("KEY_PASSWORD")
+                ?: (project.findProperty("PHONELINK_KEY_PASSWORD") as? String)
+
+            if (!keystorePath.isNullOrBlank() &&
+                !ksPassword.isNullOrBlank() &&
+                !ksAlias.isNullOrBlank() &&
+                !ksKeyPassword.isNullOrBlank()
+            ) {
+                val keystoreFile = File(keystorePath)
+                if (keystoreFile.exists()) {
+                    storeFile = keystoreFile
+                    storePassword = ksPassword
+                    keyAlias = ksAlias
+                    keyPassword = ksKeyPassword
+                    enableV1Signing = true
+                    enableV2Signing = true
+                    enableV3Signing = true
+                    enableV4Signing = false
+                }
             }
         }
     }
@@ -39,7 +52,10 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = false
-            signingConfig = signingConfigs.getByName("release")
+            val relSigning = signingConfigs.getByName("release")
+            if (relSigning.storeFile != null) {
+                signingConfig = relSigning
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -60,8 +76,8 @@ android {
     }
 
     lint {
-        abortOnError = false
-        checkReleaseBuilds = false
+        abortOnError = true
+        checkReleaseBuilds = true
     }
 
     testOptions {

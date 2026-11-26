@@ -183,7 +183,7 @@ public final class ActionClient: @unchecked Sendable {
         return try JSONDecoder().decode(DeviceInfoResponse.self, from: subData)
     }
 
-    /// Executes end-to-end device ping through the VPS relay with ephemeral key exchange.
+    /// Executes end-to-end device ping through the VPS relay with authenticated ephemeral key exchange.
     public static func sendPing(
         vpsBaseURL: URL,
         identity: DeviceIdentityManager,
@@ -191,252 +191,50 @@ public final class ActionClient: @unchecked Sendable {
         durationSeconds: UInt32 = 5,
         timeoutSeconds: Double = 5.0
     ) async throws -> DevicePingResponse {
-        let manager = ConnectionManager(vpsBaseURL: vpsBaseURL, identity: identity, authClient: client)
-        let presence = await manager.connectAndWaitForPresence(timeoutSeconds: 2.5)
-
-        guard case .peerOnline = presence else {
-            manager.disconnect()
-            throw AuthClientError.invalidResponse("Paired Android device is OFFLINE")
-        }
-
-        let e2e = E2EEncryptionManager()
-        let sessionState = ActionHandshakeSessionState()
-
-        return try await withCheckedThrowingContinuation { continuation in
-            manager.onMessageReceived = { data in
-                guard !sessionState.isResumed() else { return }
-
-                guard let text = String(data: data, encoding: .utf8),
-                      let json = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
-                      let type = json["type"] as? String else {
-                    return
-                }
-
-                if type == "E2E_ACK" {
-                    guard let peerPubB64 = json["ephemeral_public_key"] as? String,
-                          let peerPubData = Data(base64Encoded: peerPubB64) else {
-                        return
-                    }
-
-                    do {
-                        let keys = try e2e.deriveSessionKeys(peerPublicKeyData: peerPubData)
-                        sessionState.setKeys(keys)
-
-                        let reqData = try buildDevicePingRequest(durationSeconds: durationSeconds)
-                        let encrypted = try E2EEncryptionManager.encryptAESGCM(key: keys.keyMacToAndroid, plaintext: reqData)
-
-                        let payloadJson: [String: Any] = [
-                            "type": "E2E_PAYLOAD",
-                            "ciphertext": encrypted.base64EncodedString()
-                        ]
-                        let outData = try JSONSerialization.data(withJSONObject: payloadJson)
-                        Task {
-                            do {
-                                try await manager.send(data: outData)
-                            } catch {
-                                if sessionState.resumeOnce() {
-                                    manager.disconnect()
-                                    continuation.resume(throwing: error)
-                                }
-                            }
-                        }
-                    } catch {
-                        if sessionState.resumeOnce() {
-                            manager.disconnect()
-                            continuation.resume(throwing: error)
-                        }
-                    }
-                } else if type == "E2E_PAYLOAD" {
-                    guard let keys = sessionState.getKeys(),
-                          let ctB64 = json["ciphertext"] as? String,
-                          let ct = Data(base64Encoded: ctB64) else {
-                        return
-                    }
-
-                    do {
-                        let decrypted = try E2EEncryptionManager.decryptAESGCM(key: keys.keyAndroidToMac, payload: ct)
-                        let response = try parseDevicePingResponse(data: decrypted)
-                        if sessionState.resumeOnce() {
-                            manager.disconnect()
-                            continuation.resume(returning: response)
-                        }
-                    } catch {
-                        if sessionState.resumeOnce() {
-                            manager.disconnect()
-                            continuation.resume(throwing: error)
-                        }
-                    }
-                }
+        let session = try await E2ETransportSession.connectAndAuthenticate(
+            vpsBaseURL: vpsBaseURL,
+            identity: identity,
+            client: client,
+            presenceTimeoutSeconds: 2.5
+        )
+        return try await session.runSession(
+            timeoutSeconds: timeoutSeconds,
+            timeoutMessage: "Timed out waiting for device ping response",
+            onReady: { activeSession in
+                let reqData = try buildDevicePingRequest(durationSeconds: durationSeconds)
+                try await activeSession.sendEncrypted(plaintext: reqData)
+            },
+            onPayload: { decrypted, _, finish in
+                let response = try parseDevicePingResponse(data: decrypted)
+                finish(.success(response))
             }
-
-            Task {
-                do {
-                    let initJson: [String: Any] = [
-                        "type": "E2E_INIT",
-                        "ephemeral_public_key": e2e.publicKeyRaw.base64EncodedString(),
-                        "timestamp": Int64(Date().timeIntervalSince1970 * 1000)
-                    ]
-                    let initData = try JSONSerialization.data(withJSONObject: initJson)
-                    try await manager.send(data: initData)
-                } catch {
-                    if sessionState.resumeOnce() {
-                        manager.disconnect()
-                        continuation.resume(throwing: error)
-                    }
-                }
-            }
-
-            Task {
-                try? await Task.sleep(nanoseconds: UInt64(timeoutSeconds * 1_000_000_000))
-                if sessionState.resumeOnce() {
-                    manager.disconnect()
-                    continuation.resume(throwing: AuthClientError.invalidResponse("Timed out waiting for device ping response"))
-                }
-            }
-        }
+        )
     }
 
-    /// Executes end-to-end device info collection through the VPS relay with ephemeral key exchange.
+    /// Executes end-to-end device info collection through the VPS relay with authenticated ephemeral key exchange.
     public static func fetchDeviceInfo(
         vpsBaseURL: URL,
         identity: DeviceIdentityManager,
         client: AuthClient,
         timeoutSeconds: Double = 5.0
     ) async throws -> DeviceInfoResponse {
-        let manager = ConnectionManager(vpsBaseURL: vpsBaseURL, identity: identity, authClient: client)
-        let presence = await manager.connectAndWaitForPresence(timeoutSeconds: 2.5)
-
-        guard case .peerOnline = presence else {
-            manager.disconnect()
-            throw AuthClientError.invalidResponse("Paired Android device is OFFLINE")
-        }
-
-        let e2e = E2EEncryptionManager()
-        let sessionState = ActionHandshakeSessionState()
-
-        return try await withCheckedThrowingContinuation { continuation in
-            manager.onMessageReceived = { data in
-                guard !sessionState.isResumed() else { return }
-
-                guard let text = String(data: data, encoding: .utf8),
-                      let json = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
-                      let type = json["type"] as? String else {
-                    return
-                }
-
-                if type == "E2E_ACK" {
-                    guard let peerPubB64 = json["ephemeral_public_key"] as? String,
-                          let peerPubData = Data(base64Encoded: peerPubB64) else {
-                        return
-                    }
-
-                    do {
-                        let keys = try e2e.deriveSessionKeys(peerPublicKeyData: peerPubData)
-                        sessionState.setKeys(keys)
-
-                        let reqData = try buildDeviceInfoRequest()
-                        let encrypted = try E2EEncryptionManager.encryptAESGCM(key: keys.keyMacToAndroid, plaintext: reqData)
-
-                        let payloadJson: [String: Any] = [
-                            "type": "E2E_PAYLOAD",
-                            "ciphertext": encrypted.base64EncodedString()
-                        ]
-                        let outData = try JSONSerialization.data(withJSONObject: payloadJson)
-                        Task {
-                            do {
-                                try await manager.send(data: outData)
-                            } catch {
-                                if sessionState.resumeOnce() {
-                                    manager.disconnect()
-                                    continuation.resume(throwing: error)
-                                }
-                            }
-                        }
-                    } catch {
-                        if sessionState.resumeOnce() {
-                            manager.disconnect()
-                            continuation.resume(throwing: error)
-                        }
-                    }
-                } else if type == "E2E_PAYLOAD" {
-                    guard let keys = sessionState.getKeys(),
-                          let ctB64 = json["ciphertext"] as? String,
-                          let ct = Data(base64Encoded: ctB64) else {
-                        return
-                    }
-
-                    do {
-                        let decrypted = try E2EEncryptionManager.decryptAESGCM(key: keys.keyAndroidToMac, payload: ct)
-                        let response = try parseDeviceInfoResponse(data: decrypted)
-                        if sessionState.resumeOnce() {
-                            manager.disconnect()
-                            continuation.resume(returning: response)
-                        }
-                    } catch {
-                        if sessionState.resumeOnce() {
-                            manager.disconnect()
-                            continuation.resume(throwing: error)
-                        }
-                    }
-                }
+        let session = try await E2ETransportSession.connectAndAuthenticate(
+            vpsBaseURL: vpsBaseURL,
+            identity: identity,
+            client: client,
+            presenceTimeoutSeconds: 2.5
+        )
+        return try await session.runSession(
+            timeoutSeconds: timeoutSeconds,
+            timeoutMessage: "Timed out waiting for device info response",
+            onReady: { activeSession in
+                let reqData = try buildDeviceInfoRequest()
+                try await activeSession.sendEncrypted(plaintext: reqData)
+            },
+            onPayload: { decrypted, _, finish in
+                let response = try parseDeviceInfoResponse(data: decrypted)
+                finish(.success(response))
             }
-
-            Task {
-                do {
-                    let initJson: [String: Any] = [
-                        "type": "E2E_INIT",
-                        "ephemeral_public_key": e2e.publicKeyRaw.base64EncodedString(),
-                        "timestamp": Int64(Date().timeIntervalSince1970 * 1000)
-                    ]
-                    let initData = try JSONSerialization.data(withJSONObject: initJson)
-                    try await manager.send(data: initData)
-                } catch {
-                    if sessionState.resumeOnce() {
-                        manager.disconnect()
-                        continuation.resume(throwing: error)
-                    }
-                }
-            }
-
-            Task {
-                try? await Task.sleep(nanoseconds: UInt64(timeoutSeconds * 1_000_000_000))
-                if sessionState.resumeOnce() {
-                    manager.disconnect()
-                    continuation.resume(throwing: AuthClientError.invalidResponse("Timed out waiting for device info response"))
-                }
-            }
-        }
-    }
-}
-
-private final class ActionHandshakeSessionState: @unchecked Sendable {
-    private var resumed = false
-    private var keys: E2EEncryptionManager.SessionKeys?
-    private let lock = NSLock()
-
-    func isResumed() -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return resumed
-    }
-
-    func resumeOnce() -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        if resumed { return false }
-        resumed = true
-        return true
-    }
-
-    func setKeys(_ keys: E2EEncryptionManager.SessionKeys) {
-        lock.lock()
-        defer { lock.unlock() }
-        self.keys = keys
-    }
-
-    func getKeys() -> E2EEncryptionManager.SessionKeys? {
-        lock.lock()
-        defer { lock.unlock() }
-        return keys
+        )
     }
 }

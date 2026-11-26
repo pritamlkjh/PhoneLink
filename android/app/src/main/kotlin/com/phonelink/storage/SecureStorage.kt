@@ -3,7 +3,9 @@ package com.phonelink.storage
 import android.content.Context
 import android.content.SharedPreferences
 import java.nio.ByteBuffer
+import java.security.KeyStore
 import java.security.SecureRandom
+import java.security.Security
 import java.util.Base64
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
@@ -22,11 +24,14 @@ class SecureStorage(
     companion object {
         private const val PREFS_FILE = "phonelink_secure_storage"
         private const val PREF_KEY_MASTER_KEY = "__secure_master_key__"
+        private const val PREF_KEY_WRAPPED_MASTER_KEY = "__secure_master_key_wrapped__"
+        private const val KEYSTORE_WRAP_ALIAS = "phonelink_storage_master_wrap"
+        private const val ANDROID_KEYSTORE = "AndroidKeyStore"
         private const val GCM_TAG_LENGTH_BITS = 128
         private const val GCM_IV_LENGTH_BYTES = 12
         private const val CIPHER_TRANSFORMATION = "AES/GCM/NoPadding"
 
-        const val DEFAULT_RELAY_URL = "wss://relay.phonelink.internal:8443/ws/v1/connect"
+        const val DEFAULT_RELAY_URL = ""
 
         // Storage keys
         const val KEY_SESSION_TOKEN = "session_token"
@@ -39,8 +44,90 @@ class SecureStorage(
         const val KEY_RESUMPTION_TOKEN = "resumption_token"
         const val KEY_RESUMPTION_EXPIRES_AT = "resumption_expires_at"
         const val KEY_AUTO_START_ON_BOOT = "auto_start_on_boot"
+        const val KEY_SOFTWARE_IDENTITY_PUB = "software_identity_pub_key"
+        const val KEY_SOFTWARE_IDENTITY_PRIV = "software_identity_priv_key"
+        const val KEY_SCOPED_TREE_URI = "scoped_tree_uri"
+
+        private fun hasAndroidKeyStore(): Boolean {
+            return try {
+                Security.getProvider(ANDROID_KEYSTORE) != null
+            } catch (_: Throwable) {
+                false
+            }
+        }
+
+        private fun getOrCreateKeyStoreWrapKey(): SecretKey {
+            val ks = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+            val existing = ks.getKey(KEYSTORE_WRAP_ALIAS, null) as? SecretKey
+            if (existing != null) return existing
+
+            val kg = KeyGenerator.getInstance("AES", ANDROID_KEYSTORE)
+            val builderClass = Class.forName("android.security.keystore.KeyGenParameterSpec\$Builder")
+            // PURPOSE_ENCRYPT = 1, PURPOSE_DECRYPT = 2 -> 3
+            val ctor = builderClass.getConstructor(String::class.java, Int::class.javaPrimitiveType)
+            val builder = ctor.newInstance(KEYSTORE_WRAP_ALIAS, 3)
+
+            builderClass.getMethod("setBlockModes", Array<String>::class.java)
+                .invoke(builder, arrayOf("GCM"))
+            builderClass.getMethod("setEncryptionPaddings", Array<String>::class.java)
+                .invoke(builder, arrayOf("NoPadding"))
+            builderClass.getMethod("setKeySize", Int::class.javaPrimitiveType)
+                .invoke(builder, 256)
+
+            val spec = builderClass.getMethod("build").invoke(builder) as java.security.spec.AlgorithmParameterSpec
+            kg.init(spec)
+            return kg.generateKey()
+        }
+
+        private fun wrapMasterKeyWithKeystore(rawKey: ByteArray): String {
+            val wrapKey = getOrCreateKeyStoreWrapKey()
+            val cipher = Cipher.getInstance(CIPHER_TRANSFORMATION)
+            cipher.init(Cipher.ENCRYPT_MODE, wrapKey)
+            val iv = cipher.iv
+            val wrapped = cipher.doFinal(rawKey)
+            val buf = ByteBuffer.allocate(iv.size + wrapped.size)
+            buf.put(iv)
+            buf.put(wrapped)
+            return Base64.getEncoder().encodeToString(buf.array())
+        }
+
+        private fun unwrapMasterKeyWithKeystore(wrappedB64: String): SecretKey {
+            val wrapKey = getOrCreateKeyStoreWrapKey()
+            val raw = Base64.getDecoder().decode(wrappedB64)
+            require(raw.size > GCM_IV_LENGTH_BYTES) { "Invalid wrapped key" }
+            val iv = raw.copyOfRange(0, GCM_IV_LENGTH_BYTES)
+            val ciphertext = raw.copyOfRange(GCM_IV_LENGTH_BYTES, raw.size)
+            val cipher = Cipher.getInstance(CIPHER_TRANSFORMATION)
+            cipher.init(Cipher.DECRYPT_MODE, wrapKey, GCMParameterSpec(GCM_TAG_LENGTH_BITS, iv))
+            val unwrapped = cipher.doFinal(ciphertext)
+            return SecretKeySpec(unwrapped, "AES")
+        }
 
         private fun getOrCreateMasterKey(prefs: SharedPreferences): SecretKey {
+            if (hasAndroidKeyStore()) {
+                val wrapped = prefs.getString(PREF_KEY_WRAPPED_MASTER_KEY, null)
+                if (wrapped != null) {
+                    return unwrapMasterKeyWithKeystore(wrapped)
+                }
+
+                // Migrate any legacy key to AndroidKeyStore-wrapped storage and scrub plaintext entry
+                val legacyEncoded = prefs.getString(PREF_KEY_MASTER_KEY, null)
+                val rawKey = if (legacyEncoded != null) {
+                    Base64.getDecoder().decode(legacyEncoded)
+                } else {
+                    val kg = KeyGenerator.getInstance("AES")
+                    kg.init(256, SecureRandom())
+                    kg.generateKey().encoded
+                }
+                val newWrapped = wrapMasterKeyWithKeystore(rawKey)
+                prefs.edit()
+                    .putString(PREF_KEY_WRAPPED_MASTER_KEY, newWrapped)
+                    .remove(PREF_KEY_MASTER_KEY)
+                    .apply()
+                return SecretKeySpec(rawKey, "AES")
+            }
+
+            // Host JVM unit-test fallback (AndroidKeyStore unavailable)
             val encodedKey = prefs.getString(PREF_KEY_MASTER_KEY, null)
             if (encodedKey != null) {
                 val raw = Base64.getDecoder().decode(encodedKey)
@@ -255,5 +342,13 @@ class SecureStorage(
 
     fun setAutoStartOnBoot(enabled: Boolean) {
         preferences.edit().putBoolean(KEY_AUTO_START_ON_BOOT, enabled).apply()
+    }
+
+    fun getScopedTreeUri(): String? {
+        return getString(KEY_SCOPED_TREE_URI)
+    }
+
+    fun setScopedTreeUri(uriString: String?) {
+        saveString(KEY_SCOPED_TREE_URI, uriString)
     }
 }

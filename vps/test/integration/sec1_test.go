@@ -49,11 +49,11 @@ func TestSEC1CrossComponentSecurityHardening(t *testing.T) {
 	registerDevice(t, httpServer.URL, macDeviceID, "mac", base64.StdEncoding.EncodeToString(macPub), auth.AlgorithmEd25519)
 	registerDevice(t, httpServer.URL, andDeviceID, "android", base64.StdEncoding.EncodeToString(andPubDER), auth.AlgorithmECDSAP256)
 
-	token := createPairingToken(t, httpServer.URL, macDeviceID)
-	claimPairing(t, httpServer.URL, token, andDeviceID)
-
 	macToken := authenticateEd25519(t, httpServer.URL, macDeviceID, macPriv)
 	andToken := authenticateECDSA(t, httpServer.URL, andDeviceID, andPriv, andPubDER)
+
+	token := createPairingToken(t, httpServer.URL, macDeviceID, macToken)
+	claimPairing(t, httpServer.URL, token, andDeviceID)
 
 	macConn, _, err := websocket.DefaultDialer.Dial(fmt.Sprintf("%s/ws/v1/connect?token=%s", wsBaseURL, macToken), nil)
 	if err != nil {

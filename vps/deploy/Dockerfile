@@ -1,23 +1,28 @@
 # Build stage
-FROM golang:1.22-alpine AS builder
+FROM golang:1.26-alpine AS builder
 
+ARG TARGETARCH
 WORKDIR /app
 
-COPY go.mod ./
+COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-w -s" -o /app/phonelink-relay ./cmd/relay
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH:-amd64} go build -ldflags="-w -s" -o /app/phonelink-relay ./cmd/relay && \
+    mkdir -p /app/apk && \
+    if [ -f /app/PhoneLink.apk ]; then cp /app/PhoneLink.apk /app/apk/PhoneLink.apk; fi
 
-# Production runtime stage: scratch container (minimal attack surface, ~15MB)
-FROM alpine:3.19
+# Production runtime stage: minimal alpine container
+FROM alpine:3.21
 
 RUN apk --no-cache add ca-certificates tzdata
 
 WORKDIR /app
 
 COPY --from=builder /app/phonelink-relay /app/phonelink-relay
+COPY --from=builder /app/apk/ /app/
+RUN mkdir -p /app/data && chown -R nobody:nobody /app/data
 
 # Run as unprivileged user
 USER nobody:nobody

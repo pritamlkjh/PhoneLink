@@ -37,7 +37,7 @@ import (
 // 8. Live camera frame streaming & deactivation (CAM-3 & CAM-4)
 // 9. Zero-plaintext VPS relay leakage audit
 func TestTEST2CrossComponentIntegrationSuite(t *testing.T) {
-	if err := runUnifiedIntegrationWorkflow(false); err != nil {
+	if err := runUnifiedIntegrationWorkflow(t, false); err != nil {
 		t.Fatalf("TEST-2 Cross-Component Integration Suite failed: %v", err)
 	}
 }
@@ -45,14 +45,15 @@ func TestTEST2CrossComponentIntegrationSuite(t *testing.T) {
 // Intentional regression failure test required by TEST-2 acceptance criteria:
 // "Suite fails clearly on an intentionally introduced regression"
 func TestTEST2IntentionalRegressionFailure(t *testing.T) {
-	err := runUnifiedIntegrationWorkflow(true)
+	err := runUnifiedIntegrationWorkflow(t, true)
 	if err == nil {
 		t.Fatalf("CRITICAL: TEST-2 suite failed to catch intentionally introduced regression!")
 	}
 	t.Logf("PASS: Intentionally introduced regression successfully caught: %v", err)
 }
 
-func runUnifiedIntegrationWorkflow(injectRegression bool) error {
+func runUnifiedIntegrationWorkflow(t *testing.T, injectRegression bool) error {
+	t.Helper()
 	// 1. Initialize VPS Relay Server
 	srv := server.NewServer(server.DefaultConfig(), nil)
 	httpServer := httptest.NewServer(srv.Handler())
@@ -70,17 +71,14 @@ func runUnifiedIntegrationWorkflow(injectRegression bool) error {
 	andDeviceID := auth.DeriveDeviceID(andPubDER)
 
 	// Register devices
-	regMockT := &testing.T{}
-	registerDevice(regMockT, httpServer.URL, macDeviceID, "mac", base64.StdEncoding.EncodeToString(macPub), auth.AlgorithmEd25519)
-	registerDevice(regMockT, httpServer.URL, andDeviceID, "android", base64.StdEncoding.EncodeToString(andPubDER), auth.AlgorithmECDSAP256)
+	registerDevice(t, httpServer.URL, macDeviceID, "mac", base64.StdEncoding.EncodeToString(macPub), auth.AlgorithmEd25519)
+	registerDevice(t, httpServer.URL, andDeviceID, "android", base64.StdEncoding.EncodeToString(andPubDER), auth.AlgorithmECDSAP256)
 
-	// 3. Pairing Ceremony
-	token := createPairingToken(regMockT, httpServer.URL, macDeviceID)
-	claimPairing(regMockT, httpServer.URL, token, andDeviceID)
-
-	// 4. Authenticate & Connect
-	macToken := authenticateEd25519(regMockT, httpServer.URL, macDeviceID, macPriv)
-	andToken := authenticateECDSA(regMockT, httpServer.URL, andDeviceID, andPriv, andPubDER)
+	// 3. Authenticate & Pairing Ceremony
+	macToken := authenticateEd25519(t, httpServer.URL, macDeviceID, macPriv)
+	andToken := authenticateECDSA(t, httpServer.URL, andDeviceID, andPriv, andPubDER)
+	token := createPairingToken(t, httpServer.URL, macDeviceID, macToken)
+	claimPairing(t, httpServer.URL, token, andDeviceID)
 
 	macConn, _, err := websocket.DefaultDialer.Dial(fmt.Sprintf("%s/ws/v1/connect?token=%s", wsBaseURL, macToken), nil)
 	if err != nil {
@@ -95,9 +93,9 @@ func runUnifiedIntegrationWorkflow(injectRegression bool) error {
 	defer andConn.Close()
 
 	// Consume presence events
-	_ = readPresenceEvent(regMockT, macConn)
-	_ = readPresenceEvent(regMockT, andConn)
-	_ = readPresenceEvent(regMockT, macConn)
+	_ = readPresenceEvent(t, macConn)
+	_ = readPresenceEvent(t, andConn)
+	_ = readPresenceEvent(t, macConn)
 
 	// 5. Ephemeral Handshake (Curve25519)
 	macCurve := ecdh.X25519()

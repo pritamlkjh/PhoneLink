@@ -16,7 +16,7 @@ This guide walks through deploying the Linux VPS Relay, setting up the Android c
    - Sideloading permissions enabled ("Install unknown apps" when prompted)
 
 3. **Mac Client:**
-   - macOS 14.0 (Sonoma) or macOS 15.0+ (Sequoia)
+   - macOS 15.0+ (Sequoia)
    - Terminal access (zsh/bash)
 
 ---
@@ -40,8 +40,7 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now phonelink-relay
 
 # 4. Configure Caddy Reverse Proxy
-# Edit vps/deploy/Caddyfile with your domain and email:
-# replace relay.phonelink.local with relay.example.com
+# Edit vps/deploy/Caddyfile with your real DNS domain and ACME email
 sudo cp vps/deploy/Caddyfile /etc/caddy/Caddyfile
 sudo systemctl restart caddy
 
@@ -111,57 +110,43 @@ The pairing ceremony establishes mutual trust and cryptographic identity:
 ### Step 1: Generate Pairing Token on Mac
 In your Mac terminal:
 ```bash
-phonelink pair --relay https://relay.example.com
+phonelink pair --vps https://relay.example.com
 ```
 **Output:**
 ```
-PhoneLink Pairing Ceremony
-==========================
-Device ID: 4c34b040a6b986b2457c79e6027aeb8ec2c18ab9d01fc87a
-Relay URL: https://relay.example.com
+==================================================
+        PHONELINK OUT-OF-BAND PAIRING
+==================================================
+Mac Device ID: 4c34b040a6b986b2457c79e6027aeb8ec2c18ab9d01fc87a...
+Pairing Token: 39a0cef02267a855d6c1e65c52abbeeb
+Short Code:    [39A0CEF0]
 
-Pairing Token: 849201
-Expiration: 10 minutes
-
-Enter this 6-digit code into your Android PhoneLink app.
-Listening for Android claimant...
+Scan QR code or enter this short code on your Android device.
+Token expires in 300 seconds.
+==================================================
 ```
 
 ### Step 2: Claim Pairing on Android
 1. Open the **PhoneLink** app on your phone.
 2. Enter the Relay URL: `https://relay.example.com`
-3. Enter the 6-digit pairing code: `849201`
+3. Enter the 8-character pairing short code (e.g. `39A0CEF0`).
 4. Tap **Connect & Pair**.
 5. Grant required Android permissions:
    - **Notification Permission:** (Required on Android 13+ to display the ongoing connection status).
-   - **Battery Optimization:** (Tap "Allow" so the connection persists when phone screen is off).
+   - **Battery Optimization:** Open App Info -> Battery and select **Unrestricted** so the foreground connection persists when the screen is off.
 
 ### Step 3: Confirmation
-On your Mac terminal:
-```
-[SUCCESS] Android phone paired successfully!
-Paired Device: a8f09d...17c
-Session Key Established via ECDH.
-End-to-End Encrypted Tunnel ACTIVE.
+On your Android app, status updates to **Connected**. On your Mac terminal:
+```bash
+phonelink status --vps https://relay.example.com
 ```
 
 ---
 
 ## 6. Verifying Connection Health
 
-Check connection status from Mac:
+Check connection status or run remote commands from Mac:
 ```bash
-phonelink status
+phonelink status --vps https://relay.example.com
+phonelink device info --vps https://relay.example.com
 ```
-**Output:**
-```
-PhoneLink Status
-================
-Relay:        https://relay.example.com (Connected, TLS 1.3)
-Local Mac:    4c34b0...d787
-Paired Phone: 7d3c39...7d4e
-State:        ONLINE (Ping RTT: 42ms)
-Battery:      87% (Charging)
-Storage:      128.4 GB free
-```
-You are now ready to explore file transfers, remote camera viewing, and scoped actions!

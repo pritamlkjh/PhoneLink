@@ -2,6 +2,7 @@ package integration
 
 import (
 	"bytes"
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/ed25519"
@@ -11,6 +12,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -443,7 +445,9 @@ func TestTEST3_MalformedAndTruncatedCiphertextInjection(t *testing.T) {
 }
 
 func TestTEST3_AbruptVPSRestartUnderTransitLoad(t *testing.T) {
-	srv := server.NewServer(server.DefaultConfig(), nil)
+	cfg := server.DefaultConfig()
+	cfg.StateFile = filepath.Join(t.TempDir(), "state", "registry_state.json")
+	srv := server.NewServer(cfg, nil)
 	httpServer := httptest.NewServer(srv.Handler())
 	wsBaseURL := "ws" + strings.TrimPrefix(httpServer.URL, "http")
 
@@ -456,11 +460,11 @@ func TestTEST3_AbruptVPSRestartUnderTransitLoad(t *testing.T) {
 	registerDevice(t, httpServer.URL, macDeviceID, "mac", base64.StdEncoding.EncodeToString(macPub), auth.AlgorithmEd25519)
 	registerDevice(t, httpServer.URL, andDeviceID, "android", base64.StdEncoding.EncodeToString(andPub), auth.AlgorithmEd25519)
 
-	pairingToken := createPairingToken(t, httpServer.URL, macDeviceID)
-	claimPairing(t, httpServer.URL, pairingToken, andDeviceID)
-
 	macAuth := authenticateWithResumption(t, httpServer.URL, macDeviceID, macPriv)
 	andAuth := authenticateWithResumption(t, httpServer.URL, andDeviceID, andPriv)
+
+	pairingToken := createPairingToken(t, httpServer.URL, macDeviceID, macAuth.SessionToken)
+	claimPairing(t, httpServer.URL, pairingToken, andDeviceID)
 
 	macWS, _, _ := websocket.DefaultDialer.Dial(fmt.Sprintf("%s/ws/v1/connect?token=%s", wsBaseURL, macAuth.SessionToken), nil)
 	defer macWS.Close()
@@ -483,14 +487,17 @@ func TestTEST3_AbruptVPSRestartUnderTransitLoad(t *testing.T) {
 	// CRASH THE SERVER DURING TRANSIT
 	startRestart := time.Now()
 	httpServer.Close()
+	_ = srv.Shutdown(context.Background())
 
 	// Both clients notice error on write/read
 	_ = macWS.WriteMessage(websocket.BinaryMessage, []byte("in-flight-lost"))
 	_ = macWS.Close()
 	_ = andWS.Close()
 
-	// Spin up fresh server instance sharing the same underlying registry
-	newHTTPServer := httptest.NewServer(srv.Handler())
+	// Spin up a brand new Server instance loading only persisted disk state
+	srv2 := server.NewServer(cfg, nil)
+	defer func() { _ = srv2.Shutdown(context.Background()) }()
+	newHTTPServer := httptest.NewServer(srv2.Handler())
 	defer newHTTPServer.Close()
 	newWSBaseURL := "ws" + strings.TrimPrefix(newHTTPServer.URL, "http")
 
@@ -525,8 +532,8 @@ func TestTEST3_AbruptVPSRestartUnderTransitLoad(t *testing.T) {
 		t.Fatalf("recovery took too long: %v > 3000ms SLA", elapsed)
 	}
 
-	// Verify pairing still valid
-	paired, err := srv.Registry().GetPairedDevice(macDeviceID)
+	// Verify pairing still valid in fresh restarted registry
+	paired, err := srv2.Registry().GetPairedDevice(macDeviceID)
 	if err != nil || paired != andDeviceID {
 		t.Fatalf("pairing corrupted across server restart: %v", err)
 	}

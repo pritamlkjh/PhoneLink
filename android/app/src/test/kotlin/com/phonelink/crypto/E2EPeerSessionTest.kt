@@ -81,12 +81,14 @@ class E2EPeerSessionTest {
         }
         val encryptedRequest = E2EEncryptionManager.encryptAESGCM(
             macSessionKeys.keyMacToAndroid,
-            requestJson.toString().toByteArray(Charsets.UTF_8)
+            requestJson.toString().toByteArray(Charsets.UTF_8),
+            E2EEncryptionManager.buildPayloadAad("M2A", 1L)
         )
 
         // Wrap as E2E_PAYLOAD
         val payloadJson = JSONObject().apply {
             put("type", "E2E_PAYLOAD")
+            put("seq", 1L)
             put("ciphertext", Base64.getEncoder().encodeToString(encryptedRequest))
         }
 
@@ -98,12 +100,14 @@ class E2EPeerSessionTest {
         // 3. Android replied with encrypted E2E_PAYLOAD
         val replyJson = JSONObject(String(sentFrames[0], Charsets.UTF_8))
         assertEquals("E2E_PAYLOAD", replyJson.getString("type"))
+        val replySeq = replyJson.getLong("seq")
         val responseCiphertext = Base64.getDecoder().decode(replyJson.getString("ciphertext"))
 
-        // Mac decrypts with keyAndroidToMac
+        // Mac decrypts with keyAndroidToMac + AAD
         val decryptedResponseBytes = E2EEncryptionManager.decryptAESGCM(
             macSessionKeys.keyAndroidToMac,
-            responseCiphertext
+            responseCiphertext,
+            E2EEncryptionManager.buildPayloadAad("A2M", replySeq)
         )
         val responseObj = JSONObject(String(decryptedResponseBytes, Charsets.UTF_8))
         assertEquals(1, responseObj.getInt("schema_version"))

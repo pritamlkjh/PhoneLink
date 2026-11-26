@@ -59,7 +59,7 @@ func TestFILE2RemoteFileListing(t *testing.T) {
 	macToken := authenticateEd25519(t, httpServer.URL, macDeviceID, macPriv)
 	andToken := authenticateECDSA(t, httpServer.URL, andDeviceID, andPriv, andPubDER)
 
-	pairToken := createPairingToken(t, httpServer.URL, macDeviceID)
+	pairToken := createPairingToken(t, httpServer.URL, macDeviceID, macToken)
 	claimPairing(t, httpServer.URL, pairToken, andDeviceID)
 
 	// 4. Stage Android Scoped Storage Directory Structure

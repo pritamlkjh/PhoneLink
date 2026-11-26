@@ -190,7 +190,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             </div>
             <div class="step">
                 <div class="step-num">3</div>
-                <div class="step-text"><strong>Pair with Mac:</strong> Open the app, type the 6-digit code shown by running <code>phonelink pair</code> on your Mac, and tap <strong>Connect &amp; Pair</strong>.</div>
+                <div class="step-text"><strong>Pair with Mac:</strong> Open the app, enter the 8-character code shown by running <code>phonelink pair</code> on your Mac, and tap <strong>Connect &amp; Pair</strong>.</div>
             </div>
         </div>
 
@@ -204,16 +204,26 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
 
 def detect_lan_ip():
-    """Detects primary local network IP address."""
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    """Detects primary local network IP address, including offline LAN setups."""
+    for target in (("10.255.255.255", 1), ("192.168.1.1", 80), ("8.8.8.8", 80)):
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(target)
+            ip = s.getsockname()[0]
+            if ip and not ip.startswith("127."):
+                return ip
+        except Exception:
+            pass
+        finally:
+            s.close()
     try:
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
+        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ip = info[4][0]
+            if ip and not ip.startswith("127."):
+                return ip
     except Exception:
-        ip = "127.0.0.1"
-    finally:
-        s.close()
-    return ip
+        pass
+    return "127.0.0.1"
 
 
 def render_ascii_qr(url):
@@ -281,6 +291,7 @@ class PhoneInstallerHandler(http.server.BaseHTTPRequestHandler):
                 self.send_error(404, "APK file not found. Please build the APK first with ./android/scripts/build_release_apk.sh")
                 return
 
+            headers_sent = False
             try:
                 file_size = self.apk_path.stat().st_size
                 self.send_response(200)
@@ -290,12 +301,16 @@ class PhoneInstallerHandler(http.server.BaseHTTPRequestHandler):
                 self.send_header("Content-Length", str(file_size))
                 self.send_header("Cache-Control", "no-cache")
                 self.end_headers()
+                headers_sent = True
 
                 with open(self.apk_path, "rb") as f:
                     while chunk := f.read(64 * 1024):
                         self.wfile.write(chunk)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
             except Exception as e:
-                self.send_error(500, f"Error streaming APK: {e}")
+                if not headers_sent:
+                    self.send_error(500, f"Error streaming APK: {e}")
             return
 
         self.send_error(404, "Not Found")
@@ -342,8 +357,11 @@ def run_installer_server(host, port, apk_path):
     print("Press Ctrl+C to stop the server.")
     print("=" * 64)
 
-    socketserver.TCPServer.allow_reuse_address = True
-    with socketserver.TCPServer(("0.0.0.0", port), PhoneInstallerHandler) as httpd:
+    class ThreadingInstallerServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
+        daemon_threads = True
+        allow_reuse_address = True
+
+    with ThreadingInstallerServer(("0.0.0.0", port), PhoneInstallerHandler) as httpd:
         try:
             httpd.serve_forever()
         except KeyboardInterrupt:

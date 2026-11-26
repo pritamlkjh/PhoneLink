@@ -27,6 +27,10 @@ class AuthClient(
 
     private val secureRandom = SecureRandom()
 
+    fun cancelAll() {
+        okHttpClient.dispatcher.cancelAll()
+    }
+
     class AuthenticationException(message: String) : Exception(message)
 
     /**
@@ -218,8 +222,9 @@ class AuthClient(
                 } else {
                     val respJson = JSONObject(resp.body?.string() ?: "{}")
                     val pairedPeerId = respJson.optString("paired_peer_id", "")
+                    val pairedPubKey = respJson.optString("paired_public_key", "")
                     if (pairedPeerId.isNotEmpty()) {
-                        secureStorage.savePairedDevice(pairedPeerId, "")
+                        secureStorage.savePairedDevice(pairedPeerId, pairedPubKey)
                     }
                     Result.success(pairedPeerId)
                 }
@@ -234,6 +239,8 @@ class AuthClient(
         val isOnline: Boolean,
         val isPaired: Boolean,
         val peerDeviceId: String?,
+        val peerPublicKey: String? = null,
+        val peerKeyAlgorithm: String? = null,
         val peerOnline: Boolean,
         val timestamp: Long
     )
@@ -256,12 +263,20 @@ class AuthClient(
                     return Result.failure(AuthenticationException("Status query failed (HTTP ${resp.code}): $body"))
                 }
                 val json = JSONObject(resp.body?.string() ?: "{}")
+                val peerId = if (json.has("peer_device_id")) json.getString("peer_device_id") else null
+                val peerPub = if (json.has("peer_public_key")) json.optString("peer_public_key", "") else null
+                val peerAlg = if (json.has("peer_key_algorithm")) json.optString("peer_key_algorithm", "") else null
+                if (!peerId.isNullOrEmpty() && !peerPub.isNullOrEmpty()) {
+                    secureStorage.savePairedDevice(peerId, peerPub)
+                }
                 Result.success(
                     DeviceStatus(
                         deviceId = json.getString("device_id"),
                         isOnline = json.getBoolean("is_online"),
                         isPaired = json.getBoolean("is_paired"),
-                        peerDeviceId = if (json.has("peer_device_id")) json.getString("peer_device_id") else null,
+                        peerDeviceId = peerId,
+                        peerPublicKey = peerPub,
+                        peerKeyAlgorithm = peerAlg,
                         peerOnline = json.getBoolean("peer_online"),
                         timestamp = json.getLong("timestamp")
                     )

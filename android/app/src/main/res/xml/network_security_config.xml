@@ -1,19 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <!-- Base configuration: Allow cleartext HTTP traffic for local Wi-Fi / IP testing -->
-    <base-config cleartextTrafficPermitted="true">
+    <!-- Release policy: require TLS (HTTPS/WSS) for all non-loopback traffic -->
+    <base-config cleartextTrafficPermitted="false">
         <trust-anchors>
             <certificates src="system" />
-            <certificates src="user" />
         </trust-anchors>
     </base-config>
 
-    <!-- VPS Relay Domain Pinning Configuration -->
+    <!-- Local loopback exception for local relay tunneling / instrumentation -->
     <domain-config cleartextTrafficPermitted="true">
-        <domain includeSubdomains="true">relay.phonelink.local</domain>
-        <pin-set expiration="2030-01-01">
-            <!-- Pinned SHA-256 SPKI fingerprint of the self-hosted PhoneLink relay cert -->
-            <pin digest="SHA-256">47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=</pin>
-        </pin-set>
+        <domain includeSubdomains="false">localhost</domain>
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <domain includeSubdomains="false">10.0.2.2</domain>
     </domain-config>
 </network-security-config>

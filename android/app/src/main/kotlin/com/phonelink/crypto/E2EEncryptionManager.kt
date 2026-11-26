@@ -2,12 +2,10 @@ package com.phonelink.crypto
 
 import java.nio.ByteBuffer
 import java.security.KeyPair
-import java.security.KeyPairGenerator
 import java.security.PrivateKey
 import java.security.PublicKey
 import java.security.SecureRandom
 import javax.crypto.Cipher
-import javax.crypto.KeyAgreement
 import javax.crypto.Mac
 import javax.crypto.spec.GCMParameterSpec
 import javax.crypto.spec.SecretKeySpec
@@ -16,16 +14,32 @@ import javax.crypto.spec.SecretKeySpec
  * ARCH-2 / INT-1: End-to-End Encryption Manager.
  *
  * Implements:
- * 1. Ephemeral Diffie-Hellman Key Exchange (X25519 / XDH)
+ * 1. Ephemeral Diffie-Hellman Key Exchange (portable RFC 7748 X25519 across API 26+)
  * 2. HKDF-SHA256 key derivation (producing directional keys K_M2A and K_A2M)
- * 3. Authenticated Symmetric Encryption (AES-256-GCM with 96-bit random IV)
- *
- * Security Invariant:
- * The VPS relay never possesses or derives these keys, and can never decrypt payloads.
+ * 3. Authenticated Symmetric Encryption (AES-256-GCM with 96-bit random IV and AAD binding)
+ * 4. Identity verification helpers for authenticated E2E handshakes (Ed25519 / ECDSA P-256)
  */
 class E2EEncryptionManager(
     val ephemeralKeyPair: KeyPair = generateEphemeralKeyPair()
 ) {
+    class X25519PublicKey(val rawBytes: ByteArray) : PublicKey {
+        init {
+            require(rawBytes.size == KEY_SIZE_BYTES) { "X25519 public key must be 32 bytes" }
+        }
+        override fun getAlgorithm(): String = "X25519"
+        override fun getFormat(): String = "X.509"
+        override fun getEncoded(): ByteArray = X25519_X509_HEADER + rawBytes
+    }
+
+    class X25519PrivateKey(val rawBytes: ByteArray) : PrivateKey {
+        init {
+            require(rawBytes.size == KEY_SIZE_BYTES) { "X25519 private key must be 32 bytes" }
+        }
+        override fun getAlgorithm(): String = "X25519"
+        override fun getFormat(): String = "PKCS#8"
+        override fun getEncoded(): ByteArray = X25519_PKCS8_HEADER + rawBytes
+    }
+
     companion object {
         const val KEY_SIZE_BYTES = 32
         const val GCM_IV_BYTES = 12
@@ -33,20 +47,36 @@ class E2EEncryptionManager(
         const val INFO_M2A = "PhoneLink-M2A-v1"
         const val INFO_A2M = "PhoneLink-A2M-v1"
 
+        private val X25519_X509_HEADER = byteArrayOf(
+            0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x6e, 0x03, 0x21, 0x00
+        )
+        private val X25519_PKCS8_HEADER = byteArrayOf(
+            0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x6e, 0x04, 0x22, 0x04, 0x20
+        )
+
         fun generateEphemeralKeyPair(): KeyPair {
-            val kpg = try {
-                KeyPairGenerator.getInstance("X25519")
-            } catch (e: Exception) {
-                try {
-                    KeyPairGenerator.getInstance("XDH")
-                } catch (e2: Exception) {
-                    // Fallback for older JVMs to standard EC
-                    val k = KeyPairGenerator.getInstance("EC")
-                    k.initialize(256)
-                    k
-                }
+            val priv = Curve25519Primitives.x25519GeneratePrivateKey()
+            val pub = Curve25519Primitives.x25519PublicFromPrivate(priv)
+            return KeyPair(X25519PublicKey(pub), X25519PrivateKey(priv))
+        }
+
+        fun buildHandshakeTranscript(ephemeralPublicKey: ByteArray, timestampMs: Long): ByteArray {
+            val buf = ByteBuffer.allocate(ephemeralPublicKey.size + 8)
+            buf.put(ephemeralPublicKey)
+            buf.putLong(timestampMs)
+            return buf.array()
+        }
+
+        fun buildPayloadAad(direction: String, seq: Long): ByteArray {
+            return "PhoneLink-E2E-v1|$direction|$seq".toByteArray(Charsets.UTF_8)
+        }
+
+        fun extractRawEd25519PublicKey(rawOrDer: ByteArray): ByteArray? {
+            return when {
+                rawOrDer.size == 32 -> rawOrDer
+                rawOrDer.size == 44 && rawOrDer[0] == 0x30.toByte() -> rawOrDer.copyOfRange(12, 44)
+                else -> null
             }
-            return kpg.generateKeyPair()
         }
 
         fun hkdfExtract(salt: ByteArray, ikm: ByteArray): ByteArray {
@@ -123,26 +153,14 @@ class E2EEncryptionManager(
         }
 
         fun parsePublicKey(rawOrDer: ByteArray): PublicKey {
-            val kf = try {
-                java.security.KeyFactory.getInstance("X25519")
-            } catch (e: Exception) {
-                try {
-                    java.security.KeyFactory.getInstance("XDH")
-                } catch (e2: Exception) {
-                    java.security.KeyFactory.getInstance("EC")
-                }
+            val raw = when {
+                rawOrDer.size == KEY_SIZE_BYTES -> rawOrDer.copyOf()
+                rawOrDer.size == X25519_X509_HEADER.size + KEY_SIZE_BYTES &&
+                    rawOrDer.copyOfRange(0, X25519_X509_HEADER.size).contentEquals(X25519_X509_HEADER) ->
+                    rawOrDer.copyOfRange(X25519_X509_HEADER.size, rawOrDer.size)
+                else -> throw IllegalArgumentException("Unsupported X25519 public key length (${rawOrDer.size} bytes)")
             }
-
-            val x509Header = byteArrayOf(
-                0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x6e, 0x03, 0x21, 0x00
-            )
-            val der = if (rawOrDer.size == 32) {
-                x509Header + rawOrDer
-            } else {
-                rawOrDer
-            }
-
-            return kf.generatePublic(java.security.spec.X509EncodedKeySpec(der))
+            return X25519PublicKey(raw)
         }
     }
 
@@ -154,7 +172,9 @@ class E2EEncryptionManager(
     fun getPublicKeyEncoded(): ByteArray = ephemeralKeyPair.public.encoded
 
     fun getRawPublicKey(): ByteArray {
-        val encoded = ephemeralKeyPair.public.encoded
+        val pub = ephemeralKeyPair.public
+        if (pub is X25519PublicKey) return pub.rawBytes.copyOf()
+        val encoded = pub.encoded
         return if (encoded.size == 44 && encoded[0] == 0x30.toByte()) {
             encoded.copyOfRange(12, 44)
         } else {
@@ -163,21 +183,22 @@ class E2EEncryptionManager(
     }
 
     /**
-     * Completes ECDH with peer's ephemeral public key and derives directional keys.
+     * Completes X25519 ECDH with peer's ephemeral public key and derives directional keys.
      */
     fun deriveSessionKeys(peerPublicKey: PublicKey, salt: ByteArray = ByteArray(32)): SessionKeys {
-        val ka = try {
-            KeyAgreement.getInstance("X25519")
-        } catch (e: Exception) {
-            try {
-                KeyAgreement.getInstance("XDH")
-            } catch (e2: Exception) {
-                KeyAgreement.getInstance("ECDH")
+        val privRaw = when (val priv = ephemeralKeyPair.private) {
+            is X25519PrivateKey -> priv.rawBytes
+            else -> {
+                val enc = priv.encoded
+                if (enc.size >= KEY_SIZE_BYTES) enc.copyOfRange(enc.size - KEY_SIZE_BYTES, enc.size)
+                else throw IllegalStateException("Unsupported private key encoding")
             }
         }
-        ka.init(ephemeralKeyPair.private)
-        ka.doPhase(peerPublicKey, true)
-        val sharedSecret = ka.generateSecret()
+        val peerRaw = when (peerPublicKey) {
+            is X25519PublicKey -> peerPublicKey.rawBytes
+            else -> parsePublicKey(peerPublicKey.encoded).let { (it as X25519PublicKey).rawBytes }
+        }
+        val sharedSecret = Curve25519Primitives.x25519ComputeSharedSecret(privRaw, peerRaw)
 
         val prk = hkdfExtract(salt, sharedSecret)
         val kM2A = hkdfExpand(prk, INFO_M2A.toByteArray(Charsets.UTF_8), KEY_SIZE_BYTES)

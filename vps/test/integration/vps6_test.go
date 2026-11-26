@@ -42,7 +42,8 @@ func TestVPS6SessionResumptionAndReconnection(t *testing.T) {
 	registerDevice(t, httpServer.URL, macDeviceID, "mac", base64.StdEncoding.EncodeToString(macPub), auth.AlgorithmEd25519)
 	registerDevice(t, httpServer.URL, andDeviceID, "android", base64.StdEncoding.EncodeToString(andPub), auth.AlgorithmEd25519)
 
-	pairingToken := createPairingToken(t, httpServer.URL, macDeviceID)
+	macInitToken := authenticateWithResumption(t, httpServer.URL, macDeviceID, macPriv).SessionToken
+	pairingToken := createPairingToken(t, httpServer.URL, macDeviceID, macInitToken)
 	claimPairing(t, httpServer.URL, pairingToken, andDeviceID)
 
 	// --- SUB-TEST 1: Fast Session Resumption Without Full Re-Auth Handshake ---
@@ -169,10 +170,11 @@ func TestVPS6SessionResumptionAndReconnection(t *testing.T) {
 	// --- SUB-TEST 3: Bounded Validity Window Expiration ---
 	t.Run("ResumptionTokenExpirationEnforcement", func(t *testing.T) {
 		// Manually inject an already-expired token directly into registry
-		expiredToken, _, err := srv.Registry().CreateResumptionToken(andDeviceID, -1*time.Second)
+		expiredToken, _, err := srv.Registry().CreateResumptionToken(andDeviceID, 1*time.Minute)
 		if err != nil {
-			t.Fatalf("failed to create expired token: %v", err)
+			t.Fatalf("failed to create token for expiration test: %v", err)
 		}
+		srv.Registry().ExpireResumptionTokenForTest(expiredToken)
 
 		resumeReqBody, _ := json.Marshal(map[string]string{
 			"device_id":        andDeviceID,
@@ -193,9 +195,15 @@ func TestVPS6SessionResumptionAndReconnection(t *testing.T) {
 	t.Run("DeviceRevocationBlocksResumption", func(t *testing.T) {
 		andAuthResp := authenticateWithResumption(t, httpServer.URL, andDeviceID, andPriv)
 
-		// Revoke Android device
+		// Revoke Android device (authenticated via Android's Bearer token)
 		revokeReqBody, _ := json.Marshal(map[string]string{"device_id": andDeviceID})
-		revResp, err := http.Post(httpServer.URL+"/api/v1/devices/revoke", "application/json", bytes.NewReader(revokeReqBody))
+		revReq, err := http.NewRequest(http.MethodPost, httpServer.URL+"/api/v1/devices/revoke", bytes.NewReader(revokeReqBody))
+		if err != nil {
+			t.Fatalf("failed to construct revoke request: %v", err)
+		}
+		revReq.Header.Set("Content-Type", "application/json")
+		revReq.Header.Set("Authorization", "Bearer "+andAuthResp.SessionToken)
+		revResp, err := http.DefaultClient.Do(revReq)
 		if err != nil || revResp.StatusCode != http.StatusOK {
 			t.Fatalf("revocation failed: %v", err)
 		}

@@ -1,24 +1,33 @@
 package com.phonelink.camera
 
+import android.Manifest
+import android.annotation.SuppressLint
 import android.content.Context
-import android.hardware.camera2.CameraAccessException
+import android.content.pm.PackageManager
+import android.graphics.ImageFormat
 import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraDevice
 import android.hardware.camera2.CameraManager
-import android.graphics.ImageFormat
+import android.hardware.camera2.CaptureRequest
+import android.hardware.camera2.params.OutputConfiguration
+import android.hardware.camera2.params.SessionConfiguration
 import android.media.ImageReader
+import android.os.Build
 import android.os.Handler
-import android.os.Looper
+import android.os.HandlerThread
+import android.util.Range
 import org.json.JSONObject
 import java.util.Base64
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * CAM-2: Android Camera Capture Module.
@@ -138,6 +147,8 @@ class CameraCaptureModule(
     private val isCapturing = AtomicBoolean(false)
     private var activeSessionId: String? = null
     private var activeLens: CameraLens = CameraLens.LENS_BACK
+    private var activeCameraSource: CameraSource? = null
+    private var activeSendAppMsg: ((ByteArray) -> Boolean)? = null
     private val frameSequence = AtomicLong(0)
 
     // CAM-3: Rate pacing, backpressure and metrics
@@ -146,7 +157,9 @@ class CameraCaptureModule(
     private val lastFrameTimeMs = AtomicLong(0)
     private val isFrameInFlight = AtomicBoolean(false)
 
-    private val scheduler: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor()
+    private val scheduler: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor { r ->
+        Thread(r, "PhoneLink-CamWatchdog").apply { isDaemon = true }
+    }
     private var sessionTimeoutTask: ScheduledFuture<*>? = null
 
     fun isCapturing(): Boolean = isCapturing.get()
@@ -204,6 +217,7 @@ class CameraCaptureModule(
         frameSequence.set(0)
 
         val source = cameraSource ?: DefaultMockCameraSource()
+        activeCameraSource = source
 
         val openResult = source.open(
             lens = request.lens,
@@ -253,6 +267,7 @@ class CameraCaptureModule(
         if (openResult.isFailure) {
             isCapturing.set(false)
             activeSessionId = null
+            activeCameraSource = null
             return CameraStartResponseDto(
                 sessionId = request.sessionId,
                 status = STATUS_ERROR_UNKNOWN,
@@ -264,10 +279,16 @@ class CameraCaptureModule(
         // Elevate foreground service to FOREGROUND_SERVICE_TYPE_CAMERA
         serviceController?.onCameraCaptureStarted()
 
-        // Start session watchdog timer for auto-deactivation
+        // Start session watchdog timer for auto-deactivation and peer notification
         sessionTimeoutTask?.cancel(false)
         sessionTimeoutTask = scheduler.schedule({
-            stopCapture(request.sessionId, "session_timeout")
+            val stopResp = stopCapture(request.sessionId, "session_timeout")
+            val notifier = activeSendAppMsg
+            if (notifier != null) {
+                try {
+                    notifier(serializeCameraStopResponse(stopResp))
+                } catch (_: Exception) {}
+            }
         }, maxSessionDurationSeconds, TimeUnit.SECONDS)
 
         return CameraStartResponseDto(
@@ -291,8 +312,9 @@ class CameraCaptureModule(
         val wasCapturing = isCapturing.getAndSet(false)
         activeSessionId = null
 
-        val source = cameraSource ?: DefaultMockCameraSource()
-        source.close()
+        val source = activeCameraSource ?: cameraSource
+        activeCameraSource = null
+        source?.close()
 
         if (wasCapturing) {
             // Revert foreground service type and remove camera indicator
@@ -303,6 +325,12 @@ class CameraCaptureModule(
             sessionId = sessionId,
             status = STATUS_OK
         )
+    }
+
+    fun shutdown() {
+        stopCapture(activeSessionId ?: "shutdown", "shutdown")
+        activeSendAppMsg = null
+        scheduler.shutdownNow()
     }
 
     /**
@@ -339,6 +367,7 @@ class CameraCaptureModule(
                 maxHeight = height
             )
 
+            activeSendAppMsg = sendAppMsg
             val respDto = startCapture(startReq) { frame ->
                 sendAppMsg?.let { send ->
                     val frameBytes = serializeCameraFrame(frame)
@@ -420,7 +449,9 @@ class CameraCaptureModule(
     ) : CameraSource {
         private val capturing = AtomicBoolean(false)
         private var scheduledTask: ScheduledFuture<*>? = null
-        private val scheduler = Executors.newSingleThreadScheduledExecutor()
+        private val scheduler = Executors.newSingleThreadScheduledExecutor { r ->
+            Thread(r, "PhoneLink-MockCam").apply { isDaemon = true }
+        }
 
         override fun open(
             lens: CameraLens,
@@ -462,15 +493,18 @@ class CameraCaptureModule(
 
 /**
  * Android Camera2 Hardware Source.
- * Gracefully interfaces with CameraManager and ImageReader.
+ * Opens CameraDevice, negotiates supported JPEG resolution and FPS range,
+ * creates CameraCaptureSession, and delivers repeating JPEG frames off the UI thread.
  */
 class AndroidCameraSource(private val context: Context) : CameraCaptureModule.CameraSource {
     private val capturing = AtomicBoolean(false)
     private var cameraDevice: CameraDevice? = null
     private var captureSession: CameraCaptureSession? = null
     private var imageReader: ImageReader? = null
-    private val handler = Handler(Looper.getMainLooper())
+    private var backgroundThread: HandlerThread? = null
+    private var backgroundHandler: Handler? = null
 
+    @SuppressLint("MissingPermission")
     override fun open(
         lens: CameraCaptureModule.CameraLens,
         width: Int,
@@ -479,8 +513,14 @@ class AndroidCameraSource(private val context: Context) : CameraCaptureModule.Ca
         targetFps: Int,
         onFrame: (jpegData: ByteArray, width: Int, height: Int) -> Unit
     ): Result<Unit> {
+        if (context.checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            return Result.failure(SecurityException("CAMERA runtime permission not granted"))
+        }
+
         val manager = context.getSystemService(Context.CAMERA_SERVICE) as? CameraManager
             ?: return Result.failure(IllegalStateException("Camera service unavailable"))
+
+        close()
 
         try {
             val targetFacing = if (lens == CameraCaptureModule.CameraLens.LENS_FRONT) {
@@ -490,42 +530,94 @@ class AndroidCameraSource(private val context: Context) : CameraCaptureModule.Ca
             }
 
             var chosenCameraId: String? = null
+            var chosenChars: CameraCharacteristics? = null
             for (id in manager.cameraIdList) {
                 val chars = manager.getCameraCharacteristics(id)
                 val facing = chars.get(CameraCharacteristics.LENS_FACING)
                 if (facing == targetFacing) {
                     chosenCameraId = id
+                    chosenChars = chars
                     break
                 }
             }
 
             if (chosenCameraId == null && manager.cameraIdList.isNotEmpty()) {
                 chosenCameraId = manager.cameraIdList[0]
+                chosenChars = manager.getCameraCharacteristics(chosenCameraId)
             }
 
-            if (chosenCameraId == null) {
+            if (chosenCameraId == null || chosenChars == null) {
                 return Result.failure(IllegalStateException("No camera sensor found on device"))
             }
 
-            val reader = ImageReader.newInstance(width, height, ImageFormat.JPEG, 2)
+            val chosenSize = selectJpegSize(chosenChars, width, height)
+            val chosenFpsRange = selectFpsRange(chosenChars, targetFps)
+
+            val thread = HandlerThread("PhoneLink-Camera2").apply { start() }
+            val handler = Handler(thread.looper)
+            backgroundThread = thread
+            backgroundHandler = handler
+
+            val reader = ImageReader.newInstance(chosenSize.first, chosenSize.second, ImageFormat.JPEG, 2)
             reader.setOnImageAvailableListener({ ir ->
                 val image = ir.acquireLatestImage() ?: return@setOnImageAvailableListener
-                if (!capturing.get()) {
+                try {
+                    if (!capturing.get()) return@setOnImageAvailableListener
+                    val planes = image.planes
+                    if (planes.isNotEmpty()) {
+                        val buffer = planes[0].buffer
+                        val bytes = ByteArray(buffer.remaining())
+                        buffer.get(bytes)
+                        onFrame(bytes, image.width, image.height)
+                    }
+                } finally {
                     image.close()
-                    return@setOnImageAvailableListener
                 }
-                val planes = image.planes
-                if (planes.isNotEmpty()) {
-                    val buffer = planes[0].buffer
-                    val bytes = ByteArray(buffer.remaining())
-                    buffer.get(bytes)
-                    onFrame(bytes, width, height)
-                }
-                image.close()
             }, handler)
-
             imageReader = reader
             capturing.set(true)
+
+            val openLatch = CountDownLatch(1)
+            val openError = AtomicReference<Throwable?>(null)
+
+            manager.openCamera(chosenCameraId, object : CameraDevice.StateCallback() {
+                override fun onOpened(device: CameraDevice) {
+                    if (!capturing.get()) {
+                        device.close()
+                        openLatch.countDown()
+                        return
+                    }
+                    cameraDevice = device
+                    startRepeatingPreview(device, reader, jpegQuality, chosenFpsRange, handler, openLatch, openError)
+                }
+
+                override fun onDisconnected(device: CameraDevice) {
+                    capturing.set(false)
+                    device.close()
+                    cameraDevice = null
+                    openError.compareAndSet(null, IllegalStateException("Camera disconnected"))
+                    openLatch.countDown()
+                }
+
+                override fun onError(device: CameraDevice, error: Int) {
+                    capturing.set(false)
+                    device.close()
+                    cameraDevice = null
+                    openError.compareAndSet(null, IllegalStateException("Camera open error code: $error"))
+                    openLatch.countDown()
+                }
+            }, handler)
+
+            if (!openLatch.await(5, TimeUnit.SECONDS)) {
+                close()
+                return Result.failure(IllegalStateException("Timed out opening Android Camera2 device"))
+            }
+
+            openError.get()?.let { err ->
+                close()
+                return Result.failure(err)
+            }
+
             return Result.success(Unit)
         } catch (ex: Exception) {
             close()
@@ -533,8 +625,90 @@ class AndroidCameraSource(private val context: Context) : CameraCaptureModule.Ca
         }
     }
 
+    private fun startRepeatingPreview(
+        device: CameraDevice,
+        reader: ImageReader,
+        jpegQuality: Int,
+        fpsRange: Range<Int>?,
+        handler: Handler,
+        openLatch: CountDownLatch,
+        openError: AtomicReference<Throwable?>
+    ) {
+        val stateCallback = object : CameraCaptureSession.StateCallback() {
+            override fun onConfigured(session: CameraCaptureSession) {
+                if (!capturing.get()) {
+                    session.close()
+                    openLatch.countDown()
+                    return
+                }
+                captureSession = session
+                try {
+                    val reqBuilder = device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
+                        addTarget(reader.surface)
+                        set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO)
+                        set(CaptureRequest.JPEG_QUALITY, jpegQuality.coerceIn(10, 100).toByte())
+                        if (fpsRange != null) {
+                            set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, fpsRange)
+                        }
+                    }
+                    session.setRepeatingRequest(reqBuilder.build(), null, handler)
+                } catch (ex: Exception) {
+                    openError.compareAndSet(null, ex)
+                } finally {
+                    openLatch.countDown()
+                }
+            }
+
+            override fun onConfigureFailed(session: CameraCaptureSession) {
+                openError.compareAndSet(null, IllegalStateException("Camera2 capture session configuration failed"))
+                openLatch.countDown()
+            }
+        }
+
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                val outputs = listOf(OutputConfiguration(reader.surface))
+                val sessionConfig = SessionConfiguration(
+                    SessionConfiguration.SESSION_REGULAR,
+                    outputs,
+                    context.mainExecutor,
+                    stateCallback
+                )
+                device.createCaptureSession(sessionConfig)
+            } else {
+                @Suppress("DEPRECATION")
+                device.createCaptureSession(listOf(reader.surface), stateCallback, handler)
+            }
+        } catch (ex: Exception) {
+            openError.compareAndSet(null, ex)
+            openLatch.countDown()
+        }
+    }
+
+    private fun selectJpegSize(chars: CameraCharacteristics, maxW: Int, maxH: Int): Pair<Int, Int> {
+        val map = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP) ?: return maxW to maxH
+        val sizes = map.getOutputSizes(ImageFormat.JPEG) ?: return maxW to maxH
+        val targetArea = maxW.toLong() * maxH.toLong()
+        val best = sizes
+            .filter { it.width <= maxW && it.height <= maxH }
+            .maxByOrNull { it.width.toLong() * it.height.toLong() }
+            ?: sizes.minByOrNull { kotlin.math.abs(it.width.toLong() * it.height.toLong() - targetArea) }
+        return if (best != null) best.width to best.height else maxW to maxH
+    }
+
+    private fun selectFpsRange(chars: CameraCharacteristics, targetFps: Int): Range<Int>? {
+        val ranges = chars.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES) ?: return null
+        return ranges
+            .filter { targetFps in it.lower..it.upper }
+            .minByOrNull { it.upper - it.lower }
+            ?: ranges.minByOrNull { kotlin.math.abs(it.upper - targetFps) }
+    }
+
     override fun close() {
         capturing.set(false)
+        try {
+            captureSession?.stopRepeating()
+        } catch (_: Exception) {}
         try {
             captureSession?.close()
             captureSession = null
@@ -542,6 +716,9 @@ class AndroidCameraSource(private val context: Context) : CameraCaptureModule.Ca
             cameraDevice = null
             imageReader?.close()
             imageReader = null
+            backgroundThread?.quitSafely()
+            backgroundThread = null
+            backgroundHandler = null
         } catch (_: Exception) {}
     }
 

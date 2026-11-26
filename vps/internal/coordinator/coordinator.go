@@ -63,12 +63,11 @@ func (c *Coordinator) ConnectSession(deviceID string, sendChan chan []byte, clos
 		return nil, fmt.Errorf("%w: %v", ErrDeviceNotPaired, err)
 	}
 
+	var priorClose func()
 	c.mu.Lock()
-	// Disconnect prior session if present
+	// Replace prior session if present; close outside mutex to avoid deadlock
 	if prior, exists := c.activeSessions[deviceID]; exists {
-		if prior.CloseFunc != nil {
-			prior.CloseFunc()
-		}
+		priorClose = prior.CloseFunc
 		delete(c.activeSessions, deviceID)
 	}
 
@@ -84,6 +83,10 @@ func (c *Coordinator) ConnectSession(deviceID string, sendChan chan []byte, clos
 	// Check if paired peer is online
 	peerSess, peerOnline := c.activeSessions[pairedDeviceID]
 	c.mu.Unlock()
+
+	if priorClose != nil {
+		priorClose()
+	}
 
 	// Notify this device of peer's status
 	selfStatusEvent, _ := json.Marshal(PeerStatusEvent{
@@ -114,11 +117,34 @@ func (c *Coordinator) ConnectSession(deviceID string, sendChan chan []byte, clos
 	return sess, nil
 }
 
-// DisconnectSession unregisters an active session and notifies the peer.
+// DisconnectSession unregisters the active session for deviceID and notifies the peer.
 func (c *Coordinator) DisconnectSession(deviceID string) {
+	c.DisconnectIfSession(deviceID, nil)
+}
+
+// TerminateSession forcibly disconnects an active session (calling CloseFunc) and notifies the peer.
+func (c *Coordinator) TerminateSession(deviceID string) {
+	c.mu.RLock()
+	sess, exists := c.activeSessions[deviceID]
+	var closeFn func()
+	if exists && sess != nil {
+		closeFn = sess.CloseFunc
+	}
+	c.mu.RUnlock()
+
+	c.DisconnectIfSession(deviceID, sess)
+	if closeFn != nil {
+		closeFn()
+	}
+}
+
+// DisconnectIfSession unregisters the session only if expected is nil or matches
+// the currently registered *Session pointer, preventing stale socket teardowns
+// from evicting newly reconnected sessions.
+func (c *Coordinator) DisconnectIfSession(deviceID string, expected *Session) {
 	c.mu.Lock()
 	sess, exists := c.activeSessions[deviceID]
-	if !exists {
+	if !exists || (expected != nil && sess != expected) {
 		c.mu.Unlock()
 		return
 	}
@@ -173,11 +199,15 @@ func (c *Coordinator) ForwardPayload(sourceDeviceID, targetDeviceID string, payl
 	}
 	c.mu.RUnlock()
 
-	// Forward verbatim without looking inside with backpressure timeout
+	// Forward verbatim without looking inside; use a short bounded timer to avoid blocking
+	// the sender's read loop or leaking time.After timers on every message.
+	timer := time.NewTimer(100 * time.Millisecond)
+	defer timer.Stop()
+
 	select {
 	case peerSess.SendChan <- payload:
 		return nil
-	case <-time.After(5 * time.Second):
+	case <-timer.C:
 		return errors.New("peer send channel buffer full: timed out")
 	}
 }

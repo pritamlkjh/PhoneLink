@@ -1,32 +1,35 @@
 package security
 
 import (
+	"net"
 	"net/http"
 	"sync"
 	"time"
 )
 
-// RateLimiter provides sliding-window rate limiting per remote IP or device
+// RateLimiter provides sliding-window rate limiting per remote IP or device.
 type RateLimiter struct {
 	mu           sync.Mutex
 	rateLimit    int           // max requests per window
 	window       time.Duration // window duration
 	clients      map[string]*clientBucket
 	cleanupTimer *time.Ticker
+	stopCh       chan struct{}
+	stopOnce     sync.Once
 }
 
 type clientBucket struct {
-	tokens    int
-	lastReset time.Time
+	timestamps []time.Time
 }
 
-// NewRateLimiter creates a thread-safe rate limiter
+// NewRateLimiter creates a thread-safe sliding-window rate limiter.
 func NewRateLimiter(rateLimit int, window time.Duration) *RateLimiter {
 	rl := &RateLimiter{
 		rateLimit:    rateLimit,
 		window:       window,
 		clients:      make(map[string]*clientBucket),
 		cleanupTimer: time.NewTicker(5 * time.Minute),
+		stopCh:       make(chan struct{}),
 	}
 
 	go rl.cleanupLoop()
@@ -35,60 +38,84 @@ func NewRateLimiter(rateLimit int, window time.Duration) *RateLimiter {
 }
 
 func (rl *RateLimiter) cleanupLoop() {
-	for range rl.cleanupTimer.C {
-		rl.mu.Lock()
-		now := time.Now()
-		for ip, bucket := range rl.clients {
-			if now.Sub(bucket.lastReset) > rl.window*2 {
-				delete(rl.clients, ip)
+	for {
+		select {
+		case <-rl.cleanupTimer.C:
+			rl.mu.Lock()
+			cutoff := time.Now().Add(-rl.window)
+			for ip, bucket := range rl.clients {
+				pruned := pruneOldTimestamps(bucket.timestamps, cutoff)
+				if len(pruned) == 0 {
+					delete(rl.clients, ip)
+				} else {
+					bucket.timestamps = pruned
+				}
 			}
+			rl.mu.Unlock()
+		case <-rl.stopCh:
+			return
 		}
-		rl.mu.Unlock()
 	}
 }
 
-// Stop stops the background cleanup timer
+// Stop stops the background cleanup timer and goroutine cleanly.
 func (rl *RateLimiter) Stop() {
-	rl.cleanupTimer.Stop()
+	rl.stopOnce.Do(func() {
+		rl.cleanupTimer.Stop()
+		close(rl.stopCh)
+	})
 }
 
-// Allow checks if the given key (e.g. IP address) is permitted to make a request
+func pruneOldTimestamps(ts []time.Time, cutoff time.Time) []time.Time {
+	idx := 0
+	for idx < len(ts) && ts[idx].Before(cutoff) {
+		idx++
+	}
+	if idx == 0 {
+		return ts
+	}
+	return append([]time.Time(nil), ts[idx:]...)
+}
+
+// Allow checks if the given key (e.g. IP address) is permitted under the sliding window.
 func (rl *RateLimiter) Allow(key string) bool {
+	if rl.rateLimit <= 0 {
+		return true
+	}
+
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
 	now := time.Now()
+	cutoff := now.Add(-rl.window)
 	bucket, exists := rl.clients[key]
-
-	if !exists || now.Sub(bucket.lastReset) >= rl.window {
-		rl.clients[key] = &clientBucket{
-			tokens:    1,
-			lastReset: now,
-		}
-		return true
+	if !exists {
+		bucket = &clientBucket{}
+		rl.clients[key] = bucket
 	}
 
-	if bucket.tokens < rl.rateLimit {
-		bucket.tokens++
+	bucket.timestamps = pruneOldTimestamps(bucket.timestamps, cutoff)
+	if len(bucket.timestamps) < rl.rateLimit {
+		bucket.timestamps = append(bucket.timestamps, now)
 		return true
 	}
 
 	return false
 }
 
-// Middleware wraps an http.Handler with rate limiting
+// ExtractClientIP strips any port cleanly (supporting IPv4 and bracketed IPv6).
+func ExtractClientIP(remoteAddr string) string {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err == nil && host != "" {
+		return host
+	}
+	return remoteAddr
+}
+
+// Middleware wraps an http.Handler with sliding-window rate limiting.
 func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ip := r.RemoteAddr
-		// Strip port if present
-		if colon := len(ip) - 1; colon >= 0 {
-			for i := colon; i >= 0; i-- {
-				if ip[i] == ':' {
-					ip = ip[:i]
-					break
-				}
-			}
-		}
+		ip := ExtractClientIP(r.RemoteAddr)
 
 		if !rl.Allow(ip) {
 			w.Header().Set("Retry-After", "60")

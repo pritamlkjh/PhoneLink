@@ -224,7 +224,7 @@ public final class CameraClient: @unchecked Sendable {
         )
     }
 
-    /// CAM-3: Streams camera frames through the VPS relay over an E2E-encrypted session.
+    /// CAM-3: Streams camera frames through the VPS relay over an authenticated E2E-encrypted session.
     public static func streamCamera(
         vpsBaseURL: URL,
         identity: DeviceIdentityManager,
@@ -239,185 +239,100 @@ public final class CameraClient: @unchecked Sendable {
         onFrame: @escaping @Sendable (CameraFrame, CameraStreamStats) -> Void,
         onStatusChange: (@Sendable (String) -> Void)? = nil
     ) async throws -> CameraStreamSummary {
-        let manager = ConnectionManager(vpsBaseURL: vpsBaseURL, identity: identity, authClient: client)
         onStatusChange?("Connecting to VPS relay...")
-        let presence = await manager.connectAndWaitForPresence(timeoutSeconds: 3.0)
-
-        guard case .peerOnline = presence else {
-            manager.disconnect()
-            throw AuthClientError.invalidResponse("Paired Android device is OFFLINE")
-        }
+        let session = try await E2ETransportSession.connectAndAuthenticate(
+            vpsBaseURL: vpsBaseURL,
+            identity: identity,
+            client: client,
+            presenceTimeoutSeconds: 3.0
+        )
 
         onStatusChange?("Establishing end-to-end encryption...")
-        let e2e = E2EEncryptionManager()
         let sessionState = CameraStreamingSessionState()
         let activeSessionId = UUID().uuidString
         sessionState.setSessionId(activeSessionId)
 
-        return try await withCheckedThrowingContinuation { continuation in
-            let sendStopRequest: @Sendable (String) -> Void = { reason in
-                guard sessionState.markStopSent(reason: reason) else { return }
-                onStatusChange?("Stopping camera stream (\(reason))...")
+        let effectiveTimeout = maxDurationSeconds > 0 ? maxDurationSeconds + 10.0 : 300.0
 
-                guard let keys = sessionState.getKeys() else {
-                    manager.disconnect()
-                    _ = sessionState.terminateOnce()
+        return try await session.runSession(
+            timeoutSeconds: effectiveTimeout,
+            timeoutMessage: "Timed out waiting for camera stream",
+            onReady: { activeSession in
+                onStatusChange?("Starting camera stream on Android...")
+                let reqData = try buildCameraStartRequest(
+                    sessionId: activeSessionId,
+                    lens: lens,
+                    targetFps: targetFps,
+                    jpegQuality: jpegQuality,
+                    maxWidth: maxWidth,
+                    maxHeight: maxHeight
+                )
+                try await activeSession.sendEncrypted(plaintext: reqData)
+            },
+            onPayload: { decrypted, activeSession, finish in
+                guard let payloadObj = try JSONSerialization.jsonObject(with: decrypted) as? [String: Any] else {
                     return
                 }
 
-                Task {
-                    do {
-                        let stopData = try buildCameraStopRequest(sessionId: activeSessionId, reason: reason)
-                        let encrypted = try E2EEncryptionManager.encryptAESGCM(key: keys.keyMacToAndroid, plaintext: stopData)
-                        let payloadJson: [String: Any] = [
-                            "type": "E2E_PAYLOAD",
-                            "ciphertext": encrypted.base64EncodedString()
-                        ]
-                        let outData = try JSONSerialization.data(withJSONObject: payloadJson)
-                        try await manager.send(data: outData)
+                let sendStopRequest: @Sendable (String) -> Void = { reason in
+                    guard sessionState.markStopSent(reason: reason) else { return }
+                    onStatusChange?("Stopping camera stream (\(reason))...")
 
-                        // Fallback watchdog: if stop response does not arrive within 2 seconds, force finish
-                        try? await Task.sleep(nanoseconds: 2_000_000_000)
-                        if sessionState.terminateOnce() {
-                            manager.disconnect()
-                            continuation.resume(returning: sessionState.buildSummary())
-                        }
-                    } catch {
-                        if sessionState.terminateOnce() {
-                            manager.disconnect()
-                            continuation.resume(throwing: error)
+                    Task {
+                        do {
+                            let stopData = try buildCameraStopRequest(sessionId: activeSessionId, reason: reason)
+                            try await activeSession.sendEncrypted(plaintext: stopData)
+
+                            try? await Task.sleep(nanoseconds: 2_000_000_000)
+                            finish(.success(sessionState.buildSummary()))
+                        } catch {
+                            finish(.failure(error))
                         }
                     }
                 }
-            }
 
-            manager.onMessageReceived = { data in
-                guard !sessionState.isEnded() else { return }
-
-                guard let text = String(data: data, encoding: .utf8),
-                      let json = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
-                      let type = json["type"] as? String else {
-                    return
-                }
-
-                if type == "E2E_ACK" {
-                    guard let peerPubB64 = json["ephemeral_public_key"] as? String,
-                          let peerPubData = Data(base64Encoded: peerPubB64) else {
+                if payloadObj["camera_start_resp"] != nil {
+                    let startResp = try parseCameraStartResponse(data: decrypted)
+                    if startResp.status != "STATUS_OK" {
+                        let errMsg = startResp.errorMessage ?? startResp.status
+                        finish(.failure(AuthClientError.invalidResponse("Camera start rejected: \(startResp.status) - \(errMsg)")))
                         return
                     }
+                    sessionState.markStarted()
+                    onStatusChange?("Camera streaming active at \(startResp.actualFps) FPS")
 
-                    do {
-                        let keys = try e2e.deriveSessionKeys(peerPublicKeyData: peerPubData)
-                        sessionState.setKeys(keys)
-                        onStatusChange?("Starting camera stream on Android...")
-
-                        let reqData = try buildCameraStartRequest(
-                            sessionId: activeSessionId,
-                            lens: lens,
-                            targetFps: targetFps,
-                            jpegQuality: jpegQuality,
-                            maxWidth: maxWidth,
-                            maxHeight: maxHeight
-                        )
-                        let encrypted = try E2EEncryptionManager.encryptAESGCM(key: keys.keyMacToAndroid, plaintext: reqData)
-
-                        let payloadJson: [String: Any] = [
-                            "type": "E2E_PAYLOAD",
-                            "ciphertext": encrypted.base64EncodedString()
-                        ]
-                        let outData = try JSONSerialization.data(withJSONObject: payloadJson)
+                    if maxDurationSeconds > 0 {
                         Task {
-                            do {
-                                try await manager.send(data: outData)
-                            } catch {
-                                if sessionState.terminateOnce() {
-                                    manager.disconnect()
-                                    continuation.resume(throwing: error)
-                                }
-                            }
-                        }
-                    } catch {
-                        if sessionState.terminateOnce() {
-                            manager.disconnect()
-                            continuation.resume(throwing: error)
+                            let nanoseconds = UInt64(maxDurationSeconds * 1_000_000_000)
+                            try? await Task.sleep(nanoseconds: nanoseconds)
+                            sendStopRequest("duration_completed")
                         }
                     }
-                } else if type == "E2E_PAYLOAD" {
-                    guard let keys = sessionState.getKeys(),
-                          let ctB64 = json["ciphertext"] as? String,
-                          let ct = Data(base64Encoded: ctB64) else {
-                        return
+                } else if payloadObj["camera_frame"] != nil {
+                    let frame = try parseCameraFrame(data: decrypted)
+                    let (stats, count) = sessionState.recordFrame(frame: frame)
+                    onFrame(frame, stats)
+
+                    if let maxF = maxFrames, count >= maxF {
+                        sendStopRequest("max_frames_reached")
                     }
-
-                    do {
-                        let decrypted = try E2EEncryptionManager.decryptAESGCM(key: keys.keyAndroidToMac, payload: ct)
-
-                        guard let payloadObj = try JSONSerialization.jsonObject(with: decrypted) as? [String: Any] else {
-                            return
-                        }
-
-                        if payloadObj["camera_start_resp"] != nil {
-                            let startResp = try parseCameraStartResponse(data: decrypted)
-                            if startResp.status != "STATUS_OK" {
-                                let errMsg = startResp.errorMessage ?? startResp.status
-                                if sessionState.terminateOnce() {
-                                    manager.disconnect()
-                                    continuation.resume(throwing: AuthClientError.invalidResponse("Camera start rejected: \(startResp.status) - \(errMsg)"))
-                                }
-                                return
-                            }
-                            sessionState.markStarted()
-                            onStatusChange?("Camera streaming active at \(startResp.actualFps) FPS")
-
-                            // If maxDurationSeconds is configured, schedule automatic stream stop
-                            if maxDurationSeconds > 0 {
-                                Task {
-                                    let nanoseconds = UInt64(maxDurationSeconds * 1_000_000_000)
-                                    try? await Task.sleep(nanoseconds: nanoseconds)
-                                    sendStopRequest("duration_completed")
-                                }
-                            }
-                        } else if payloadObj["camera_frame"] != nil {
-                            let frame = try parseCameraFrame(data: decrypted)
-                            let (stats, count) = sessionState.recordFrame(frame: frame)
-                            onFrame(frame, stats)
-
-                            if let maxF = maxFrames, count >= maxF {
-                                sendStopRequest("max_frames_reached")
-                            }
-                        } else if payloadObj["camera_stop_resp"] != nil {
-                            _ = try parseCameraStopResponse(data: decrypted)
-                            if sessionState.terminateOnce() {
-                                manager.disconnect()
-                                continuation.resume(returning: sessionState.buildSummary())
-                            }
-                        }
-                    } catch {
-                        if sessionState.terminateOnce() {
-                            manager.disconnect()
-                            continuation.resume(throwing: error)
-                        }
+                } else if payloadObj["camera_stop_resp"] != nil {
+                    _ = try parseCameraStopResponse(data: decrypted)
+                    finish(.success(sessionState.buildSummary()))
+                }
+            },
+            onTerminalState: { newState, finish in
+                switch newState {
+                case .peerOffline, .disconnected, .error:
+                    if sessionState.hasStarted() {
+                        sessionState.setStopReason("connection_lost")
+                        finish(.success(sessionState.buildSummary()))
                     }
+                default:
+                    break
                 }
             }
-
-            // Start handshake with E2E_INIT
-            Task {
-                do {
-                    let initJson: [String: Any] = [
-                        "type": "E2E_INIT",
-                        "ephemeral_public_key": e2e.publicKeyRaw.base64EncodedString()
-                    ]
-                    let initData = try JSONSerialization.data(withJSONObject: initJson)
-                    try await manager.send(data: initData)
-                } catch {
-                    if sessionState.terminateOnce() {
-                        manager.disconnect()
-                        continuation.resume(throwing: error)
-                    }
-                }
-            }
-        }
+        )
     }
 }
 
@@ -527,6 +442,18 @@ private final class CameraStreamingSessionState: @unchecked Sendable {
         if startTime == nil {
             startTime = Date()
         }
+    }
+
+    func hasStarted() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return startTime != nil
+    }
+
+    func setStopReason(_ reason: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        stopReason = reason
     }
 
     func recordFrame(frame: CameraFrame) -> (CameraStreamStats, UInt64) {

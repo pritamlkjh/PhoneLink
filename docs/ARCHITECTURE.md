@@ -33,52 +33,51 @@ PhoneLink is a three-component system:
 
 | Decision | Choice | Justification |
 |----------|--------|---------------|
-| Language | **Kotlin** | DAG and requirements prefer native Android; Kotlin is the official language |
+| Language | **Kotlin** | Native Android runtime compatibility |
 | Build system | **Gradle 8.x** with Kotlin DSL | Standard Android build tool |
-| Min API | **33 (Android 13)** | Per REQ-1 |
-| Target API | **35 (Android 15)** | Current stable target |
-| Crypto | **Android Keystore** + **Tink** (Google's crypto library) | Hardware-backed keys; Tink provides safe NaCl-compatible E2E primitives |
-| Networking | **OkHttp** + custom WebSocket client | Mature, well-tested TLS/WebSocket library |
-| Camera | **CameraX** | Jetpack camera library, handles lifecycle and foreground-service integration |
-| Storage | **EncryptedSharedPreferences** (Tink-backed) | For secrets; SAF/MediaStore for file access |
-| DI | **Manual** (constructor injection) | Avoid unnecessary framework weight for a focused app |
-| Testing | **JUnit 5** + **Espresso** + **Robolectric** | Standard Android testing stack |
+| Min API | **26 (Android 8.0 Oreo)** | Broad physical device compatibility (`minSdk = 26`) |
+| Target API | **34 (Android 14)** | Compliant foreground service types (`connectedDevice|dataSync|camera`) |
+| Crypto | **AndroidKeyStore** + pure-Kotlin RFC 7748/8032 **Curve25519** | Hardware-wrapped AES keys + X25519 across Android 8–14+ |
+| Networking | **OkHttp** + WebSocket client | Mature TLS/WebSocket transport |
+| Camera | **Camera2 (`CameraCaptureModule`)** | Explicit opt-in JPEG preview streaming |
+| Storage | **AndroidKeyStore-wrapped SecureStorage** + SAF/scoped files | Encrypted credentials + user-selected folder support |
+| DI | **Manual** | Lightweight dependency wiring |
+| Testing | **JUnit 4 + MockWebServer** | Fast local JVM verification |
 
 ### 2.2 macOS — Swift CLI
 
 | Decision | Choice | Justification |
 |----------|--------|---------------|
-| Language | **Swift 5.9+** | Native macOS; excellent Keychain and system integration |
-| Build system | **Swift Package Manager (SPM)** | Standard Swift build tool, no Xcode project needed for CLI |
-| CLI framework | **swift-argument-parser** | Apple's official CLI argument parsing library |
-| Crypto | **CryptoKit** + **swift-crypto** | Native Apple crypto; swift-crypto for cross-platform NaCl-style ops |
-| Networking | **URLSessionWebSocketTask** (Foundation) | Built-in WebSocket support, no dependencies |
-| Camera viewer | **SwiftUI** minimal window (CLI-launched) | Lightweight way to display JPEG frames |
-| Key storage | **macOS Keychain** via Security framework | Hardware-backed key storage |
-| Testing | **XCTest** + **Swift Testing** | Standard Swift testing frameworks |
+| Language | **Swift 6.0** | Native macOS Keychain, CryptoKit, and ImageIO integration (`macOS 15.0+`) |
+| Build system | **Swift Package Manager (SPM)** | Standard Swift build tool |
+| CLI framework | **Native CLI (`PhoneLinkCLI`) + `PhoneLinkKit`** | Zero external dependency footprint |
+| Crypto | **Apple CryptoKit** | Native X25519, Ed25519, HKDF-SHA256, and AES-256-GCM |
+| Networking | **URLSessionWebSocketTask** + `PinnedURLSessionDelegate` | Native WebSocket + SPKI certificate pinning |
+| Camera viewer | **Terminal ANSI renderer (`CameraTerminalRenderer`) + `--save`** | ImageIO/CoreGraphics JPEG luminance decoding |
+| Key storage | **macOS Keychain** via Security framework | Secure credential persistence |
+| Testing | **`PhoneLinkTests` executable harness** | Standalone SwiftPM test runner |
 
 ### 2.3 VPS Relay — Go
 
 | Decision | Choice | Justification |
 |----------|--------|---------------|
-| Language | **Go 1.22+** | Single static binary, low memory (~10–20MB), excellent for relay servers; ideal for free-tier VPS |
-| Framework | **Standard library** `net/http` + **gorilla/websocket** | Minimal dependencies, battle-tested WebSocket support |
-| TLS | **Go `crypto/tls`** with Let's Encrypt via **certmagic** | Free TLS certificates, automatic renewal |
-| Auth | **Ed25519** signature verification | Verifies device identity; Go stdlib has ed25519 support |
-| Config | **Environment variables** + `.env` file | 12-factor style, no secrets in code |
-| Deployment | **Docker** container + **shell scripts** | Reproducible; works locally and on any Linux VPS |
-| Logging | **Go `slog`** (structured logging, stdlib) | Built-in, structured, easy to filter payloads |
-| Testing | **Go `testing`** package | Standard; includes benchmarking and race detection |
+| Language | **Go 1.26+** | Single static binary (`CGO_ENABLED=0`), low memory footprint |
+| Framework | **Standard library** `net/http` + **gorilla/websocket** | Hardened headers, rate limiting, and WebSocket framing |
+| TLS | **Caddy ACME TLS 1.3** or built-in `--tls-cert`/`--tls-key` | End-to-end encrypted control/relay transport |
+| Auth | **Ed25519 & ECDSA P-256** challenge-response + Bearer tokens | Zero-trust device registration & revocation |
+| Persistence | **Atomic JSON state (`PHONELINK_DATA_DIR`)** | Survives container/daemon restarts |
+| Deployment | **Docker / systemd + Caddy** | Reproducible production deployment |
+| Logging | **Go `slog`** (structured JSON logging) | Auditability with zero payload leakage |
+| Testing | **Go `testing` (`-race`)** | Race-checked unit and integration suites |
 
 ### 2.4 Shared Protocol
 
 | Decision | Choice | Justification |
 |----------|--------|---------------|
 | Transport | **WebSocket over TLS 1.3** | Persistent bidirectional connection; NAT-friendly |
-| Serialization | **Protocol Buffers v3** | Compact binary format; type-safe; polyglot code generation |
-| E2E encryption | **X25519 key exchange** + **XChaCha20-Poly1305** AEAD | Via Tink (Android), CryptoKit (Mac); VPS never has keys |
-| Schema location | `shared/schema/*.proto` | Single source of truth for all message types |
-| Versioning | **Semver** in protocol header | Each message carries a schema version field |
+| Wire Format | **Versioned JSON envelopes (`schema_version = 1`)** | Uniform encoding across Kotlin, Swift, and Go; mirrors `shared/schema/*.proto` reference contracts |
+| E2E encryption | **X25519 key exchange** + **AES-256-GCM** with sequence AAD | Identity-authenticated E2E session setup; VPS never has keys |
+| Reference Schemas | `shared/schema/*.proto` | Canonical schema definitions verified via `protoc` round-trip tests |
 
 ---
 
@@ -93,31 +92,34 @@ android/
 │       ├── kotlin/com/phonelink/
 │       │   ├── PhoneLinkApp.kt              # Application class
 │       │   ├── identity/                     # AND-2: Device identity
-│       │   │   └── DeviceIdentity.kt
-│       │   ├── crypto/                       # AND-3: Key management
+│       │   │   └── DeviceIdentityManager.kt
+│       │   ├── crypto/                       # AND-3: Key management & E2E
+│       │   │   ├── Curve25519Primitives.kt
+│       │   │   ├── E2EEncryptionManager.kt
+│       │   │   ├── E2EPeerSession.kt
 │       │   │   └── KeyManager.kt
 │       │   ├── storage/                      # AND-4: Secure storage
 │       │   │   └── SecureStorage.kt
-│       │   ├── network/                      # AND-5: Transport
+│       │   ├── transport/                    # AND-5 / AND-8: Transport
 │       │   │   ├── NetworkTransport.kt
-│       │   │   └── WebSocketClient.kt
+│       │   │   ├── ReconnectionManager.kt
+│       │   │   └── RelayUrlHelper.kt
 │       │   ├── auth/                         # AND-6: Authentication
 │       │   │   └── AuthClient.kt
 │       │   ├── service/                      # AND-7: Foreground service
-│       │   │   ├── ConnectionService.kt
-│       │   │   └── ReconnectionManager.kt    # AND-8
-│       │   ├── boot/                         # AND-9: Boot recovery
+│       │   │   └── ConnectionForegroundService.kt
+│       │   ├── receiver/                     # AND-9: Boot recovery
 │       │   │   └── BootReceiver.kt
-│       │   ├── files/                        # FILE-1: Storage access
+│       │   ├── files/                        # FILE-1–4: Storage & transfer
+│       │   │   ├── FileOperationHandler.kt
 │       │   │   └── StorageAccessLayer.kt
 │       │   ├── camera/                       # CAM-1/CAM-2: Camera
-│       │   │   ├── CameraAuthGate.kt
+│       │   │   ├── CameraAuthorizationGate.kt
 │       │   │   └── CameraCaptureModule.kt
 │       │   ├── actions/                      # FILE-5: Scoped actions
 │       │   │   └── RemoteActionRegistry.kt
 │       │   └── ui/                           # Minimal UI
 │       │       └── MainActivity.kt
-│       ├── proto/                            # Generated protobuf
 │       └── AndroidManifest.xml
 ├── build.gradle.kts
 └── settings.gradle.kts
@@ -129,26 +131,19 @@ android/
 mac/
 ├── Package.swift
 ├── Sources/
-│   └── PhoneLink/
-│       ├── PhoneLink.swift                  # CLI entry point
-│       ├── Commands/                        # MAC-4: CLI commands
-│       │   ├── StatusCommand.swift
-│       │   ├── PairCommand.swift
-│       │   ├── FilesCommand.swift
-│       │   ├── CameraCommand.swift
-│       │   └── RevokeCommand.swift
-│       ├── Auth/                            # MAC-2: Authentication
-│       │   ├── MacIdentity.swift
-│       │   └── AuthClient.swift
-│       ├── Connection/                      # MAC-3: Connection manager
-│       │   └── ConnectionManager.swift
-│       ├── Crypto/                          # E2E encryption
-│       │   └── E2ECrypto.swift
-│       ├── Files/                           # File transfer
-│       │   └── FileTransferClient.swift
-│       ├── Camera/                          # CAM-4: Camera viewer
-│       │   └── CameraViewer.swift
-│       └── Proto/                           # Generated protobuf
+│   ├── PhoneLinkCLI/
+│   │   └── main.swift                       # MAC-4: CLI entry point & subcommands
+│   └── PhoneLinkKit/
+│       ├── ActionClient.swift               # Device ping / telemetry client
+│       ├── AuthClient.swift                 # MAC-2: Auth, pairing, revoke HTTP client
+│       ├── CameraClient.swift               # CAM-3: Camera stream consumer
+│       ├── CameraViewer.swift               # CAM-4: Terminal ASCII renderer & state machine
+│       ├── ConnectionManager.swift          # MAC-3: WebSocket, backoff, SPKI pinning
+│       ├── DeviceIdentity.swift             # MAC-2: Keychain Ed25519 identity
+│       ├── E2EEncryptionManager.swift       # X25519 + HKDF + AES-256-GCM + AAD
+│       ├── E2ESessionHelper.swift           # Authenticated E2E session transport
+│       ├── FileClient.swift                 # FILE-2/3/4: Listing, chunked download & upload
+│       └── ReplayProtection.swift         # SEC-1: Replay protection filter
 ├── Tests/
 │   └── PhoneLinkTests/
 └── README.md

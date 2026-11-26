@@ -22,8 +22,17 @@ fi
 # 2. Check Docker environment
 if command -v docker >/dev/null 2>&1; then
     echo "Found Docker: $(docker --version)"
+    APK_SRC="$VPS_DIR/../android/release/PhoneLink-v1.0.0-release.apk"
+    STAGED_APK=0
+    if [ -f "$APK_SRC" ] && [ ! -f "$VPS_DIR/PhoneLink.apk" ]; then
+        cp "$APK_SRC" "$VPS_DIR/PhoneLink.apk"
+        STAGED_APK=1
+    fi
     echo "Building Docker container..."
     docker build -t phonelink-relay -f "$SCRIPT_DIR/Dockerfile" "$VPS_DIR"
+    if [ "$STAGED_APK" -eq 1 ]; then
+        rm -f "$VPS_DIR/PhoneLink.apk"
+    fi
     echo "PASS: Docker container build succeeded."
 else
     echo "Docker not found; skipping container build."

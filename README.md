@@ -21,7 +21,7 @@ PhoneLink allows you to securely access files, inspect device status, locate you
                               (Zero Plaintext Visibility)
 ```
 
-- **Untrusted VPS Relay:** The server acts purely as a stateless frame broker. All files, file lists, camera streams, and action payloads are encrypted via ephemeral AES-256-GCM keys negotiated directly between Mac and Android (ECDH secp256r1). The VPS cannot read, store, or tamper with your data.
+- **Untrusted VPS Relay:** The server acts purely as a stateless frame broker. All files, file lists, camera streams, and action payloads are encrypted via ephemeral AES-256-GCM keys negotiated directly between Mac and Android using **X25519 (RFC 7748)** with authenticated **Ed25519 / ECDSA P-256** identity signatures and monotonic sequence AAD binding. The VPS cannot read, store, or tamper with your data.
 - **Zero Inbound Ports on Client Devices:** Android connects outbound to the VPS; Mac connects outbound to the VPS. No static public IP or port forwarding is required on phone or home networks.
 - **Anti-Stalkerware Design Invariants:**
   - **Ongoing Persistent Notification:** Whenever PhoneLink is active, Android displays an un-dismissible foreground notification.
@@ -34,7 +34,7 @@ PhoneLink allows you to securely access files, inspect device status, locate you
 ## Documentation Index
 
 - **[Setup & Pairing Guide](docs/SETUP_GUIDE.md):** Complete walkthrough for deploying the VPS relay, installing the Android app, and setting up the Mac CLI.
-- **[User Manual](docs/USER_MANUAL.md):** Comprehensive reference for CLI commands (`status`, `files`, `camera`, `actions`, `unpair`).
+- **[User Manual](docs/USER_MANUAL.md):** Comprehensive reference for CLI commands (`status`, `info`, `files`, `camera`, `ping`, `revoke`, `wipe`).
 - **[Privacy & Security Model](docs/PRIVACY_MODEL.md):** Architectural anti-stalkerware guarantees, threat boundary analysis, and data retention policies.
 - **[VPS Production Deployment Runbook](docs/VPS_PRODUCTION_DEPLOYMENT.md):** Hardened systemd unit, Caddy TLS reverse proxy, atomic deployment, and rollback procedures.
 - **[Chaos Testing Results](docs/CHAOS_TEST_RESULTS.md):** Network fault injection reports (packet loss, latency, zombie TCP, VPS restart SLA < 3000ms).
@@ -62,27 +62,31 @@ phonelink install-phone --local
 
 ### 3. Pair with Phone
 ```bash
-phonelink pair --relay https://relay.example.com
-# Enter the generated 6-digit code into your Android PhoneLink app
+phonelink pair --vps https://relay.example.com
+# Enter the generated 8-character short code into your Android PhoneLink app
 ```
 
 ### 4. Core Commands
 ```bash
 # Check device status & battery
-phonelink status
+phonelink status --vps https://relay.example.com
 
 # List & download remote files
-phonelink files list /Downloads
-phonelink files download /Downloads/document.pdf ./document.pdf
+phonelink files ls Downloads --vps https://relay.example.com
+phonelink files get Downloads/document.pdf ./document.pdf --vps https://relay.example.com
 
-# Upload a file to phone
-phonelink files upload ./image.png /Downloads/image.png
+# Upload a file to phone directory
+phonelink files put ./image.png Downloads --vps https://relay.example.com
 
-# Find a misplaced phone (rings aloud)
-phonelink actions locate
+# Find a misplaced phone (rings aloud) or query phone telemetry
+phonelink device ping --vps https://relay.example.com
+phonelink device info --vps https://relay.example.com
 
-# Preview camera
-phonelink camera preview
+# Preview camera (terminal ASCII or --save frames)
+phonelink camera view --vps https://relay.example.com
+
+# Revoke paired phone immediately
+phonelink revoke --vps https://relay.example.com
 ```
 
 ---

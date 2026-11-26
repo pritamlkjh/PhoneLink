@@ -17,7 +17,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
+          go-version: '1.26'
 
       - name: Install Protoc
         run: |
@@ -27,15 +27,19 @@ jobs:
       - name: Validate Protocol Schemas & Round-Trip
         run: ./tests/test_schema_roundtrip.sh
 
-      - name: Run VPS Relay Tests & Build
+      - name: Secret Hygiene Scan
+        run: ./scripts/scan_secrets.sh
+
+      - name: Run VPS Relay Vet, Tests & Build
         run: |
           cd vps
-          go test -v ./...
+          go vet ./...
+          go test -race -v ./...
           go build -v -o bin/phonelink-relay ./cmd/relay
 
   mac-client:
     name: Mac Client (macOS)
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
@@ -71,10 +75,10 @@ jobs:
       - name: Make Gradlew Executable
         run: chmod +x android/gradlew
 
-      - name: Run Android Unit Tests
+      - name: Run Android Lint & Unit Tests
         run: |
           cd android
-          ./gradlew testDebugUnitTest --no-daemon
+          ./gradlew lintDebug testDebugUnitTest --no-daemon
 
       - name: Build Android Debug APK
         run: |

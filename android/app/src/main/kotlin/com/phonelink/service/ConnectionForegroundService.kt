@@ -15,6 +15,7 @@ import com.phonelink.files.FileOperationHandler
 import com.phonelink.files.StorageAccessLayer
 import com.phonelink.storage.SecureStorage
 import com.phonelink.transport.NetworkTransport
+import com.phonelink.transport.RelayUrlHelper
 import com.phonelink.ui.MainActivity
 
 /**
@@ -50,10 +51,9 @@ class ConnectionForegroundService : Service() {
         }
 
         fun stop(context: Context) {
-            val intent = Intent(context, ConnectionForegroundService::class.java).apply {
-                action = ACTION_STOP
-            }
-            context.startService(intent)
+            try {
+                context.stopService(Intent(context, ConnectionForegroundService::class.java))
+            } catch (_: Exception) {}
         }
     }
 
@@ -79,10 +79,24 @@ class ConnectionForegroundService : Service() {
 
         val serviceController = object : com.phonelink.camera.CameraCaptureModule.ForegroundServiceController {
             override fun onCameraCaptureStarted() {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
                     val cameraServiceType = ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA
                     val notification = buildNotification("PhoneLink: Camera streaming active")
-                    startForeground(NOTIFICATION_ID, notification, cameraServiceType)
+                    try {
+                        startForeground(NOTIFICATION_ID, notification, cameraServiceType)
+                    } catch (_: SecurityException) {
+                        updateNotification("PhoneLink: Camera permission required for stream")
+                    } catch (_: IllegalStateException) {
+                        updateNotification("PhoneLink: Reopen app to allow background camera")
+                    }
+                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    val qServiceType = ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE or ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+                    val notification = buildNotification("PhoneLink: Camera streaming active")
+                    try {
+                        startForeground(NOTIFICATION_ID, notification, qServiceType)
+                    } catch (_: Exception) {
+                        updateNotification("PhoneLink: Camera streaming active")
+                    }
                 } else {
                     updateNotification("PhoneLink: Camera streaming active")
                 }
@@ -92,7 +106,11 @@ class ConnectionForegroundService : Service() {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     val defaultServiceType = ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
                     val notification = buildNotification("Connected to VPS relay")
-                    startForeground(NOTIFICATION_ID, notification, defaultServiceType)
+                    try {
+                        startForeground(NOTIFICATION_ID, notification, defaultServiceType)
+                    } catch (_: Exception) {
+                        updateNotification("Connected to VPS relay")
+                    }
                 } else {
                     updateNotification("Connected to VPS relay")
                 }
@@ -111,7 +129,7 @@ class ConnectionForegroundService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> {
-                stopForegroundService()
+                stopForegroundService(stopSelfAfter = true)
                 return START_NOT_STICKY
             }
             ACTION_START, null -> {
@@ -123,24 +141,28 @@ class ConnectionForegroundService : Service() {
 
     private fun startForegroundService() {
         if (isRunning) return
+        val relayUrl = secureStorage.getRelayUrl()
+        val vpsBaseHttpUrl = RelayUrlHelper.normalizeHttpBaseUrl(relayUrl)
+        if (vpsBaseHttpUrl.isEmpty()) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return
+        }
+
         isRunning = true
 
         val initialNotification = buildNotification("Starting PhoneLink service...")
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val serviceType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
-            } else {
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
-            }
-            startForeground(NOTIFICATION_ID, initialNotification, serviceType)
+            startForeground(NOTIFICATION_ID, initialNotification, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
         } else {
             startForeground(NOTIFICATION_ID, initialNotification)
         }
 
-        // Initialize and connect transport
-        val relayUrl = secureStorage.getRelayUrl()
         val currentTransport = NetworkTransport().also { transport = it }
+        val keyMgr = com.phonelink.crypto.KeyManager.fromContext(this, secureStorage)
+        val identityMgr = com.phonelink.identity.DeviceIdentityManager.fromContext(this, keyMgr)
+        val serviceAuthClient = com.phonelink.auth.AuthClient(secureStorage = secureStorage)
 
         peerSession = com.phonelink.crypto.E2EPeerSession(
             sendFunction = { bytes -> currentTransport.send(bytes) },
@@ -153,20 +175,33 @@ class ConnectionForegroundService : Service() {
                         ?: fileOperationHandler.processApplicationMessage(plaintext, sendAppMsg)
                         ?: remoteActionRegistry.processApplicationMessage(plaintext)
                 }
-            }
+            },
+            signer = keyMgr.signer,
+            peerPublicKeyProvider = {
+                var pubB64 = secureStorage.getPairedPublicKey()
+                if (pubB64.isNullOrEmpty()) {
+                    val tok = secureStorage.getSessionToken()
+                    if (!tok.isNullOrEmpty()) {
+                        serviceAuthClient.getDeviceStatus(vpsBaseHttpUrl, tok)
+                        pubB64 = secureStorage.getPairedPublicKey()
+                    }
+                }
+                if (!pubB64.isNullOrEmpty()) {
+                    try {
+                        java.util.Base64.getDecoder().decode(pubB64)
+                    } catch (_: Exception) {
+                        null
+                    }
+                } else {
+                    null
+                }
+            },
+            requirePeerAuth = true
         )
 
-        // Initialize AND-8 ReconnectionManager
-        val vpsBaseHttpUrl = relayUrl.substringBefore("/ws/").replace("wss://", "https://").replace("ws://", "http://")
-        val identityMgr = com.phonelink.identity.DeviceIdentityManager.fromContext(this)
-        val keyMgr = try {
-            com.phonelink.crypto.KeyManager(com.phonelink.crypto.AndroidKeyStoreSigner())
-        } catch (_: Throwable) {
-            com.phonelink.crypto.KeyManager.createSoftware()
-        }
-
+        // Initialize AND-8 ReconnectionManager with unified identity/signing keypair
         val mgr = com.phonelink.transport.ReconnectionManager(
-            authClient = com.phonelink.auth.AuthClient(secureStorage = secureStorage),
+            authClient = serviceAuthClient,
             secureStorage = secureStorage,
             identityManager = identityMgr,
             keyManager = keyMgr,
@@ -187,7 +222,7 @@ class ConnectionForegroundService : Service() {
             }
 
             override fun onReconnectionSucceeded(sessionToken: String, wasResumed: Boolean) {
-                val wsUrl = if (relayUrl.contains("?")) "$relayUrl&token=$sessionToken" else "$relayUrl?token=$sessionToken"
+                val wsUrl = RelayUrlHelper.toWebSocketUrl(relayUrl, sessionToken)
                 currentTransport.connect(wsUrl)
             }
         })
@@ -202,39 +237,51 @@ class ConnectionForegroundService : Service() {
                         cameraCaptureModule.stopCapture("disconnected", "transport_disconnected")
                         replayFilter.reset()
                         peerSession?.reset()
-                        updateNotification("Disconnected. Reconnecting...")
-                        reconnectionManager?.onConnectionLost()
+                        if (isRunning) {
+                            updateNotification("Disconnected. Reconnecting...")
+                            reconnectionManager?.onConnectionLost()
+                        }
                     }
                     is NetworkTransport.ConnectionState.Error -> {
                         cameraCaptureModule.stopCapture("error", "transport_error")
-                        updateNotification("Connection error: ${newState.cause.message}")
-                        reconnectionManager?.onConnectionLost(newState.cause)
+                        replayFilter.reset()
+                        peerSession?.reset()
+                        if (isRunning) {
+                            updateNotification("Connection error: ${newState.cause.message}")
+                            reconnectionManager?.onConnectionLost(newState.cause)
+                        }
                     }
                     else -> {}
                 }
             }
 
             override fun onMessageReceived(text: String) {
-                handleControlMessage(text)
+                if (handleControlMessage(text)) return
                 peerSession?.handleIncomingMessage(text.toByteArray(Charsets.UTF_8))
             }
 
             override fun onMessageReceived(bytes: ByteArray) {
-                try {
+                val handled = try {
                     val text = String(bytes, Charsets.UTF_8)
                     handleControlMessage(text)
-                } catch (_: Exception) {}
-                peerSession?.handleIncomingMessage(bytes)
+                } catch (_: Exception) {
+                    false
+                }
+                if (!handled) {
+                    peerSession?.handleIncomingMessage(bytes)
+                }
             }
         })
 
-        // Start ReconnectionManager (handles initial connect and subsequent resilience)
+        // Start ReconnectionManager (dispatches asynchronously on background scheduler)
         mgr.start(vpsBaseHttpUrl)
     }
 
-    internal fun handleControlMessage(text: String) {
-        try {
-            val json = org.json.JSONObject(text)
+    internal fun handleControlMessage(text: String): Boolean {
+        return try {
+            val trimmed = text.trim()
+            if (!trimmed.startsWith("{")) return false
+            val json = org.json.JSONObject(trimmed)
             if (json.optString("type") == "PEER_STATUS") {
                 val isOnline = json.optBoolean("is_online", false)
                 val peerId = json.optString("peer_device_id", "")
@@ -247,26 +294,48 @@ class ConnectionForegroundService : Service() {
                 try {
                     updateNotification(statusText)
                 } catch (_: Exception) {}
+                return true
             }
-        } catch (_: Exception) {}
+            if (json.has("error") && !json.has("ciphertext")) {
+                val errMsg = json.optString("error", "relay error")
+                try {
+                    updateNotification("Relay error: $errMsg")
+                } catch (_: Exception) {}
+                return true
+            }
+            false
+        } catch (_: Exception) {
+            false
+        }
     }
 
-    private fun stopForegroundService() {
+    private fun stopForegroundService(stopSelfAfter: Boolean) {
+        if (!isRunning && reconnectionManager == null && transport == null) {
+            if (stopSelfAfter) stopSelf()
+            return
+        }
         isRunning = false
         try {
-            cameraCaptureModule.stopCapture("service_stopped", "service_stopped")
+            cameraCaptureModule.shutdown()
         } catch (_: Exception) {}
         reconnectionManager?.stop()
         reconnectionManager = null
         transport?.disconnect()
         transport = null
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
+        replayFilter.reset()
+        peerSession?.reset()
+        peerSession = null
+        try {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        } catch (_: Exception) {}
+        if (stopSelfAfter) {
+            stopSelf()
+        }
     }
 
     override fun onDestroy() {
+        stopForegroundService(stopSelfAfter = false)
         super.onDestroy()
-        stopForegroundService()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

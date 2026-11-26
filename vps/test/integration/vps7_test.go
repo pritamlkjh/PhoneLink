@@ -62,7 +62,8 @@ func TestVPS7LoggingAndMonitoring(t *testing.T) {
 	registerDevice(t, httpServer.URL, macDeviceID, "mac", base64.StdEncoding.EncodeToString(macPub), auth.AlgorithmEd25519)
 	registerDevice(t, httpServer.URL, andDeviceID, "android", base64.StdEncoding.EncodeToString(andPub), auth.AlgorithmEd25519)
 
-	token := createPairingToken(t, httpServer.URL, macDeviceID)
+	macInitToken := authenticateEd25519(t, httpServer.URL, macDeviceID, macPriv)
+	token := createPairingToken(t, httpServer.URL, macDeviceID, macInitToken)
 	claimPairing(t, httpServer.URL, token, andDeviceID)
 
 	// --- SUB-TEST 1: Structured Logs for Auth and Connections ---

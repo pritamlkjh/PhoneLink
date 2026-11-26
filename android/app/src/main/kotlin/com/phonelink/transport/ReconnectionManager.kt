@@ -36,7 +36,7 @@ class ReconnectionManager(
     private val networkStateProvider: NetworkStateProvider,
     private val config: ReconnectConfig = ReconnectConfig(),
     private val random: Random = Random(),
-    private val scheduler: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor()
+    private val scheduler: ScheduledExecutorService? = null
 ) {
     data class ReconnectConfig(
         val baseDelayMillis: Long = 1000L,
@@ -120,7 +120,17 @@ class ReconnectionManager(
     private val consecutiveFailures = AtomicInteger(0)
     private val isStarted = AtomicBoolean(false)
     private var scheduledTask: ScheduledFuture<*>? = null
+    private var ownedScheduler: ScheduledExecutorService? = null
     private var vpsBaseUrl: String = ""
+
+    private fun getOrCreateScheduler(): ScheduledExecutorService {
+        scheduler?.let { return it }
+        val existing = ownedScheduler
+        if (existing != null && !existing.isShutdown && !existing.isTerminated) {
+            return existing
+        }
+        return Executors.newSingleThreadScheduledExecutor().also { ownedScheduler = it }
+    }
 
     fun addListener(listener: Listener) {
         listeners.addIfAbsent(listener)
@@ -170,6 +180,8 @@ class ReconnectionManager(
     fun stop() {
         if (!isStarted.getAndSet(false)) return
         cancelScheduledRetry()
+        ownedScheduler?.shutdownNow()
+        ownedScheduler = null
         networkStateProvider.unregisterCallback()
         setState(State.Idle)
     }
@@ -248,17 +260,15 @@ class ReconnectionManager(
         val attempt = consecutiveFailures.incrementAndGet()
         val delayMillis = if (immediate) 0L else calculateBackoffDelay(attempt)
 
-        if (delayMillis == 0L) {
-            executeReconnect(attempt)
-        } else {
+        if (delayMillis > 0L) {
             val nextAttemptAt = System.currentTimeMillis() + delayMillis
             setState(State.BackingOff(attempt, delayMillis, nextAttemptAt))
-            scheduledTask = scheduler.schedule(
-                { executeReconnect(attempt) },
-                delayMillis,
-                TimeUnit.MILLISECONDS
-            )
         }
+        scheduledTask = getOrCreateScheduler().schedule(
+            { executeReconnect(attempt) },
+            delayMillis,
+            TimeUnit.MILLISECONDS
+        )
     }
 
     private fun executeReconnect(attempt: Int) {

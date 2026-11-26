@@ -7,6 +7,47 @@ public final class E2EEncryptionManager: @unchecked Sendable {
     public static let infoM2A = "PhoneLink-M2A-v1".data(using: .utf8)!
     public static let infoA2M = "PhoneLink-A2M-v1".data(using: .utf8)!
 
+    public static func buildHandshakeTranscript(ephemeralPublicKey: Data, timestampMs: Int64) -> Data {
+        var data = Data(ephemeralPublicKey)
+        var be = timestampMs.bigEndian
+        withUnsafeBytes(of: &be) { bytes in
+            data.append(contentsOf: bytes)
+        }
+        return data
+    }
+
+    public static func buildPayloadAad(direction: String, seq: Int64) -> Data {
+        return "PhoneLink-E2E-v1|\(direction)|\(seq)".data(using: .utf8)!
+    }
+
+    public static func verifyPeerSignature(publicKeyBytes: Data, algorithm: String?, message: Data, signature: Data) -> Bool {
+        let alg = (algorithm ?? "").uppercased()
+        if alg.contains("ED25519") || (publicKeyBytes.count == 32 && signature.count == 64 && alg.isEmpty) {
+            let rawKey: Data
+            if publicKeyBytes.count == 32 {
+                rawKey = publicKeyBytes
+            } else if publicKeyBytes.count == 44 && publicKeyBytes.first == 0x30 {
+                rawKey = publicKeyBytes.subdata(in: 12..<44)
+            } else {
+                return false
+            }
+            guard let edPub = try? Curve25519.Signing.PublicKey(rawRepresentation: rawKey) else {
+                return false
+            }
+            return edPub.isValidSignature(signature, for: message)
+        }
+
+        if let p256Pub = try? P256.Signing.PublicKey(derRepresentation: publicKeyBytes),
+           let ecdsaSig = try? P256.Signing.ECDSASignature(derRepresentation: signature) {
+            return p256Pub.isValidSignature(ecdsaSig, for: message)
+        }
+        if let p256Raw = try? P256.Signing.PublicKey(x963Representation: publicKeyBytes),
+           let ecdsaSig = try? P256.Signing.ECDSASignature(derRepresentation: signature) {
+            return p256Raw.isValidSignature(ecdsaSig, for: message)
+        }
+        return false
+    }
+
     public struct SessionKeys: Sendable {
         public let keyMacToAndroid: SymmetricKey
         public let keyAndroidToMac: SymmetricKey

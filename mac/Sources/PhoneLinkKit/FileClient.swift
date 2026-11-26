@@ -421,17 +421,39 @@ public final class FileClient: @unchecked Sendable {
         return String(format: "%.1f %@", size, units[unitIndex])
     }
 
-    /// Formats epoch milliseconds into readable timestamp.
-    public static func formatDate(_ millis: Int64) -> String {
-        let date = Date(timeIntervalSince1970: Double(millis) / 1000.0)
+    private static let dateFormatterLock = NSLock()
+    private static let sharedDateFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
         formatter.timeZone = .current
-        return formatter.string(from: date)
+        return formatter
+    }()
+
+    /// Formats epoch milliseconds into readable timestamp.
+    public static func formatDate(_ millis: Int64) -> String {
+        let date = Date(timeIntervalSince1970: Double(millis) / 1000.0)
+        dateFormatterLock.lock()
+        defer { dateFormatterLock.unlock() }
+        return sharedDateFormatter.string(from: date)
     }
 
     /// Executes end-to-end directory listing against the connected Android device.
-    /// Handles ephemeral key agreement and AES-256-GCM encryption/decryption.
+    public static func isExpectedFinalUploadAck(
+        expectedTransferId: String,
+        expectedFinalChunkIndex: UInt64?,
+        ackTransferId: String,
+        ackChunkIndex: UInt64
+    ) -> Bool {
+        guard let expectedIdx = expectedFinalChunkIndex else { return false }
+        return ackTransferId == expectedTransferId && ackChunkIndex == expectedIdx
+    }
+
+    public static func validateDownloadChunkOffset(chunkOffset: UInt64, bytesWritten: UInt64) throws {
+        guard chunkOffset == bytesWritten else {
+            throw AuthClientError.invalidResponse("Out-of-order chunk offset \(chunkOffset) != expected \(bytesWritten)")
+        }
+    }
+
     public static func listRemoteFiles(
         vpsBaseURL: URL,
         identity: DeviceIdentityManager,
@@ -439,112 +461,24 @@ public final class FileClient: @unchecked Sendable {
         targetDirectory: String,
         timeoutSeconds: Double = 5.0
     ) async throws -> FileListResponse {
-        let manager = ConnectionManager(vpsBaseURL: vpsBaseURL, identity: identity, authClient: client)
-        let presence = await manager.connectAndWaitForPresence(timeoutSeconds: 2.5)
-
-        guard case .peerOnline = presence else {
-            manager.disconnect()
-            throw AuthClientError.invalidResponse("Paired Android device is OFFLINE")
-        }
-
-        let e2e = E2EEncryptionManager()
-        let sessionState = E2EHandshakeSessionState()
-
-        return try await withCheckedThrowingContinuation { continuation in
-            // Setup message listener
-            manager.onMessageReceived = { data in
-                guard !sessionState.isResumed() else { return }
-
-                guard let text = String(data: data, encoding: .utf8),
-                      let json = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
-                      let type = json["type"] as? String else {
-                    return
-                }
-
-                if type == "E2E_ACK" {
-                    guard let peerPubB64 = json["ephemeral_public_key"] as? String,
-                          let peerPubData = Data(base64Encoded: peerPubB64) else {
-                        return
-                    }
-
-                    do {
-                        let keys = try e2e.deriveSessionKeys(peerPublicKeyData: peerPubData)
-                        sessionState.setKeys(keys)
-
-                        let reqData = try buildFileListRequest(targetDirectory: targetDirectory)
-                        let encrypted = try E2EEncryptionManager.encryptAESGCM(key: keys.keyMacToAndroid, plaintext: reqData)
-
-                        let payloadJson: [String: Any] = [
-                            "type": "E2E_PAYLOAD",
-                            "ciphertext": encrypted.base64EncodedString()
-                        ]
-                        let outData = try JSONSerialization.data(withJSONObject: payloadJson)
-                        Task {
-                            do {
-                                try await manager.send(data: outData)
-                            } catch {
-                                if sessionState.resumeOnce() {
-                                    manager.disconnect()
-                                    continuation.resume(throwing: error)
-                                }
-                            }
-                        }
-                    } catch {
-                        if sessionState.resumeOnce() {
-                            manager.disconnect()
-                            continuation.resume(throwing: error)
-                        }
-                    }
-                } else if type == "E2E_PAYLOAD" {
-                    guard let keys = sessionState.getKeys(),
-                          let ctB64 = json["ciphertext"] as? String,
-                          let ct = Data(base64Encoded: ctB64) else {
-                        return
-                    }
-
-                    do {
-                        let decrypted = try E2EEncryptionManager.decryptAESGCM(key: keys.keyAndroidToMac, payload: ct)
-                        let response = try parseFileListResponse(data: decrypted)
-                        if sessionState.resumeOnce() {
-                            manager.disconnect()
-                            continuation.resume(returning: response)
-                        }
-                    } catch {
-                        if sessionState.resumeOnce() {
-                            manager.disconnect()
-                            continuation.resume(throwing: error)
-                        }
-                    }
-                }
+        let session = try await E2ETransportSession.connectAndAuthenticate(
+            vpsBaseURL: vpsBaseURL,
+            identity: identity,
+            client: client,
+            presenceTimeoutSeconds: 2.5
+        )
+        return try await session.runSession(
+            timeoutSeconds: timeoutSeconds,
+            timeoutMessage: "Request timed out waiting for Android response",
+            onReady: { activeSession in
+                let reqData = try buildFileListRequest(targetDirectory: targetDirectory)
+                try await activeSession.sendEncrypted(plaintext: reqData)
+            },
+            onPayload: { decrypted, _, finish in
+                let response = try parseFileListResponse(data: decrypted)
+                finish(.success(response))
             }
-
-            // Start handshake: send E2E_INIT
-            Task {
-                do {
-                    let initJson: [String: Any] = [
-                        "type": "E2E_INIT",
-                        "ephemeral_public_key": e2e.publicKeyRaw.base64EncodedString(),
-                        "timestamp": Int64(Date().timeIntervalSince1970 * 1000)
-                    ]
-                    let initData = try JSONSerialization.data(withJSONObject: initJson)
-                    try await manager.send(data: initData)
-                } catch {
-                    if sessionState.resumeOnce() {
-                        manager.disconnect()
-                        continuation.resume(throwing: error)
-                    }
-                }
-            }
-
-            // Timeout timer
-            Task {
-                try? await Task.sleep(nanoseconds: UInt64(timeoutSeconds * 1_000_000_000))
-                if sessionState.resumeOnce() {
-                    manager.disconnect()
-                    continuation.resume(throwing: AuthClientError.invalidResponse("Request timed out waiting for Android response"))
-                }
-            }
-        }
+        )
     }
 
     /// Downloads a remote file from Android through the relay with verifiable chunked SHA-256 integrity and resumability.
@@ -567,7 +501,6 @@ public final class FileClient: @unchecked Sendable {
             let existingSize = (attrs[.size] as? NSNumber)?.uint64Value ?? 0
             if existingSize > 0 {
                 startOffset = existingSize
-                // Prime hasher with existing prefix bytes
                 let reader = try FileHandle(forReadingFrom: partURL)
                 while true {
                     let slice = try reader.read(upToCount: 65536) ?? Data()
@@ -594,149 +527,65 @@ public final class FileClient: @unchecked Sendable {
             destinationURL: localDestinationURL
         )
 
-        let manager = ConnectionManager(vpsBaseURL: vpsBaseURL, identity: identity, authClient: client)
-        let presence = await manager.connectAndWaitForPresence(timeoutSeconds: 3.0)
-
-        guard case .peerOnline = presence else {
+        let session: E2ETransportSession
+        do {
+            session = try await E2ETransportSession.connectAndAuthenticate(
+                vpsBaseURL: vpsBaseURL,
+                identity: identity,
+                client: client,
+                presenceTimeoutSeconds: 3.0
+            )
+        } catch {
             state.closeHandle()
-            manager.disconnect()
-            throw AuthClientError.invalidResponse("Paired Android device is OFFLINE")
+            throw error
         }
 
-        let e2e = E2EEncryptionManager()
-
-        return try await withCheckedThrowingContinuation { continuation in
-            manager.onMessageReceived = { data in
-                guard !state.isCompleted() else { return }
-
-                guard let text = String(data: data, encoding: .utf8),
-                      let json = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
-                      let type = json["type"] as? String else {
-                    return
-                }
-
-                if type == "E2E_ACK" {
-                    guard let peerPubB64 = json["ephemeral_public_key"] as? String,
-                          let peerPubData = Data(base64Encoded: peerPubB64) else {
+        do {
+            return try await session.runSession(
+                timeoutSeconds: timeoutSeconds,
+                timeoutMessage: "Request timed out during file download",
+                onReady: { activeSession in
+                    let reqData = try buildFileDownloadRequest(filePath: remotePath, startOffset: initialOffset)
+                    try await activeSession.sendEncrypted(plaintext: reqData)
+                },
+                onPayload: { decrypted, _, finish in
+                    guard let subJson = try JSONSerialization.jsonObject(with: decrypted) as? [String: Any] else {
                         return
                     }
 
-                    do {
-                        let keys = try e2e.deriveSessionKeys(peerPublicKeyData: peerPubData)
-                        state.setKeys(keys)
-
-                        let reqData = try buildFileDownloadRequest(filePath: remotePath, startOffset: initialOffset)
-                        let encrypted = try E2EEncryptionManager.encryptAESGCM(key: keys.keyMacToAndroid, plaintext: reqData)
-
-                        let payloadJson: [String: Any] = [
-                            "type": "E2E_PAYLOAD",
-                            "ciphertext": encrypted.base64EncodedString()
-                        ]
-                        let outData = try JSONSerialization.data(withJSONObject: payloadJson)
-                        Task {
-                            do {
-                                try await manager.send(data: outData)
-                            } catch {
-                                if state.markCompleted() {
-                                    state.closeHandle()
-                                    manager.disconnect()
-                                    continuation.resume(throwing: error)
-                                }
-                            }
-                        }
-                    } catch {
-                        if state.markCompleted() {
+                    if subJson["file_download_init_resp"] != nil {
+                        let initResp = try parseFileDownloadInitResponse(data: decrypted)
+                        if initResp.status != "STATUS_OK" {
                             state.closeHandle()
-                            manager.disconnect()
-                            continuation.resume(throwing: error)
-                        }
-                    }
-                } else if type == "E2E_PAYLOAD" {
-                    guard let keys = state.getKeys(),
-                          let ctB64 = json["ciphertext"] as? String,
-                          let ct = Data(base64Encoded: ctB64) else {
-                        return
-                    }
-
-                    do {
-                        let decrypted = try E2EEncryptionManager.decryptAESGCM(key: keys.keyAndroidToMac, payload: ct)
-                        guard let subJson = try JSONSerialization.jsonObject(with: decrypted) as? [String: Any] else {
+                            if initResp.totalSizeBytes > 0 && initialOffset > initResp.totalSizeBytes {
+                                try? FileManager.default.removeItem(at: partURL)
+                            }
+                            let errMsg = initResp.errorMessage ?? initResp.status
+                            finish(.failure(AuthClientError.invalidResponse(errMsg)))
                             return
                         }
+                        state.setInitResponse(initResp)
 
-                        if subJson["file_download_init_resp"] != nil {
-                            let initResp = try parseFileDownloadInitResponse(data: decrypted)
-                            if initResp.status != "STATUS_OK" {
-                                let errMsg = initResp.errorMessage ?? initResp.status
-                                if state.markCompleted() {
-                                    state.closeHandle()
-                                    manager.disconnect()
-                                    continuation.resume(throwing: AuthClientError.invalidResponse(errMsg))
-                                }
-                                return
-                            }
-                            state.setInitResponse(initResp)
-
-                            // If 0-byte file
-                            if initResp.totalSizeBytes == 0 {
-                                state.closeHandle()
-                                try? FileManager.default.removeItem(at: localDestinationURL)
-                                try FileManager.default.moveItem(at: partURL, to: localDestinationURL)
-                                if state.markCompleted() {
-                                    manager.disconnect()
-                                    continuation.resume(returning: (bytesTransferred: 0, sha256: initResp.sha256Checksum))
-                                }
-                            }
-                        } else if subJson["file_chunk"] != nil {
-                            let chunk = try parseFileChunk(data: decrypted)
-                            let (isFinal, progress, finalSha) = try state.processChunk(chunk: chunk)
-                            progressHandler?(progress)
-
-                            if isFinal {
-                                if state.markCompleted() {
-                                    manager.disconnect()
-                                    continuation.resume(returning: (bytesTransferred: progress.totalBytes, sha256: finalSha ?? ""))
-                                }
-                            }
-                        }
-                    } catch {
-                        if state.markCompleted() {
+                        if initResp.totalSizeBytes == 0 {
                             state.closeHandle()
-                            manager.disconnect()
-                            continuation.resume(throwing: error)
+                            try? FileManager.default.removeItem(at: localDestinationURL)
+                            try FileManager.default.moveItem(at: partURL, to: localDestinationURL)
+                            finish(.success((bytesTransferred: 0, sha256: initResp.sha256Checksum)))
+                        }
+                    } else if subJson["file_chunk"] != nil {
+                        let chunk = try parseFileChunk(data: decrypted)
+                        let (isFinal, progress, finalSha) = try state.processChunk(chunk: chunk)
+                        progressHandler?(progress)
+
+                        if isFinal {
+                            finish(.success((bytesTransferred: progress.totalBytes, sha256: finalSha ?? "")))
                         }
                     }
                 }
-            }
-
-            // Start handshake: send E2E_INIT
-            Task {
-                do {
-                    let initJson: [String: Any] = [
-                        "type": "E2E_INIT",
-                        "ephemeral_public_key": e2e.publicKeyRaw.base64EncodedString(),
-                        "timestamp": Int64(Date().timeIntervalSince1970 * 1000)
-                    ]
-                    let initData = try JSONSerialization.data(withJSONObject: initJson)
-                    try await manager.send(data: initData)
-                } catch {
-                    if state.markCompleted() {
-                        state.closeHandle()
-                        manager.disconnect()
-                        continuation.resume(throwing: error)
-                    }
-                }
-            }
-
-            // Timeout watchdog
-            Task {
-                try? await Task.sleep(nanoseconds: UInt64(timeoutSeconds * 1_000_000_000))
-                if state.markCompleted() {
-                    state.closeHandle()
-                    manager.disconnect()
-                    continuation.resume(throwing: AuthClientError.invalidResponse("Request timed out during file download"))
-                }
-            }
+            )
+        } catch {
+            state.closeHandle()
+            throw error
         }
     }
 
@@ -760,182 +609,82 @@ public final class FileClient: @unchecked Sendable {
         let wholeFileSha256 = try computeFileSHA256Hex(at: localSourceURL)
         let fileName = remoteFileName ?? localSourceURL.lastPathComponent
 
-        let manager = ConnectionManager(vpsBaseURL: vpsBaseURL, identity: identity, authClient: client)
-        let presence = await manager.connectAndWaitForPresence(timeoutSeconds: 3.0)
+        let session = try await E2ETransportSession.connectAndAuthenticate(
+            vpsBaseURL: vpsBaseURL,
+            identity: identity,
+            client: client,
+            presenceTimeoutSeconds: 3.0
+        )
 
-        guard case .peerOnline = presence else {
-            manager.disconnect()
-            throw AuthClientError.invalidResponse("Paired Android device is OFFLINE")
-        }
-
-        let e2e = E2EEncryptionManager()
         let state = UploadSessionState(
             totalBytes: totalSizeBytes,
             wholeFileSha: wholeFileSha256,
             sourceURL: localSourceURL
         )
 
-        return try await withCheckedThrowingContinuation { continuation in
-            manager.onMessageReceived = { data in
-                guard !state.isCompleted() else { return }
-
-                guard let text = String(data: data, encoding: .utf8),
-                      let json = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
-                      let type = json["type"] as? String else {
+        return try await session.runSession(
+            timeoutSeconds: timeoutSeconds,
+            timeoutMessage: "Request timed out during file upload",
+            onReady: { activeSession in
+                let reqData = try buildFileUploadRequest(
+                    destinationPath: remoteDestinationDirectory,
+                    fileName: fileName,
+                    totalSizeBytes: totalSizeBytes,
+                    sha256Checksum: wholeFileSha256
+                )
+                try await activeSession.sendEncrypted(plaintext: reqData)
+            },
+            onPayload: { decrypted, activeSession, finish in
+                guard let subJson = try JSONSerialization.jsonObject(with: decrypted) as? [String: Any] else {
                     return
                 }
 
-                if type == "E2E_ACK" {
-                    guard let peerPubB64 = json["ephemeral_public_key"] as? String,
-                          let peerPubData = Data(base64Encoded: peerPubB64) else {
+                if subJson["file_upload_init_resp"] != nil {
+                    let initResp = try parseFileUploadInitResponse(data: decrypted)
+                    if initResp.status != "STATUS_OK" {
+                        let errMsg = initResp.errorMessage ?? initResp.status
+                        finish(.failure(AuthClientError.invalidResponse(errMsg)))
                         return
                     }
 
-                    do {
-                        let keys = try e2e.deriveSessionKeys(peerPublicKeyData: peerPubData)
-                        state.setKeys(keys)
-
-                        let reqData = try buildFileUploadRequest(
-                            destinationPath: remoteDestinationDirectory,
-                            fileName: fileName,
-                            totalSizeBytes: totalSizeBytes,
-                            sha256Checksum: wholeFileSha256
-                        )
-                        let encrypted = try E2EEncryptionManager.encryptAESGCM(key: keys.keyMacToAndroid, plaintext: reqData)
-
-                        let payloadJson: [String: Any] = [
-                            "type": "E2E_PAYLOAD",
-                            "ciphertext": encrypted.base64EncodedString()
-                        ]
-                        let outData = try JSONSerialization.data(withJSONObject: payloadJson)
-                        Task {
-                            do {
-                                try await manager.send(data: outData)
-                            } catch {
-                                if state.markCompleted() {
-                                    manager.disconnect()
-                                    continuation.resume(throwing: error)
-                                }
-                            }
-                        }
-                    } catch {
-                        if state.markCompleted() {
-                            manager.disconnect()
-                            continuation.resume(throwing: error)
-                        }
-                    }
-                } else if type == "E2E_PAYLOAD" {
-                    guard let keys = state.getKeys(),
-                          let ctB64 = json["ciphertext"] as? String,
-                          let ct = Data(base64Encoded: ctB64) else {
+                    if totalSizeBytes == 0 {
+                        finish(.success((bytesTransferred: 0, sha256: wholeFileSha256)))
                         return
                     }
 
-                    do {
-                        let decrypted = try E2EEncryptionManager.decryptAESGCM(key: keys.keyAndroidToMac, payload: ct)
-                        guard let subJson = try JSONSerialization.jsonObject(with: decrypted) as? [String: Any] else {
-                            return
+                    state.setTransferId(initResp.transferId)
+                    let chunkSize = max(UInt32(4096), initResp.expectedChunkSize)
+                    Task {
+                        do {
+                            try await streamUploadChunks(
+                                session: activeSession,
+                                state: state,
+                                resumeOffset: initResp.resumeOffset,
+                                chunkSize: chunkSize,
+                                progressHandler: progressHandler
+                            )
+                        } catch {
+                            finish(.failure(error))
                         }
+                    }
+                } else if subJson["file_chunk_ack"] != nil {
+                    let ack = try parseFileChunkAck(data: decrypted)
+                    if ack.status != "STATUS_OK" {
+                        let errMsg = ack.errorMessage ?? ack.status
+                        finish(.failure(AuthClientError.invalidResponse(errMsg)))
+                        return
+                    }
 
-                        if subJson["file_upload_init_resp"] != nil {
-                            let initResp = try parseFileUploadInitResponse(data: decrypted)
-                            if initResp.status != "STATUS_OK" {
-                                let errMsg = initResp.errorMessage ?? initResp.status
-                                if state.markCompleted() {
-                                    manager.disconnect()
-                                    continuation.resume(throwing: AuthClientError.invalidResponse(errMsg))
-                                }
-                                return
-                            }
-
-                            if totalSizeBytes == 0 {
-                                if state.markCompleted() {
-                                    manager.disconnect()
-                                    continuation.resume(returning: (bytesTransferred: 0, sha256: wholeFileSha256))
-                                }
-                                return
-                            }
-
-                            // Start streaming chunks from initResp.resumeOffset
-                            state.setTransferId(initResp.transferId)
-                            let chunkSize = max(UInt32(4096), initResp.expectedChunkSize)
-                            Task {
-                                do {
-                                    try await streamUploadChunks(
-                                        manager: manager,
-                                        keys: keys,
-                                        state: state,
-                                        resumeOffset: initResp.resumeOffset,
-                                        chunkSize: chunkSize,
-                                        progressHandler: progressHandler
-                                    )
-                                } catch {
-                                    if state.markCompleted() {
-                                        manager.disconnect()
-                                        continuation.resume(throwing: error)
-                                    }
-                                }
-                            }
-                        } else if subJson["file_chunk_ack"] != nil {
-                            let ack = try parseFileChunkAck(data: decrypted)
-                            if ack.status != "STATUS_OK" {
-                                let errMsg = ack.errorMessage ?? ack.status
-                                if state.markCompleted() {
-                                    manager.disconnect()
-                                    continuation.resume(throwing: AuthClientError.invalidResponse(errMsg))
-                                }
-                                return
-                            }
-
-                            // Check if this was the final chunk ack
-                            if state.isAwaitingFinalAck() {
-                                if state.markCompleted() {
-                                    manager.disconnect()
-                                    continuation.resume(returning: (bytesTransferred: totalSizeBytes, sha256: wholeFileSha256))
-                                }
-                            }
-                        }
-                    } catch {
-                        if state.markCompleted() {
-                            manager.disconnect()
-                            continuation.resume(throwing: error)
-                        }
+                    if state.isExpectedFinalAck(transferId: ack.transferId, chunkIndex: ack.chunkIndex) {
+                        finish(.success((bytesTransferred: totalSizeBytes, sha256: wholeFileSha256)))
                     }
                 }
             }
-
-            // Start handshake: send E2E_INIT
-            Task {
-                do {
-                    let initJson: [String: Any] = [
-                        "type": "E2E_INIT",
-                        "ephemeral_public_key": e2e.publicKeyRaw.base64EncodedString(),
-                        "timestamp": Int64(Date().timeIntervalSince1970 * 1000)
-                    ]
-                    let initData = try JSONSerialization.data(withJSONObject: initJson)
-                    try await manager.send(data: initData)
-                } catch {
-                    if state.markCompleted() {
-                        manager.disconnect()
-                        continuation.resume(throwing: error)
-                    }
-                }
-            }
-
-            // Timeout watchdog
-            Task {
-                try? await Task.sleep(nanoseconds: UInt64(timeoutSeconds * 1_000_000_000))
-                if state.markCompleted() {
-                    manager.disconnect()
-                    continuation.resume(throwing: AuthClientError.invalidResponse("Request timed out during file upload"))
-                }
-            }
-        }
+        )
     }
 
     private static func streamUploadChunks(
-        manager: ConnectionManager,
-        keys: E2EEncryptionManager.SessionKeys,
+        session: E2ETransportSession,
         state: UploadSessionState,
         resumeOffset: UInt64,
         chunkSize: UInt32,
@@ -954,7 +703,7 @@ public final class FileClient: @unchecked Sendable {
         let startTime = Date()
 
         while currentOffset < total {
-            guard !state.isCompleted() else { return }
+            guard !session.isTerminated() else { return }
 
             let bytesToRead = min(Int(chunkSize), Int(total - currentOffset))
             guard let chunkData = try handle.read(upToCount: bytesToRead), !chunkData.isEmpty else {
@@ -963,7 +712,7 @@ public final class FileClient: @unchecked Sendable {
 
             let isFinal = (currentOffset + UInt64(chunkData.count) >= total)
             if isFinal {
-                state.setAwaitingFinalAck(true)
+                state.setExpectedFinalChunkIndex(chunkIndex)
             }
 
             let chunkPayload = try buildFileChunk(
@@ -973,14 +722,7 @@ public final class FileClient: @unchecked Sendable {
                 chunkData: chunkData,
                 isFinalChunk: isFinal
             )
-
-            let encrypted = try E2EEncryptionManager.encryptAESGCM(key: keys.keyMacToAndroid, plaintext: chunkPayload)
-            let outJson: [String: Any] = [
-                "type": "E2E_PAYLOAD",
-                "ciphertext": encrypted.base64EncodedString()
-            ]
-            let outData = try JSONSerialization.data(withJSONObject: outJson)
-            try await manager.send(data: outData)
+            try await session.sendEncrypted(plaintext: chunkPayload)
 
             currentOffset += UInt64(chunkData.count)
             chunkIndex += 1
@@ -1002,25 +744,13 @@ private final class UploadSessionState: @unchecked Sendable {
     let totalBytes: UInt64
     let wholeFileSha: String
     let sourceURL: URL
-    private var keys: E2EEncryptionManager.SessionKeys?
     private var transferId: String = ""
-    private var completed = false
-    private var awaitingFinalAck = false
+    private var expectedFinalChunkIndex: UInt64?
 
     init(totalBytes: UInt64, wholeFileSha: String, sourceURL: URL) {
         self.totalBytes = totalBytes
         self.wholeFileSha = wholeFileSha
         self.sourceURL = sourceURL
-    }
-
-    func setKeys(_ keys: E2EEncryptionManager.SessionKeys) {
-        lock.lock(); defer { lock.unlock() }
-        self.keys = keys
-    }
-
-    func getKeys() -> E2EEncryptionManager.SessionKeys? {
-        lock.lock(); defer { lock.unlock() }
-        return keys
     }
 
     func setTransferId(_ id: String) {
@@ -1033,34 +763,25 @@ private final class UploadSessionState: @unchecked Sendable {
         return transferId
     }
 
-    func isCompleted() -> Bool {
+    func setExpectedFinalChunkIndex(_ idx: UInt64) {
         lock.lock(); defer { lock.unlock() }
-        return completed
+        self.expectedFinalChunkIndex = idx
     }
 
-    func markCompleted() -> Bool {
+    func isExpectedFinalAck(transferId ackTransferId: String, chunkIndex: UInt64) -> Bool {
         lock.lock(); defer { lock.unlock() }
-        if completed { return false }
-        completed = true
-        return true
-    }
-
-    func setAwaitingFinalAck(_ val: Bool) {
-        lock.lock(); defer { lock.unlock() }
-        self.awaitingFinalAck = val
-    }
-
-    func isAwaitingFinalAck() -> Bool {
-        lock.lock(); defer { lock.unlock() }
-        return awaitingFinalAck
+        return FileClient.isExpectedFinalUploadAck(
+            expectedTransferId: self.transferId,
+            expectedFinalChunkIndex: self.expectedFinalChunkIndex,
+            ackTransferId: ackTransferId,
+            ackChunkIndex: chunkIndex
+        )
     }
 }
 
 private final class DownloadSessionState: @unchecked Sendable {
     private let lock = NSLock()
-    private var keys: E2EEncryptionManager.SessionKeys?
     private var initResp: FileDownloadInitResponse?
-    private var completed = false
     private var hasher: SHA256
     private var bytesWritten: UInt64
     private let startTime = Date()
@@ -1076,40 +797,16 @@ private final class DownloadSessionState: @unchecked Sendable {
         self.destinationURL = destinationURL
     }
 
-    func setKeys(_ keys: E2EEncryptionManager.SessionKeys) {
-        lock.lock(); defer { lock.unlock() }
-        self.keys = keys
-    }
-
-    func getKeys() -> E2EEncryptionManager.SessionKeys? {
-        lock.lock(); defer { lock.unlock() }
-        return keys
-    }
-
     func setInitResponse(_ resp: FileDownloadInitResponse) {
         lock.lock(); defer { lock.unlock() }
         self.initResp = resp
     }
 
-    func getInitResponse() -> FileDownloadInitResponse? {
-        lock.lock(); defer { lock.unlock() }
-        return initResp
-    }
-
-    func isCompleted() -> Bool {
-        lock.lock(); defer { lock.unlock() }
-        return completed
-    }
-
-    func markCompleted() -> Bool {
-        lock.lock(); defer { lock.unlock() }
-        if completed { return false }
-        completed = true
-        return true
-    }
-
     func processChunk(chunk: FileChunk) throws -> (isFinal: Bool, progress: DownloadProgress, finalSha256: String?) {
         lock.lock(); defer { lock.unlock() }
+
+        try FileClient.validateDownloadChunkOffset(chunkOffset: chunk.offset, bytesWritten: bytesWritten)
+
         guard let chunkData = Data(base64Encoded: chunk.dataBase64) else {
             throw AuthClientError.invalidResponse("Invalid base64 payload in chunk \(chunk.chunkIndex)")
         }
@@ -1120,10 +817,11 @@ private final class DownloadSessionState: @unchecked Sendable {
             throw AuthClientError.invalidResponse("STATUS_INTEGRITY_MISMATCH: Chunk \(chunk.chunkIndex) SHA-256 mismatch")
         }
 
-        // Write to file and update hash
-        fileHandle?.write(chunkData)
-        hasher.update(data: chunkData)
-        bytesWritten += UInt64(chunkData.count)
+        if !chunkData.isEmpty {
+            fileHandle?.write(chunkData)
+            hasher.update(data: chunkData)
+            bytesWritten += UInt64(chunkData.count)
+        }
 
         let elapsed = max(0.001, Date().timeIntervalSince(startTime))
         let speed = Double(bytesWritten) / elapsed
@@ -1144,11 +842,11 @@ private final class DownloadSessionState: @unchecked Sendable {
 
             if let expected = initResp?.sha256Checksum, !expected.isEmpty {
                 guard finalSha?.lowercased() == expected.lowercased() else {
+                    try? FileManager.default.removeItem(at: partURL)
                     throw AuthClientError.invalidResponse("STATUS_INTEGRITY_MISMATCH: Whole-file SHA-256 mismatch (expected \(expected), got \(finalSha ?? ""))")
                 }
             }
 
-            // Move to destination
             try? FileManager.default.removeItem(at: destinationURL)
             try FileManager.default.moveItem(at: partURL, to: destinationURL)
         }
@@ -1160,33 +858,5 @@ private final class DownloadSessionState: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         try? fileHandle?.close()
         fileHandle = nil
-    }
-}
-
-private final class E2EHandshakeSessionState: @unchecked Sendable {
-    private var resumed = false
-    private var keys: E2EEncryptionManager.SessionKeys?
-    private let lock = NSLock()
-
-    func isResumed() -> Bool {
-        lock.lock(); defer { lock.unlock() }
-        return resumed
-    }
-
-    func resumeOnce() -> Bool {
-        lock.lock(); defer { lock.unlock() }
-        if resumed { return false }
-        resumed = true
-        return true
-    }
-
-    func setKeys(_ keys: E2EEncryptionManager.SessionKeys) {
-        lock.lock(); defer { lock.unlock() }
-        self.keys = keys
-    }
-
-    func getKeys() -> E2EEncryptionManager.SessionKeys? {
-        lock.lock(); defer { lock.unlock() }
-        return keys
     }
 }

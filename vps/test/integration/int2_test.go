@@ -78,7 +78,7 @@ func TestINT2DeviceDiscoveryAndStatusReporting(t *testing.T) {
 	}
 
 	// 6. Complete Out-of-Band Pairing Ceremony
-	pairToken := createPairingToken(t, httpServer.URL, macDeviceID)
+	pairToken := createPairingToken(t, httpServer.URL, macDeviceID, macToken)
 	claimPairing(t, httpServer.URL, pairToken, andDeviceID)
 
 	// 7. Verify Paired but Offline Status via REST

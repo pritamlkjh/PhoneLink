@@ -31,8 +31,7 @@ class BootReceiver : BroadcastReceiver() {
 
         val SUPPORTED_BOOT_ACTIONS = setOf(
             Intent.ACTION_BOOT_COMPLETED,
-            "android.intent.action.QUICKBOOT_POWERON",
-            "com.htc.intent.action.QUICKBOOT_POWERON"
+            "android.intent.action.QUICKBOOT_POWERON"
         )
     }
 

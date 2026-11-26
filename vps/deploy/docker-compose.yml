@@ -12,6 +12,9 @@ services:
     environment:
       - PHONELINK_HOST=0.0.0.0
       - PHONELINK_PORT=8443
+      - PHONELINK_DATA_DIR=/app/data
+    volumes:
+      - phonelink_data:/app/data
     security_opt:
       - no-new-privileges:true
     read_only: true
@@ -22,3 +25,6 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+
+volumes:
+  phonelink_data:

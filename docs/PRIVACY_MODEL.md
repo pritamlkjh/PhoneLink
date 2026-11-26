@@ -63,7 +63,7 @@ Remote execution is restricted to a hardcoded enum:
 
 1. **VPS Untrusted Relay Model:**
    - The VPS relay terminates only the outer TLS transport.
-   - The payload itself is encrypted using symmetric session keys derived via ECDH (secp256r1) key agreement directly between Mac and Android.
+   - The payload itself is encrypted using symmetric session keys derived via **X25519 (RFC 7748)** key agreement with identity-signed handshakes directly between Mac and Android.
    - The VPS holds no private keys, derives no session keys, and possesses zero cryptographic ability to decrypt relayed files, file listings, camera frames, or action payloads.
 
 2. **Zero Plaintext Persistence at Rest:**
@@ -80,9 +80,9 @@ Remote execution is restricted to a hardcoded enum:
 ## 4. Initial Bootstrap & Pairing Consent (`MAC-2` / `AND-6`)
 
 1. **Short-Lived Out-of-Band Pairing Ceremony:**
-   - The Mac requests a 6-digit numeric pairing token with a strict 10-minute expiration window.
+   - The Mac requests a 128-bit pairing token (displayed as a full token and 8-character short code) with a strict 5-minute (300s) expiration window.
    - The user must manually enter this pairing code into the Android application.
-   - Once paired, both devices record each other's cryptographic public key fingerprint (`DeviceID = SHA-256(PublicKey)`).
+   - Once paired, both devices record each other's cryptographic public key fingerprint (`DeviceID = SHA-256(PublicKey)`) and identity public key.
 2. **Immediate Revocation:**
-   - Either device can revoke pairing instantly from local settings or CLI (`phonelink unpair`).
+   - Either device can revoke pairing instantly via CLI (`phonelink revoke` or `phonelink revoke --self --confirm`) or local identity wipe.
    - Revocation invalidates all active session tokens and resumption tokens immediately across the VPS coordinator.

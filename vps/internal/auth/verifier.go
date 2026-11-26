@@ -39,21 +39,37 @@ type activeChallenge struct {
 type ChallengeTracker struct {
 	mu         sync.Mutex
 	challenges map[string]map[string]activeChallenge // deviceID -> hex(nonce) -> activeChallenge
+	stopCh     chan struct{}
+	stopOnce   sync.Once
 }
 
 // NewChallengeTracker initializes a new ChallengeTracker.
 func NewChallengeTracker() *ChallengeTracker {
 	ct := &ChallengeTracker{
 		challenges: make(map[string]map[string]activeChallenge),
+		stopCh:     make(chan struct{}),
 	}
 	go ct.startJanitor(30 * time.Second)
 	return ct
 }
 
+// Stop terminates the background challenge cleanup goroutine.
+func (ct *ChallengeTracker) Stop() {
+	ct.stopOnce.Do(func() {
+		close(ct.stopCh)
+	})
+}
+
 func (ct *ChallengeTracker) startJanitor(interval time.Duration) {
 	ticker := time.NewTicker(interval)
-	for range ticker.C {
-		ct.cleanupExpired()
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			ct.cleanupExpired()
+		case <-ct.stopCh:
+			return
+		}
 	}
 }
 

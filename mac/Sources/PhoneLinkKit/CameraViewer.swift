@@ -1,4 +1,8 @@
 import Foundation
+#if canImport(ImageIO) && canImport(CoreGraphics)
+import ImageIO
+import CoreGraphics
+#endif
 
 /// CAM-4: Mac Camera Viewer Client Models, State Machine & Renderers.
 ///
@@ -215,20 +219,69 @@ public struct CameraTerminalRenderer: Sendable {
         let jpeg = frame!.jpegData
         lines.append("  +" + String(repeating: "-", count: columns) + "+")
 
-        // Generate synthetic gradient block pattern from JPEG data bytes
-        var byteIdx = 0
-        for r in 0..<rows {
-            var rowChars: [Character] = []
-            for c in 0..<columns {
-                let seed = byteIdx < jpeg.count ? Int(jpeg[byteIdx]) : (r * columns + c)
-                let charIdx = (seed + r + c) % shadedChars.count
-                rowChars.append(shadedChars[charIdx])
-                byteIdx = (byteIdx + 7) % max(1, jpeg.count)
+        if let lumaRows = decodeGrayscaleAsciiGrid(jpegData: jpeg, columns: columns, rows: rows) {
+            for rowStr in lumaRows {
+                lines.append("  |" + rowStr + "|")
             }
-            lines.append("  |" + String(rowChars) + "|")
+        } else {
+            // Fallback block representation when raw payload is non-image test fixture data
+            var byteIdx = 0
+            for r in 0..<rows {
+                var rowChars: [Character] = []
+                for c in 0..<columns {
+                    let seed = byteIdx < jpeg.count ? Int(jpeg[byteIdx]) : (r * columns + c)
+                    let charIdx = (seed + r + c) % shadedChars.count
+                    rowChars.append(shadedChars[charIdx])
+                    byteIdx = (byteIdx + 7) % max(1, jpeg.count)
+                }
+                lines.append("  |" + String(rowChars) + "|")
+            }
         }
         lines.append("  +" + String(repeating: "-", count: columns) + "+")
         return lines.joined(separator: "\n")
+    }
+
+    private static func decodeGrayscaleAsciiGrid(jpegData: Data, columns: Int, rows: Int) -> [String]? {
+        guard columns > 0, rows > 0 else { return nil }
+        #if canImport(ImageIO) && canImport(CoreGraphics)
+        guard let source = CGImageSourceCreateWithData(jpegData as CFData, nil),
+              let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+            return nil
+        }
+
+        var pixels = [UInt8](repeating: 0, count: columns * rows)
+        let colorSpace = CGColorSpaceCreateDeviceGray()
+        guard let context = CGContext(
+                data: &pixels,
+                width: columns,
+                height: rows,
+                bitsPerComponent: 8,
+                bytesPerRow: columns,
+                space: colorSpace,
+                bitmapInfo: CGImageAlphaInfo.none.rawValue
+              ) else {
+            return nil
+        }
+        context.interpolationQuality = .medium
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: columns, height: rows))
+
+        var out: [String] = []
+        out.reserveCapacity(rows)
+        let denom = max(1, shadedChars.count - 1)
+        for r in 0..<rows {
+            var chars: [Character] = []
+            chars.reserveCapacity(columns)
+            for c in 0..<columns {
+                let lum = Int(pixels[r * columns + c])
+                let idx = min(denom, (lum * shadedChars.count) / 256)
+                chars.append(shadedChars[idx])
+            }
+            out.append(String(chars))
+        }
+        return out
+        #else
+        return nil
+        #endif
     }
 
     private static func centerText(_ text: String, width: Int) -> String {

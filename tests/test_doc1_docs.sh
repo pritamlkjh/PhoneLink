@@ -34,9 +34,10 @@ grep -q "Zero-Plaintext Guarantee" "$PROJECT_ROOT/docs/PRIVACY_MODEL.md"
 
 echo "[4/4] Verifying setup instructions and CLI syntax consistency..."
 grep -q "phonelink pair" "$PROJECT_ROOT/docs/SETUP_GUIDE.md"
-grep -q "phonelink files list" "$PROJECT_ROOT/docs/USER_MANUAL.md"
-grep -q "phonelink actions locate" "$PROJECT_ROOT/docs/USER_MANUAL.md"
-grep -q "phonelink camera preview" "$PROJECT_ROOT/docs/USER_MANUAL.md"
+grep -q "phonelink files ls" "$PROJECT_ROOT/docs/USER_MANUAL.md"
+grep -q "phonelink device ping" "$PROJECT_ROOT/docs/USER_MANUAL.md"
+grep -q "phonelink camera view" "$PROJECT_ROOT/docs/USER_MANUAL.md"
+grep -q "phonelink revoke" "$PROJECT_ROOT/docs/USER_MANUAL.md"
 
 echo "=========================================================="
 echo "DOC-1 Consolidated Documentation: ALL CHECKS PASSED"

@@ -1,6 +1,10 @@
 import Foundation
 import CryptoKit
 import PhoneLinkKit
+#if canImport(ImageIO) && canImport(CoreGraphics)
+import ImageIO
+import CoreGraphics
+#endif
 
 func assertEqual<T: Equatable>(_ actual: T, _ expected: T, _ message: String = "", file: String = #file, line: Int = #line) {
     if actual != expected {
@@ -755,5 +759,175 @@ case .valid:
 }
 print("PASS: testReplayProtectionMalformedMessage")
 
-print(">>> ALL MAC CLIENT UNIT TESTS PASSED (38/38) <<<")
+// Test 39: SEC-2 Signed E2E Handshake Transcript & Ed25519 / P-256 ECDSA Verification
+let ephKey = Data(repeating: 0x42, count: 32)
+let handshakeTs: Int64 = 1_760_000_000_000
+let transcript = E2EEncryptionManager.buildHandshakeTranscript(ephemeralPublicKey: ephKey, timestampMs: handshakeTs)
+let edPriv = Curve25519.Signing.PrivateKey()
+let edSig = try! edPriv.signature(for: transcript)
+assertTrue(
+    E2EEncryptionManager.verifyPeerSignature(
+        publicKeyBytes: edPriv.publicKey.rawRepresentation,
+        algorithm: "Ed25519",
+        message: transcript,
+        signature: edSig
+    ),
+    "Ed25519 raw handshake signature must verify"
+)
+assertFalse(
+    E2EEncryptionManager.verifyPeerSignature(
+        publicKeyBytes: edPriv.publicKey.rawRepresentation,
+        algorithm: "Ed25519",
+        message: Data("tampered".utf8),
+        signature: edSig
+    ),
+    "Tampered transcript must fail Ed25519 verification"
+)
+
+let p256Priv = P256.Signing.PrivateKey()
+let p256Sig = try! p256Priv.signature(for: transcript)
+assertTrue(
+    E2EEncryptionManager.verifyPeerSignature(
+        publicKeyBytes: p256Priv.publicKey.derRepresentation,
+        algorithm: "ECDSA_P256",
+        message: transcript,
+        signature: p256Sig.derRepresentation
+    ),
+    "P-256 DER handshake signature must verify"
+)
+assertFalse(
+    E2EEncryptionManager.verifyPeerSignature(
+        publicKeyBytes: p256Priv.publicKey.derRepresentation,
+        algorithm: "ECDSA_P256",
+        message: Data("tampered".utf8),
+        signature: p256Sig.derRepresentation
+    ),
+    "Tampered transcript must fail P-256 verification"
+)
+print("PASS: testE2ESignedHandshakeAndPeerSignatureVerification")
+
+// Test 40: SEC-2 AES-GCM AAD Sequence Binding & Mismatch Rejection
+let symKey = SymmetricKey(size: .bits256)
+let aadSeq1 = E2EEncryptionManager.buildPayloadAad(direction: "M2A", seq: 1)
+let aadSeq2 = E2EEncryptionManager.buildPayloadAad(direction: "M2A", seq: 2)
+let sealedWithAad = try! E2EEncryptionManager.encryptAESGCM(key: symKey, plaintext: Data("secret".utf8), aad: aadSeq1)
+let decryptedWithAad = try! E2EEncryptionManager.decryptAESGCM(key: symKey, payload: sealedWithAad, aad: aadSeq1)
+assertEqual(String(data: decryptedWithAad, encoding: .utf8), "secret", "AAD matching seq must decrypt")
+var aadRejected = false
+do {
+    _ = try E2EEncryptionManager.decryptAESGCM(key: symKey, payload: sealedWithAad, aad: aadSeq2)
+} catch {
+    aadRejected = true
+}
+assertTrue(aadRejected, "Mismatched sequence AAD must fail AES-GCM authentication")
+print("PASS: testE2EPayloadAadBindingAndMismatchRejection")
+
+// Test 41: FILE Upload Expected Final ACK Validation
+assertFalse(
+    FileClient.isExpectedFinalUploadAck(expectedTransferId: "tx-1", expectedFinalChunkIndex: nil, ackTransferId: "tx-1", ackChunkIndex: 0),
+    "ACK before final chunk index is set must not terminate upload early"
+)
+assertFalse(
+    FileClient.isExpectedFinalUploadAck(expectedTransferId: "tx-1", expectedFinalChunkIndex: 2, ackTransferId: "tx-1", ackChunkIndex: 1),
+    "Intermediate chunk ACK must not complete upload"
+)
+assertFalse(
+    FileClient.isExpectedFinalUploadAck(expectedTransferId: "tx-1", expectedFinalChunkIndex: 2, ackTransferId: "tx-other", ackChunkIndex: 2),
+    "ACK for different transfer ID must be ignored"
+)
+assertTrue(
+    FileClient.isExpectedFinalUploadAck(expectedTransferId: "tx-1", expectedFinalChunkIndex: 2, ackTransferId: "tx-1", ackChunkIndex: 2),
+    "Final ACK matching transfer ID and final chunk index must complete upload"
+)
+print("PASS: testUploadExpectedFinalAckValidation")
+
+// Test 42: FILE Download Chunk Offset Order Validation
+try! FileClient.validateDownloadChunkOffset(chunkOffset: 1024, bytesWritten: 1024)
+var offsetMismatchRejected = false
+do {
+    try FileClient.validateDownloadChunkOffset(chunkOffset: 2048, bytesWritten: 1024)
+} catch {
+    offsetMismatchRejected = true
+}
+assertTrue(offsetMismatchRejected, "Out-of-order chunk offset must throw")
+print("PASS: testDownloadChunkOffsetOrderValidation")
+
+// Test 43: ConnectionManager Control Event & Relay Error Parsing
+let onlineData = try! JSONSerialization.data(withJSONObject: ["type": "PEER_STATUS", "peer_device_id": "and-1", "is_online": true])
+assertEqual(ConnectionManager.parseControlEvent(from: onlineData), .peerOnline(peerDeviceID: "and-1"), "Should parse PEER_STATUS online")
+let offlineData = try! JSONSerialization.data(withJSONObject: ["type": "PEER_STATUS", "peer_device_id": "and-1", "is_online": false])
+assertEqual(ConnectionManager.parseControlEvent(from: offlineData), .peerOffline(peerDeviceID: "and-1"), "Should parse PEER_STATUS offline")
+let relayErrData = try! JSONSerialization.data(withJSONObject: ["error": "peer offline or unreachable"])
+assertEqual(ConnectionManager.parseControlEvent(from: relayErrData), .relayError(message: "peer offline or unreachable"), "Should parse relay error JSON")
+let e2ePayloadData = try! JSONSerialization.data(withJSONObject: ["type": "E2E_PAYLOAD", "ciphertext": "abc"])
+assertTrue(ConnectionManager.parseControlEvent(from: e2ePayloadData) == nil, "E2E_PAYLOAD must not be swallowed as control event")
+print("PASS: testConnectionManagerControlEventParsing")
+
+// Test 44: CAM-4 Real JPEG Grayscale Luminance Decoding in renderAsciiCanvas
+#if canImport(ImageIO) && canImport(CoreGraphics)
+func makeSyntheticGradientJPEG(width: Int = 32, height: Int = 16) -> Data? {
+    var pixels = [UInt8](repeating: 0, count: width * height)
+    for y in 0..<height {
+        for x in 0..<width {
+            pixels[y * width + x] = x < (width / 2) ? 0 : 255
+        }
+    }
+    let cs = CGColorSpaceCreateDeviceGray()
+    guard let ctx = CGContext(
+        data: &pixels,
+        width: width,
+        height: height,
+        bitsPerComponent: 8,
+        bytesPerRow: width,
+        space: cs,
+        bitmapInfo: CGImageAlphaInfo.none.rawValue
+    ), let cgImg = ctx.makeImage() else {
+        return nil
+    }
+    let outData = NSMutableData()
+    guard let dest = CGImageDestinationCreateWithData(outData, "public.jpeg" as CFString, 1, nil) else {
+        return nil
+    }
+    CGImageDestinationAddImage(dest, cgImg, nil)
+    guard CGImageDestinationFinalize(dest) else { return nil }
+    return outData as Data
+}
+
+if let realJpeg = makeSyntheticGradientJPEG() {
+    let realFrame = CameraFrame(
+        sessionId: "sess-real-jpeg",
+        frameNumber: 2,
+        timestampMs: Int64(Date().timeIntervalSince1970 * 1000),
+        jpegData: realJpeg,
+        width: 32,
+        height: 16,
+        lens: .back
+    )
+    let realCanvas = CameraTerminalRenderer.renderAsciiCanvas(
+        frame: realFrame,
+        state: .active(frameNumber: 2, latencyMs: 12, fps: 10.0, timestamp: Date()),
+        columns: 20,
+        rows: 4
+    )
+    let rowLines = realCanvas.split(separator: "\n").filter { $0.contains("|") }
+    assertEqual(rowLines.count, 4, "Decoded JPEG canvas must have 4 rows")
+    // Left half black (" ") vs right half white ("█")
+    assertTrue(rowLines.allSatisfy { line in
+        let inner = String(line.dropFirst(3).dropLast(1))
+        return inner.prefix(6) == "      " && inner.suffix(6) == "██████"
+    }, "Left pixels should map to space and right pixels to '█' from actual JPEG luminance")
+}
+print("PASS: testCameraRealJpegAsciiLuminanceDecoding")
+#else
+print("PASS: testCameraRealJpegAsciiLuminanceDecoding (skipped non-CoreGraphics)")
+#endif
+
+// Test 45: SEC-1 PinnedURLSessionDelegate Factory
+let defaultSess = PinnedURLSessionDelegate.makeSession(pinnedSHA256: nil)
+assertTrue(defaultSess === URLSession.shared, "Nil pin should use URLSession.shared")
+let pinnedSess = PinnedURLSessionDelegate.makeSession(pinnedSHA256: "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=")
+assertFalse(pinnedSess === URLSession.shared, "Non-empty SPKI pin must configure delegate session")
+print("PASS: testPinnedURLSessionDelegateFactory")
+
+print(">>> ALL MAC CLIENT UNIT TESTS PASSED (45/45) <<<")
 exit(0)

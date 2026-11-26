@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"syscall"
 	"time"
@@ -18,6 +19,9 @@ import (
 func main() {
 	portFlag := flag.Int("port", 0, "Port to listen on (overrides PHONELINK_PORT)")
 	hostFlag := flag.String("host", "", "Host to bind on (overrides PHONELINK_HOST)")
+	dataDirFlag := flag.String("data-dir", "", "Directory for persistent registry state (overrides PHONELINK_DATA_DIR)")
+	tlsCertFlag := flag.String("tls-cert", "", "Path to TLS certificate PEM (overrides PHONELINK_TLS_CERT)")
+	tlsKeyFlag := flag.String("tls-key", "", "Path to TLS private key PEM (overrides PHONELINK_TLS_KEY)")
 	flag.Parse()
 
 	cfg := server.DefaultConfig()
@@ -34,6 +38,27 @@ func main() {
 		if p, err := strconv.Atoi(envPort); err == nil {
 			cfg.Port = p
 		}
+	}
+
+	dataDir := *dataDirFlag
+	if dataDir == "" {
+		dataDir = os.Getenv("PHONELINK_DATA_DIR")
+	}
+	if dataDir != "" {
+		cfg.StateFile = filepath.Join(dataDir, "registry_state.json")
+	}
+
+	tlsCert := *tlsCertFlag
+	if tlsCert == "" {
+		tlsCert = os.Getenv("PHONELINK_TLS_CERT")
+	}
+	tlsKey := *tlsKeyFlag
+	if tlsKey == "" {
+		tlsKey = os.Getenv("PHONELINK_TLS_KEY")
+	}
+	if tlsCert != "" && tlsKey != "" {
+		cfg.TLSCertFile = tlsCert
+		cfg.TLSKeyFile = tlsKey
 	}
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
@@ -53,7 +78,10 @@ func main() {
 		}
 	}()
 
-	logger.Info(fmt.Sprintf("%s started on %s:%d", server.Name, cfg.Host, cfg.Port))
+	logger.Info(fmt.Sprintf("%s started on %s:%d", server.Name, cfg.Host, cfg.Port),
+		"tls_enabled", cfg.TLSCertFile != "" && cfg.TLSKeyFile != "",
+		"persistent_state", cfg.StateFile != "",
+	)
 
 	<-shutdownChan
 	logger.Info("Shutdown signal received")

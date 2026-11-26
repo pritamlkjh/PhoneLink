@@ -216,3 +216,57 @@ func TestDisconnectNotification(t *testing.T) {
 		t.Fatalf("expected ErrPeerOffline, got: %v", err)
 	}
 }
+
+func TestDisconnectIfSessionDoesNotEvictNewSession(t *testing.T) {
+	_, coord, macID, andID := setupTestPair(t)
+
+	oldAndChan := make(chan []byte, 10)
+	newAndChan := make(chan []byte, 10)
+	macChan := make(chan []byte, 10)
+
+	_, _ = coord.ConnectSession(macID, macChan, nil)
+	oldClosed := false
+	oldSess, err := coord.ConnectSession(andID, oldAndChan, func() { oldClosed = true })
+	if err != nil {
+		t.Fatalf("failed to connect old session: %v", err)
+	}
+
+	// Drain initial online events
+	<-macChan
+	<-macChan
+
+	// New session reconnects before old session's defer runs
+	newSess, err := coord.ConnectSession(andID, newAndChan, nil)
+	if err != nil {
+		t.Fatalf("failed to connect replacement session: %v", err)
+	}
+	if !oldClosed {
+		t.Fatalf("expected prior session CloseFunc to be invoked on replacement")
+	}
+
+	// Drain initial self PEER_STATUS notification emitted on new session attach
+	<-newAndChan
+
+	// Old goroutine exits and calls DisconnectIfSession(andID, oldSess)
+	coord.DisconnectIfSession(andID, oldSess)
+
+	if !coord.IsDeviceOnline(andID) {
+		t.Fatalf("new session was evicted by stale DisconnectIfSession")
+	}
+
+	// Verify ForwardPayload reaches newAndChan
+	payload := []byte("still-alive")
+	if err := coord.ForwardPayload(macID, andID, payload); err != nil {
+		t.Fatalf("expected forward to active replacement session to succeed, got: %v", err)
+	}
+	got := <-newAndChan
+	if !bytes.Equal(got, payload) {
+		t.Fatalf("expected %q, got %q", payload, got)
+	}
+
+	// Disconnecting matching newSess removes it cleanly
+	coord.DisconnectIfSession(andID, newSess)
+	if coord.IsDeviceOnline(andID) {
+		t.Fatalf("expected matching session disconnect to mark device offline")
+	}
+}

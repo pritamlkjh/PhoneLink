@@ -161,13 +161,22 @@ func TestDeviceRegistrationAndAuthLifecycle(t *testing.T) {
 		t.Fatalf("expected non-empty session token")
 	}
 
-	// Step 6: Revoke device via POST /api/v1/devices/revoke
+	// Step 6: Unauthenticated revoke must be rejected with 401
 	revokeReqBody, _ := json.Marshal(map[string]string{"device_id": deviceID})
+	unauthRevokeReq := httptest.NewRequest(http.MethodPost, "/api/v1/devices/revoke", bytes.NewReader(revokeReqBody))
+	unauthRevokeRec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(unauthRevokeRec, unauthRevokeReq)
+	if unauthRevokeRec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 Unauthorized for unauthenticated revoke, got %d", unauthRevokeRec.Code)
+	}
+
+	// Authenticated revoke via Bearer session token
 	revokeReq := httptest.NewRequest(http.MethodPost, "/api/v1/devices/revoke", bytes.NewReader(revokeReqBody))
+	revokeReq.Header.Set("Authorization", "Bearer "+verifyResp.SessionToken)
 	revokeRec := httptest.NewRecorder()
 	s.Handler().ServeHTTP(revokeRec, revokeReq)
 	if revokeRec.Code != http.StatusOK {
-		t.Fatalf("expected 200 OK for revoke, got %d", revokeRec.Code)
+		t.Fatalf("expected 200 OK for revoke, got %d: %s", revokeRec.Code, revokeRec.Body.String())
 	}
 
 	// Step 7: Subsequent challenge request must immediately fail with 401 Unauthorized
@@ -427,5 +436,90 @@ func TestAuthResumeEndpoint(t *testing.T) {
 	s.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401 Unauthorized for revoked device on resume, got %d", rec.Code)
+	}
+}
+
+func TestSecurityMiddlewareCSPAndEndpointAuth(t *testing.T) {
+	s := NewServer(DefaultConfig(), nil)
+
+	// 1. /healthz carries strict default-src 'none' CSP + nosniff
+	healthReq := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	healthRec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(healthRec, healthReq)
+	if csp := healthRec.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "default-src 'none'") {
+		t.Fatalf("expected strict CSP on API routes, got %q", csp)
+	}
+	if healthRec.Header().Get("X-Content-Type-Options") != "nosniff" {
+		t.Fatalf("expected X-Content-Type-Options nosniff")
+	}
+
+	// 2. /install overrides CSP to allow its inline stylesheet
+	instReq := httptest.NewRequest(http.MethodGet, "/install", nil)
+	instRec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(instRec, instReq)
+	if csp := instRec.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "style-src 'unsafe-inline'") {
+		t.Fatalf("expected install page CSP to permit inline CSS, got %q", csp)
+	}
+
+	// 3. Register three devices: mac1, and1 (paired with mac1), intruder
+	macPub, _, _ := ed25519.GenerateKey(rand.Reader)
+	macID := auth.DeriveDeviceID(macPub)
+	andPub, _, _ := ed25519.GenerateKey(rand.Reader)
+	andID := auth.DeriveDeviceID(andPub)
+	intPub, _, _ := ed25519.GenerateKey(rand.Reader)
+	intID := auth.DeriveDeviceID(intPub)
+
+	_ = s.Registry().RegisterDevice(auth.DeviceRecord{DeviceID: macID, DeviceType: auth.DeviceTypeMac, PublicKey: macPub, KeyAlgorithm: auth.AlgorithmEd25519})
+	_ = s.Registry().RegisterDevice(auth.DeviceRecord{DeviceID: andID, DeviceType: auth.DeviceTypeAndroid, PublicKey: andPub, KeyAlgorithm: auth.AlgorithmEd25519})
+	_ = s.Registry().RegisterDevice(auth.DeviceRecord{DeviceID: intID, DeviceType: auth.DeviceTypeMac, PublicKey: intPub, KeyAlgorithm: auth.AlgorithmEd25519})
+	_ = s.Registry().PairDevices(macID, andID)
+
+	macToken, _ := s.Registry().CreateSession(macID, 1*time.Hour)
+	intToken, _ := s.Registry().CreateSession(intID, 1*time.Hour)
+
+	// Unauthenticated pairing/create -> 401
+	pairBody, _ := json.Marshal(map[string]string{"device_id": macID})
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/pairing/create", bytes.NewReader(pairBody))
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 on unauthenticated pairing/create, got %d", rec.Code)
+	}
+
+	// Wrong caller on pairing/create -> 403
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/pairing/create", bytes.NewReader(pairBody))
+	req.Header.Set("Authorization", "Bearer "+intToken)
+	rec = httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 on mismatched pairing/create, got %d", rec.Code)
+	}
+
+	// Authenticated pairing/create -> 200
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/pairing/create", bytes.NewReader(pairBody))
+	req.Header.Set("Authorization", "Bearer "+macToken)
+	rec = httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 on authenticated pairing/create, got %d", rec.Code)
+	}
+
+	// Intruder revoking andID -> 403
+	revBody, _ := json.Marshal(map[string]string{"device_id": andID})
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/devices/revoke", bytes.NewReader(revBody))
+	req.Header.Set("Authorization", "Bearer "+intToken)
+	rec = httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 for intruder revoking unrelated device, got %d", rec.Code)
+	}
+
+	// Paired Mac revoking its Android peer -> 200
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/devices/revoke", bytes.NewReader(revBody))
+	req.Header.Set("Authorization", "Bearer "+macToken)
+	rec = httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 when paired peer revokes lost phone, got %d", rec.Code)
 	}
 }

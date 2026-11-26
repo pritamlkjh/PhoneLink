@@ -60,10 +60,11 @@ Quick Install:
    phonelink --version
 
 3. Pair with your Android phone:
-   phonelink pair --relay https://<your-vps-domain> --token <pairing-token>
+   phonelink pair --vps https://<your-vps-domain>
+   (Scan the QR code or enter the 8-character short code on your phone)
 
 4. Inspect connected device:
-   phonelink status
+   phonelink status --vps https://<your-vps-domain>
 EOF
 
 # 4. Create tarball archive

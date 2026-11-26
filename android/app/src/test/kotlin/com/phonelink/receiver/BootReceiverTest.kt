@@ -18,7 +18,7 @@ class BootReceiverTest {
 
         assertTrue(BootReceiver.SUPPORTED_BOOT_ACTIONS.contains(Intent.ACTION_BOOT_COMPLETED))
         assertTrue(BootReceiver.SUPPORTED_BOOT_ACTIONS.contains("android.intent.action.QUICKBOOT_POWERON"))
-        assertTrue(BootReceiver.SUPPORTED_BOOT_ACTIONS.contains("com.htc.intent.action.QUICKBOOT_POWERON"))
+        assertFalse(BootReceiver.SUPPORTED_BOOT_ACTIONS.contains("com.htc.intent.action.QUICKBOOT_POWERON"))
     }
 
     @Test
@@ -32,8 +32,8 @@ class BootReceiverTest {
     fun testManifestBootDeclarationsAndSecurityInvariants() {
         val manifestCandidates = listOf(
             File("src/main/AndroidManifest.xml"),
-            File("android/app/src/main/AndroidManifest.xml"),
-            File("/Users/pritamsarkar/.gemini/antigravity/scratch/PhoneLink/android/app/src/main/AndroidManifest.xml")
+            File("app/src/main/AndroidManifest.xml"),
+            File("android/app/src/main/AndroidManifest.xml")
         )
         val manifestFile = manifestCandidates.firstOrNull { it.exists() }
         assertNotNull(manifestFile, "AndroidManifest.xml not found")
@@ -46,7 +46,7 @@ class BootReceiverTest {
             "Manifest must declare RECEIVE_BOOT_COMPLETED"
         )
 
-        // 2. Explicit receiver declaration with exported=true (required for system broadcasts on API 31+)
+        // 2. Explicit receiver declaration with exported=true
         assertTrue(
             manifestContent.contains("android:name=\".receiver.BootReceiver\""),
             "Manifest must declare BootReceiver"
@@ -56,17 +56,13 @@ class BootReceiverTest {
             "BootReceiver must be exported to receive system boot broadcasts"
         )
 
-        // 3. Boot intent filters
+        // 3. Clean BOOT_COMPLETED filter (without Play-Protect heuristic triggers)
         assertTrue(
             manifestContent.contains("<action android:name=\"android.intent.action.BOOT_COMPLETED\" />"),
             "Manifest must filter for BOOT_COMPLETED"
         )
-        assertTrue(
-            manifestContent.contains("<action android:name=\"android.intent.action.QUICKBOOT_POWERON\" />"),
-            "Manifest must filter for QUICKBOOT_POWERON"
-        )
 
-        // 4. Anti-stalkerware invariants (ARCH-4 / AND-9)
+        // 4. Anti-stalkerware invariants
         assertFalse(
             manifestContent.contains("BIND_DEVICE_ADMIN"),
             "Must NOT request BIND_DEVICE_ADMIN"

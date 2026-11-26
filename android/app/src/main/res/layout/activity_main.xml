@@ -111,7 +111,7 @@
                     android:id="@+id/tilPairingCode"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:hint="6-Digit Pairing Code (from Mac 'phonelink pair')"
+                    android:hint="8-Character Pairing Code (from Mac 'phonelink pair')"
                     android:layout_marginBottom="14dp"
                     style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox">
 
@@ -233,6 +233,15 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:text="Disable Battery Optimization (Recommended)"
+                    android:textAllCaps="false"
+                    android:textSize="13sp"
+                    style="@style/Widget.MaterialComponents.Button.TextButton" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnSelectFolder"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Select Shared Folder (Default: App Files)"
                     android:textAllCaps="false"
                     android:textSize="13sp"
                     style="@style/Widget.MaterialComponents.Button.TextButton" />

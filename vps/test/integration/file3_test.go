@@ -12,6 +12,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -65,7 +66,7 @@ func TestFILE3SecureFileDownload(t *testing.T) {
 	macToken := authenticateEd25519(t, httpServer.URL, macDeviceID, macPriv)
 	andToken := authenticateECDSA(t, httpServer.URL, andDeviceID, andPriv, andPubDER)
 
-	pairToken := createPairingToken(t, httpServer.URL, macDeviceID)
+	pairToken := createPairingToken(t, httpServer.URL, macDeviceID, macToken)
 	claimPairing(t, httpServer.URL, pairToken, andDeviceID)
 
 	// 4. Stage Android Scoped Storage Files
@@ -173,21 +174,26 @@ func TestFILE3SecureFileDownload(t *testing.T) {
 	macKM2A, macKA2M := deriveDirectionalKeys(macSS, salt)
 	andKM2A, andKA2M := deriveDirectionalKeys(andSS, salt)
 
-	// Helper: Android responder simulating FileOperationHandler
-	handleAndroidDownloadRequest := func() {
+	// Helper: Android responder simulating FileOperationHandler (goroutine-safe, no t.Fatalf)
+	handleAndroidDownloadRequest := func() error {
 		_, recWrapRaw, err := andConn.ReadMessage()
 		if err != nil {
-			t.Fatalf("Android read failed: %v", err)
+			return fmt.Errorf("Android read failed: %w", err)
 		}
 		var wrap struct {
 			Ciphertext string `json:"ciphertext"`
 		}
-		_ = json.Unmarshal(recWrapRaw, &wrap)
-		ct, _ := base64.StdEncoding.DecodeString(wrap.Ciphertext)
+		if err := json.Unmarshal(recWrapRaw, &wrap); err != nil {
+			return fmt.Errorf("Android unmarshal wrap failed: %w", err)
+		}
+		ct, err := base64.StdEncoding.DecodeString(wrap.Ciphertext)
+		if err != nil {
+			return fmt.Errorf("Android base64 decode failed: %w", err)
+		}
 
 		plaintext, err := decryptAESGCM(andKM2A, ct, nil)
 		if err != nil {
-			t.Fatalf("Android decryption failed: %v", err)
+			return fmt.Errorf("Android decryption failed: %w", err)
 		}
 
 		var reqRoot struct {
@@ -226,7 +232,7 @@ func TestFILE3SecureFileDownload(t *testing.T) {
 			})
 			_ = andConn.WriteMessage(websocket.BinaryMessage, outWrap)
 			audit.Record(outWrap)
-			return
+			return nil
 		}
 
 		targetFile := filepath.Join(tempStorageDir, relPath)
@@ -249,7 +255,7 @@ func TestFILE3SecureFileDownload(t *testing.T) {
 			})
 			_ = andConn.WriteMessage(websocket.BinaryMessage, outWrap)
 			audit.Record(outWrap)
-			return
+			return nil
 		}
 
 		// Calculate whole-file SHA-256
@@ -317,10 +323,18 @@ func TestFILE3SecureFileDownload(t *testing.T) {
 			currentOffset += readBytes
 			chunkIndex++
 		}
+		return nil
+	}
+	startAndroidResponder := func() <-chan error {
+		ch := make(chan error, 1)
+		go func() {
+			ch <- handleAndroidDownloadRequest()
+		}()
+		return ch
 	}
 
 	// 7. Test Case A: Small File Download (< 64 KB, 1 Chunk)
-	go handleAndroidDownloadRequest()
+	respDone := startAndroidResponder()
 
 	reqSmall, _ := json.Marshal(map[string]interface{}{
 		"schema_version": 1,
@@ -399,10 +413,13 @@ func TestFILE3SecureFileDownload(t *testing.T) {
 	if !bytes.Equal(chunkBytes, smallContent) {
 		t.Fatalf("downloaded content does not match original file bytes")
 	}
+	if err := <-respDone; err != nil {
+		t.Fatalf("android responder failed: %v", err)
+	}
 	t.Log("PASS: Small file download verified with whole-file and chunk SHA-256")
 
 	// 8. Test Case B: Large Multi-Chunk File Download (200 KB)
-	go handleAndroidDownloadRequest()
+	respDone = startAndroidResponder()
 
 	reqLarge, _ := json.Marshal(map[string]interface{}{
 		"schema_version": 1,
@@ -467,12 +484,15 @@ func TestFILE3SecureFileDownload(t *testing.T) {
 	if hex.EncodeToString(totalLargeHash[:]) != largeSha256 {
 		t.Fatalf("final assembled file SHA-256 does not match original")
 	}
+	if err := <-respDone; err != nil {
+		t.Fatalf("android responder failed: %v", err)
+	}
 	t.Log("PASS: Large multi-chunk file download verified (4 chunks, 200 KB)")
 
 	// 9. Test Case C: Interrupted Transfer and Resumption from start_offset
 	// Scenario: First 128 KB (2 chunks) downloaded before interruption.
 	// Resume request with start_offset = 131072.
-	go handleAndroidDownloadRequest()
+	respDone = startAndroidResponder()
 
 	resumeOffset := uint64(131072)
 	reqResume, _ := json.Marshal(map[string]interface{}{
@@ -534,6 +554,9 @@ func TestFILE3SecureFileDownload(t *testing.T) {
 	if hex.EncodeToString(resumedHash[:]) != largeSha256 {
 		t.Fatalf("resumed file SHA-256 mismatch")
 	}
+	if err := <-respDone; err != nil {
+		t.Fatalf("android responder failed: %v", err)
+	}
 	t.Log("PASS: Interrupted transfer resumption from start_offset verified")
 
 	// 10. Test Case D: Tampered Chunk Detection (Integrity Mismatch)
@@ -546,7 +569,7 @@ func TestFILE3SecureFileDownload(t *testing.T) {
 	t.Log("PASS: Chunk integrity mismatch detected and verified")
 
 	// 11. Test Case E: Path Traversal Rejection
-	go handleAndroidDownloadRequest()
+	respDone = startAndroidResponder()
 
 	reqTrav, _ := json.Marshal(map[string]interface{}{
 		"schema_version": 1,
@@ -573,10 +596,13 @@ func TestFILE3SecureFileDownload(t *testing.T) {
 	if parsedInit.Resp.Status != "STATUS_STORAGE_ACCESS_DENIED" {
 		t.Fatalf("expected STATUS_STORAGE_ACCESS_DENIED for path traversal, got %s", parsedInit.Resp.Status)
 	}
+	if err := <-respDone; err != nil {
+		t.Fatalf("android responder failed: %v", err)
+	}
 	t.Log("PASS: Path traversal rejection verified")
 
 	// 12. Test Case F: Sensitive Internal Path Blocklist Rejection
-	go handleAndroidDownloadRequest()
+	respDone = startAndroidResponder()
 
 	reqSens, _ := json.Marshal(map[string]interface{}{
 		"schema_version": 1,
@@ -603,10 +629,13 @@ func TestFILE3SecureFileDownload(t *testing.T) {
 	if parsedInit.Resp.Status != "STATUS_STORAGE_ACCESS_DENIED" {
 		t.Fatalf("expected STATUS_STORAGE_ACCESS_DENIED for sensitive file, got %s", parsedInit.Resp.Status)
 	}
+	if err := <-respDone; err != nil {
+		t.Fatalf("android responder failed: %v", err)
+	}
 	t.Log("PASS: Sensitive path rejection verified")
 
 	// 13. Test Case G: Non-Existent File (STATUS_NOT_FOUND)
-	go handleAndroidDownloadRequest()
+	respDone = startAndroidResponder()
 
 	reqMissing, _ := json.Marshal(map[string]interface{}{
 		"schema_version": 1,
@@ -632,6 +661,9 @@ func TestFILE3SecureFileDownload(t *testing.T) {
 
 	if parsedInit.Resp.Status != "STATUS_NOT_FOUND" {
 		t.Fatalf("expected STATUS_NOT_FOUND for missing file, got %s", parsedInit.Resp.Status)
+	}
+	if err := <-respDone; err != nil {
+		t.Fatalf("android responder failed: %v", err)
 	}
 	t.Log("PASS: Non-existent file rejection verified")
 

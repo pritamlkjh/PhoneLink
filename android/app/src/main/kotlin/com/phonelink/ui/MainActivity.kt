@@ -13,6 +13,7 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.view.View
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -27,6 +28,7 @@ import com.phonelink.crypto.KeyManager
 import com.phonelink.identity.DeviceIdentityManager
 import com.phonelink.service.ConnectionForegroundService
 import com.phonelink.storage.SecureStorage
+import com.phonelink.transport.RelayUrlHelper
 import java.util.concurrent.Executors
 
 class MainActivity : AppCompatActivity() {
@@ -54,15 +56,30 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnPermNotification: MaterialButton
     private lateinit var btnPermCamera: MaterialButton
     private lateinit var btnPermBattery: MaterialButton
+    private lateinit var btnSelectFolder: MaterialButton
+
+    private val openFolderLauncher = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri != null) {
+            try {
+                val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                contentResolver.takePersistableUriPermission(uri, flags)
+                secureStorage.setScopedTreeUri(uri.toString())
+                updateUIState()
+                Toast.makeText(this, "Shared folder updated", Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                Toast.makeText(this, "Failed to persist folder access: ${e.message}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        // Initialize core dependencies
+        // Initialize core dependencies (unified identity & signing keypair)
         secureStorage = SecureStorage.fromContext(this)
-        identityManager = DeviceIdentityManager.fromContext(this)
-        keyManager = KeyManager.fromContext(this)
+        keyManager = KeyManager.fromContext(this, secureStorage)
+        identityManager = DeviceIdentityManager.fromContext(this, keyManager)
         authClient = AuthClient(secureStorage = secureStorage)
 
         bindViews()
@@ -77,7 +94,8 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        executor.shutdown()
+        authClient.cancelAll()
+        executor.shutdownNow()
     }
 
     private fun bindViews() {
@@ -92,6 +110,7 @@ class MainActivity : AppCompatActivity() {
         btnPermNotification = findViewById(R.id.btnPermNotification)
         btnPermCamera = findViewById(R.id.btnPermCamera)
         btnPermBattery = findViewById(R.id.btnPermBattery)
+        btnSelectFolder = findViewById(R.id.btnSelectFolder)
 
         // Set device ID
         val deviceId = identityManager.getDeviceId()
@@ -132,6 +151,10 @@ class MainActivity : AppCompatActivity() {
 
         btnPermBattery.setOnClickListener {
             requestIgnoreBatteryOptimizations()
+        }
+
+        btnSelectFolder.setOnClickListener {
+            openFolderLauncher.launch(null)
         }
 
         // Connect and pair button
@@ -183,19 +206,31 @@ class MainActivity : AppCompatActivity() {
             btnPermBattery.text = "Disable Battery Optimization (Recommended)"
             btnPermBattery.isEnabled = true
         }
+
+        val scopedTree = secureStorage.getScopedTreeUri()
+        btnSelectFolder.text = if (!scopedTree.isNullOrEmpty()) {
+            "✓ Shared Folder Selected (Tap to Change)"
+        } else {
+            "Select Shared Folder (Default: App Files)"
+        }
     }
 
     private fun handleConnectAndPair() {
-        val relayUrl = etRelayUrl.text?.toString()?.trim().orEmpty()
+        val rawRelayUrl = etRelayUrl.text?.toString()?.trim().orEmpty()
         val pairingCode = etPairingCode.text?.toString()?.trim().orEmpty().uppercase()
 
-        if (relayUrl.isEmpty()) {
+        val httpBaseUrl = RelayUrlHelper.normalizeHttpBaseUrl(rawRelayUrl)
+        if (httpBaseUrl.isEmpty()) {
             Toast.makeText(this, "Please enter a valid VPS Relay URL", Toast.LENGTH_SHORT).show()
             return
         }
 
-        secureStorage.setRelayUrl(relayUrl)
-        val httpBaseUrl = toHttpBaseUrl(relayUrl)
+        if (!secureStorage.isPaired() && pairingCode.isEmpty()) {
+            Toast.makeText(this, "Please enter the pairing code from your Mac", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        secureStorage.setRelayUrl(httpBaseUrl)
 
         btnConnectPair.isEnabled = false
         btnConnectPair.text = "Connecting..."
@@ -267,18 +302,16 @@ class MainActivity : AppCompatActivity() {
         Toast.makeText(this, "Unpaired and disconnected", Toast.LENGTH_SHORT).show()
     }
 
-    @SuppressLint("BatteryLife")
     private fun requestIgnoreBatteryOptimizations() {
         try {
-            val intent = Intent().apply {
-                action = Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS
-                data = Uri.parse("package:$packageName")
-            }
+            val intent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
             startActivity(intent)
         } catch (_: Exception) {
             try {
-                val intent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
-                startActivity(intent)
+                val fallback = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = Uri.parse("package:$packageName")
+                }
+                startActivity(fallback)
             } catch (e: Exception) {
                 Toast.makeText(this, "Unable to open battery settings: ${e.message}", Toast.LENGTH_SHORT).show()
             }
@@ -296,19 +329,5 @@ class MainActivity : AppCompatActivity() {
                 Toast.makeText(this, "Camera permission denied; remote camera toggle disabled", Toast.LENGTH_SHORT).show()
             }
         }
-    }
-
-    private fun toHttpBaseUrl(relayUrl: String): String {
-        var url = relayUrl.trim()
-        if (url.startsWith("wss://")) {
-            url = "https://" + url.removePrefix("wss://")
-        } else if (url.startsWith("ws://")) {
-            url = "http://" + url.removePrefix("ws://")
-        }
-        val idx = url.indexOf("/ws/")
-        if (idx != -1) {
-            url = url.substring(0, idx)
-        }
-        return url.removeSuffix("/")
     }
 }

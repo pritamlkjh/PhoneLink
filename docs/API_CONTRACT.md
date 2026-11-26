@@ -12,11 +12,10 @@
 
 This document specifies the exact API contract and serialization schemas for all PhoneLink components (Android, macOS, VPS Relay).
 
-### 1.1 Serialization Format
-All wire messages are encoded using **Protocol Buffers v3 (Proto3)**:
-- Compact binary representation minimizes bandwidth over cellular relays.
-- Strongly typed schemas prevent structural type mismatches across platforms.
-- Schema definitions are located in `shared/schema/*.proto`.
+### 1.1 Wire Format & Reference Schemas
+Production messages between Android, macOS, and the VPS relay are exchanged as **versioned UTF-8 JSON payloads (`schema_version = 1`) over HTTPS/REST and TLS 1.3 WebSocket frames**:
+- Ensures zero-dependency runtime parsing consistency across Go (`encoding/json`), Swift (`JSONSerialization` / `Codable`), and Kotlin (`org.json`).
+- Abstract message fields and field types match the canonical reference contracts in `shared/schema/*.proto` (validated in CI via `tests/test_schema_roundtrip.sh`).
 
 ### 1.2 Versioning Strategy
 1. **Header Version Field:** Every message envelope (`RelayMessage`, `ApplicationMessage`) includes `schema_version = 1`.
@@ -54,7 +53,7 @@ All wire messages are encoded using **Protocol Buffers v3 (Proto3)**:
 |---------|-----------|-------------------|
 | `E2EHandshakeInit` | Mac $\to$ Android | Initiates E2E session with Mac's ephemeral X25519 public key |
 | `E2EHandshakeAck` | Android $\to$ Mac | Acknowledges with Android's ephemeral X25519 public key |
-| `EncryptedContainer`| Either $\to$ Either | Holds AEAD ciphertext (XChaCha20-Poly1305 / AES-256-GCM) |
+| `EncryptedContainer`| Either $\to$ Either | `type = "E2E_PAYLOAD"`, monotonic `seq`, and Base64 AES-256-GCM ciphertext authenticated with AAD |
 
 ---
 

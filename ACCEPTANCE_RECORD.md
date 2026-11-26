@@ -44,21 +44,21 @@ The project was executed following strict test-driven development and mathematic
 ## 3. Subsystem Certification Details
 
 ### A. Android Client (`android/`)
-- **Key Storage:** Android Keystore hardware-backed ECDSA secp256r1 signing via `AndroidKeyStoreSigner` with automated software fallback (`SoftwareEcKeySigner`).
-- **Foreground Daemon:** `ConnectionForegroundService` compliant with Android 13+ `POST_NOTIFICATIONS` and Android 14+ `dataSync|camera` foreground service types. Persistent notification guarantees zero stealth operation.
+- **Key Storage:** Android Keystore hardware-backed ECDSA P-256 signing via `AndroidKeyStoreSigner` with Keystore-wrapped `SecureStorage` fallback (`SoftwareEcKeySigner` persisted under `AndroidKeyStore` AES-GCM).
+- **Foreground Daemon:** `ConnectionForegroundService` compliant with Android 13+ `POST_NOTIFICATIONS` and Android 14+ `connectedDevice|dataSync|camera` foreground service types. Persistent notification guarantees zero stealth operation.
 - **Boot Recovery:** `BootReceiver` recovers connection post-reboot with visible user prompt fallback if OEM background execution limits apply.
-- **Storage & Camera:** Strictly scoped storage (`MediaStore`/SAF) and dual-gate camera authorization (OS permission + explicit local user toggle).
-- **Release Artifact:** Signed release APK (`PhoneLink-v1.0.0-release.apk`, 2.8 MB) with R8 minification/obfuscation and SHA256 checksum verified.
+- **Storage & Camera:** Strictly scoped storage + Storage Access Framework (`ACTION_OPEN_DOCUMENT_TREE`) shared folder support and dual-gate camera authorization (`CameraAuthorizationGate` + `CameraCaptureModule` Camera2 pipeline).
+- **Build & Security Hygiene:** Strict Android Lint (`abortOnError = true`), variant-scoped `network_security_config.xml` (release HTTPS-only), and externalized release signing configuration via environment variables/Gradle properties.
 
 ### B. Linux VPS Relay (`vps/`)
-- **Zero Plaintext Principle:** Pure stateless router; brokers encrypted ciphertext frames. Session keys derived via ECDH (secp256r1) directly between Mac and phone.
-- **Resilience:** Single-use session resumption tokens (`VPS-6`), automated rollback deployment script (`deploy_prod.sh` / `rollback_prod.sh`), and direct LAN connection optimization (`VPS-8`).
-- **Production Hardening:** Hardened unprivileged systemd unit (`phonelink-relay.service`) with `ProtectSystem=strict` and Caddy TLS reverse proxy configuration.
+- **Zero Plaintext Principle:** Stateless router brokering encrypted ciphertext frames; session keys derived via **X25519 (RFC 7748)** with identity-signed handshakes and monotonic sequence AES-256-GCM AAD binding directly between Mac and phone.
+- **Resilience:** Single-use session resumption tokens (`VPS-6`), atomic JSON state persistence (`PHONELINK_DATA_DIR`), automated rollback deployment script (`deploy_prod.sh` / `rollback_prod.sh`), and direct LAN connection optimization (`VPS-8`).
+- **Production Hardening:** Wired `RateLimiter` (sliding window + IPv6 support) and `SecurityHeadersMiddleware`, WebSocket 10 MB read limits + ping/pong heartbeats, authenticated `/pairing/create` & `/devices/revoke`, and Caddy TLS reverse proxy configuration.
 
 ### C. macOS Client (`mac/`)
-- **Architecture:** Native Swift package (`PhoneLinkKit` and `PhoneLinkCLI`), built for macOS 14+.
-- **CLI Commands:** Complete support for `pair`, `status`, `files list/download/upload`, `actions ping/locate`, `camera preview/stop`, and `unpair`.
-- **Release Artifact:** Standalone release tarball (`PhoneLink-v1.0.0-macos-arm64.tar.gz`, 277 KB) with hardened runtime code signing and SHA256 checksum verified.
+- **Architecture:** Native Swift 6.0 package (`PhoneLinkKit` and `PhoneLinkCLI`), targeting macOS 15.0+ (Sequoia).
+- **CLI Commands:** Complete support for `info`, `pair`, `revoke`, `status`, `ping` (`--count`), `device info/ping`, `files ls/get/put`, `camera view/stream`, `install-phone`, and `wipe`.
+- **Key Storage & Pinning:** macOS Keychain primary storage (`DeviceIdentityManager`) and opt-in SPKI certificate pinning (`--tls-pin` / `PHONELINK_TLS_PIN`).
 
 ---
 

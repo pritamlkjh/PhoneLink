@@ -34,6 +34,13 @@ class SoftwareEcKeySigner(
             return kpg.generateKeyPair()
         }
 
+        fun fromEncoded(publicKeyEncoded: ByteArray, privateKeyEncoded: ByteArray): SoftwareEcKeySigner {
+            val kf = java.security.KeyFactory.getInstance("EC")
+            val pub = kf.generatePublic(java.security.spec.X509EncodedKeySpec(publicKeyEncoded))
+            val priv = kf.generatePrivate(java.security.spec.PKCS8EncodedKeySpec(privateKeyEncoded))
+            return SoftwareEcKeySigner(KeyPair(pub, priv))
+        }
+
         const val ALGORITHM = "SHA256withECDSA"
     }
 
@@ -159,13 +166,36 @@ class KeyManager(
     companion object {
         fun createSoftware(): KeyManager = KeyManager(SoftwareEcKeySigner())
 
-        fun fromContext(context: android.content.Context): KeyManager {
+        fun fromStorage(secureStorage: com.phonelink.storage.SecureStorage): KeyManager {
             return try {
                 KeyManager(AndroidKeyStoreSigner())
-            } catch (_: Exception) {
-                createSoftware()
+            } catch (_: Throwable) {
+                val storedPub = secureStorage.getString(com.phonelink.storage.SecureStorage.KEY_SOFTWARE_IDENTITY_PUB)
+                val storedPriv = secureStorage.getString(com.phonelink.storage.SecureStorage.KEY_SOFTWARE_IDENTITY_PRIV)
+                if (storedPub != null && storedPriv != null) {
+                    try {
+                        val pubBytes = Base64.getDecoder().decode(storedPub)
+                        val privBytes = Base64.getDecoder().decode(storedPriv)
+                        return KeyManager(SoftwareEcKeySigner.fromEncoded(pubBytes, privBytes))
+                    } catch (_: Throwable) {}
+                }
+                val kp = SoftwareEcKeySigner.generateDefaultKeyPair()
+                secureStorage.saveString(
+                    com.phonelink.storage.SecureStorage.KEY_SOFTWARE_IDENTITY_PUB,
+                    Base64.getEncoder().encodeToString(kp.public.encoded)
+                )
+                secureStorage.saveString(
+                    com.phonelink.storage.SecureStorage.KEY_SOFTWARE_IDENTITY_PRIV,
+                    Base64.getEncoder().encodeToString(kp.private.encoded)
+                )
+                KeyManager(SoftwareEcKeySigner(kp))
             }
         }
+
+        fun fromContext(
+            context: android.content.Context,
+            secureStorage: com.phonelink.storage.SecureStorage = com.phonelink.storage.SecureStorage.fromContext(context)
+        ): KeyManager = fromStorage(secureStorage)
 
         fun verifyExternal(publicKey: PublicKey, data: ByteArray, signature: ByteArray): Boolean {
             return try {

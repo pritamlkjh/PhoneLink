@@ -10,18 +10,27 @@
     }
 }
 
-{$PHONELINK_DOMAIN:relay.phonelink.local} {
+# Replace example domain with a real DNS-routed public domain (e.g. relay.yourdomain.com)
+# for automatic ACME TLS; `.local` domains cannot obtain public Let's Encrypt/ZeroSSL certs.
+{$PHONELINK_DOMAIN:relay.example.com} {
     # Strict TLS Configuration (Let's Encrypt / ZeroSSL automatic TLS)
-    tls {$PHONELINK_TLS_EMAIL:admin@phonelink.local}
+    tls {$PHONELINK_TLS_EMAIL:admin@example.com}
 
-    # Security Headers
+    # Security Headers (API routes enforce default-src 'none'; /install permits inline CSS/data images)
+    @installPage {
+        path /install /install/
+    }
+    @apiRoutes {
+        not path /install /install/
+    }
     header {
         Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
         X-Content-Type-Options "nosniff"
         X-Frame-Options "DENY"
         Referrer-Policy "no-referrer"
-        Content-Security-Policy "default-src 'none'; frame-ancestors 'none';"
     }
+    header @installPage Content-Security-Policy "default-src 'self'; style-src 'unsafe-inline'; img-src 'self' data:; frame-ancestors 'none';"
+    header @apiRoutes Content-Security-Policy "default-src 'none'; frame-ancestors 'none';"
 
     # Logging
     log {

@@ -60,7 +60,8 @@ func setupRecoveryFixture(t *testing.T) *recoveryFixture {
 	registerDevice(t, httpServer.URL, macDeviceID, auth.DeviceTypeMac, base64.StdEncoding.EncodeToString(macPub), auth.AlgorithmEd25519)
 	registerDevice(t, httpServer.URL, andDeviceID, auth.DeviceTypeAndroid, base64.StdEncoding.EncodeToString(andPubDER), auth.AlgorithmECDSAP256)
 
-	pairingToken := createPairingToken(t, httpServer.URL, macDeviceID)
+	macInitToken := authenticateEd25519(t, httpServer.URL, macDeviceID, macPriv)
+	pairingToken := createPairingToken(t, httpServer.URL, macDeviceID, macInitToken)
 	claimPairing(t, httpServer.URL, pairingToken, andDeviceID)
 
 	return &recoveryFixture{

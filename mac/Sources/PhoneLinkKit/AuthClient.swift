@@ -21,6 +21,8 @@ public enum AuthClientError: Error, LocalizedError {
 public struct AuthClient: Sendable {
     private let urlSession: URLSession
 
+    public var configuredURLSession: URLSession { urlSession }
+
     public init(urlSession: URLSession = .shared) {
         self.urlSession = urlSession
     }
@@ -115,11 +117,14 @@ public struct AuthClient: Sendable {
     }
 
     /// Generates a one-time pairing token for out-of-band QR ceremony.
-    public func createPairingToken(vpsBaseURL: URL, deviceID: String) async throws -> String {
+    public func createPairingToken(vpsBaseURL: URL, deviceID: String, sessionToken: String? = nil) async throws -> String {
         let endpoint = vpsBaseURL.appendingPathComponent("/api/v1/pairing/create")
         var req = URLRequest(url: endpoint)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let token = sessionToken, !token.isEmpty {
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
         req.httpBody = try JSONSerialization.data(withJSONObject: ["device_id": deviceID])
 
         let (data, response) = try await urlSession.data(for: req)
@@ -136,20 +141,60 @@ public struct AuthClient: Sendable {
         return token
     }
 
+    /// Revokes a registered device (self or currently paired peer) on the VPS relay immediately.
+    public func revokeDevice(vpsBaseURL: URL, deviceID: String, sessionToken: String) async throws {
+        let endpoint = vpsBaseURL.appendingPathComponent("/api/v1/devices/revoke")
+        var req = URLRequest(url: endpoint)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("Bearer \(sessionToken)", forHTTPHeaderField: "Authorization")
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["device_id": deviceID])
+
+        let (data, response) = try await urlSession.data(for: req)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+            let msg = String(data: data, encoding: .utf8) ?? ""
+            throw AuthClientError.serverError(statusCode: (response as? HTTPURLResponse)?.statusCode ?? 500, message: msg)
+        }
+    }
+
     /// Real-time status response from VPS-3 / INT-2 status endpoint.
     public struct DeviceStatus: Codable, Sendable {
         public let deviceId: String
         public let isOnline: Bool
         public let isPaired: Bool
         public let peerDeviceId: String?
+        public let peerPublicKey: String?
+        public let peerKeyAlgorithm: String?
         public let peerOnline: Bool
         public let timestamp: Int64
+
+        public init(
+            deviceId: String,
+            isOnline: Bool,
+            isPaired: Bool,
+            peerDeviceId: String?,
+            peerPublicKey: String? = nil,
+            peerKeyAlgorithm: String? = nil,
+            peerOnline: Bool,
+            timestamp: Int64
+        ) {
+            self.deviceId = deviceId
+            self.isOnline = isOnline
+            self.isPaired = isPaired
+            self.peerDeviceId = peerDeviceId
+            self.peerPublicKey = peerPublicKey
+            self.peerKeyAlgorithm = peerKeyAlgorithm
+            self.peerOnline = peerOnline
+            self.timestamp = timestamp
+        }
 
         enum CodingKeys: String, CodingKey {
             case deviceId = "device_id"
             case isOnline = "is_online"
             case isPaired = "is_paired"
             case peerDeviceId = "peer_device_id"
+            case peerPublicKey = "peer_public_key"
+            case peerKeyAlgorithm = "peer_key_algorithm"
             case peerOnline = "peer_online"
             case timestamp
         }

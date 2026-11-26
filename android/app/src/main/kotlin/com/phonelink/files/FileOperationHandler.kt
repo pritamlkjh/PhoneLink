@@ -120,6 +120,7 @@ class FileOperationHandler(
         val transferId: String,
         val finalFile: File,
         val partFile: File,
+        val relativePath: String,
         val totalSizeBytes: Long,
         val expectedSha256: String,
         val chunkSizeBytes: Int,
@@ -127,6 +128,9 @@ class FileOperationHandler(
     )
 
     private val activeUploads = java.util.concurrent.ConcurrentHashMap<String, ActiveUploadState>()
+    private val transferExecutor = java.util.concurrent.Executors.newFixedThreadPool(2) { r ->
+        Thread(r, "PhoneLink-FileTransfer").apply { isDaemon = true }
+    }
 
     /**
      * Executes directory listing against StorageAccessLayer.
@@ -187,9 +191,9 @@ class FileOperationHandler(
         transferId: String = UUID.randomUUID().toString(),
         chunkSizeBytes: Int = DEFAULT_CHUNK_SIZE
     ): FileDownloadInitResponseDto {
-        val pathResult = storageAccessLayer.resolveAndValidatePath(filePath)
-        if (pathResult.isFailure) {
-            val ex = pathResult.exceptionOrNull()
+        val statResult = storageAccessLayer.statFile(filePath)
+        if (statResult.isFailure) {
+            val ex = statResult.exceptionOrNull()
             val msg = ex?.message ?: "Unknown storage error"
             val status = if (msg.contains("Access denied", ignoreCase = true) ||
                 msg.contains("Path traversal", ignoreCase = true) ||
@@ -215,20 +219,8 @@ class FileOperationHandler(
             )
         }
 
-        val targetFile = pathResult.getOrThrow()
-        if (!targetFile.exists()) {
-            return FileDownloadInitResponseDto(
-                transferId = transferId,
-                status = STATUS_NOT_FOUND,
-                filePath = filePath,
-                totalSizeBytes = 0L,
-                chunkSizeBytes = chunkSizeBytes,
-                sha256Checksum = "",
-                errorMessage = "File does not exist: $filePath"
-            )
-        }
-
-        if (targetFile.isDirectory) {
+        val info = statResult.getOrThrow()
+        if (info.isDirectory) {
             return FileDownloadInitResponseDto(
                 transferId = transferId,
                 status = STATUS_STORAGE_ACCESS_DENIED,
@@ -240,8 +232,8 @@ class FileOperationHandler(
             )
         }
 
-        val totalSize = targetFile.length()
-        if (startOffset > totalSize) {
+        val totalSize = info.sizeBytes
+        if (startOffset < 0 || startOffset > totalSize) {
             return FileDownloadInitResponseDto(
                 transferId = transferId,
                 status = STATUS_STORAGE_ACCESS_DENIED,
@@ -249,10 +241,21 @@ class FileOperationHandler(
                 totalSizeBytes = totalSize,
                 chunkSizeBytes = chunkSizeBytes,
                 sha256Checksum = "",
-                errorMessage = "Invalid resume offset: start_offset ($startOffset) exceeds total size ($totalSize)"
+                errorMessage = "Invalid resume offset: start_offset ($startOffset) out of range (0..$totalSize)"
             )
         }
-        val checksum = computeFileSha256(targetFile)
+        val shaRes = storageAccessLayer.computeSha256(filePath)
+        if (shaRes.isFailure) {
+            return FileDownloadInitResponseDto(
+                transferId = transferId,
+                status = STATUS_ERROR_UNKNOWN,
+                filePath = filePath,
+                totalSizeBytes = totalSize,
+                chunkSizeBytes = chunkSizeBytes,
+                sha256Checksum = "",
+                errorMessage = shaRes.exceptionOrNull()?.message ?: "Checksum calculation failed"
+            )
+        }
 
         return FileDownloadInitResponseDto(
             transferId = transferId,
@@ -260,15 +263,14 @@ class FileOperationHandler(
             filePath = filePath,
             totalSizeBytes = totalSize,
             chunkSizeBytes = chunkSizeBytes,
-            sha256Checksum = checksum,
+            sha256Checksum = shaRes.getOrThrow(),
             errorMessage = ""
         )
     }
 
     /**
-     * Streams file chunks from startOffset to EOF.
-     * Invokes onChunk callback with serialized ApplicationMessage for each chunk.
-     * Returns total number of chunks successfully streamed.
+     * Streams file chunks from startOffset to EOF using random-access seeking.
+     * Emits a zero-byte final chunk if startOffset == totalSize so resumed completions never hang.
      */
     fun streamFileChunks(
         filePath: String,
@@ -277,75 +279,50 @@ class FileOperationHandler(
         chunkSizeBytes: Int = DEFAULT_CHUNK_SIZE,
         onChunk: (ByteArray) -> Boolean
     ): Long {
-        val pathResult = storageAccessLayer.resolveAndValidatePath(filePath)
-        if (pathResult.isFailure) return 0L
-        val file = pathResult.getOrThrow()
-        if (!file.exists() || file.isDirectory) return 0L
+        val statRes = storageAccessLayer.statFile(filePath)
+        if (statRes.isFailure) return 0L
+        val info = statRes.getOrThrow()
+        if (info.isDirectory) return 0L
 
-        val totalSize = file.length()
-        var chunkIndex = 0L
-        var currentOffset = startOffset
-        var chunksSent = 0L
+        val totalSize = info.sizeBytes
+        if (startOffset < 0 || startOffset > totalSize) return 0L
 
-        if (totalSize == 0L) {
+        if (totalSize == 0L || startOffset == totalSize) {
             val emptyChunk = FileChunkDto(
                 transferId = transferId,
                 chunkIndex = 0L,
-                offset = 0L,
+                offset = startOffset,
                 dataBase64 = "",
                 chunkSha256 = computeChunkSha256(ByteArray(0)),
                 isFinalChunk = true
             )
-            onChunk(serializeFileChunk(emptyChunk))
-            return 1L
+            return if (onChunk(serializeFileChunk(emptyChunk))) 1L else 0L
         }
 
-        file.inputStream().use { stream ->
-            if (startOffset > 0) {
-                var skipped = 0L
-                while (skipped < startOffset) {
-                    val s = stream.skip(startOffset - skipped)
-                    if (s <= 0) break
-                    skipped += s
-                }
-            }
-
-            val buffer = ByteArray(chunkSizeBytes)
-            while (currentOffset < totalSize) {
-                val bytesToRead = minOf(chunkSizeBytes.toLong(), totalSize - currentOffset).toInt()
-                var readTotal = 0
-                while (readTotal < bytesToRead) {
-                    val r = stream.read(buffer, readTotal, bytesToRead - readTotal)
-                    if (r == -1) break
-                    readTotal += r
-                }
-                if (readTotal == 0) break
-
-                val chunkBytes = if (readTotal == buffer.size) buffer else buffer.copyOf(readTotal)
-                val chunkSha = computeChunkSha256(chunkBytes)
-                val isFinal = (currentOffset + readTotal >= totalSize)
-
-                val chunkDto = FileChunkDto(
-                    transferId = transferId,
-                    chunkIndex = chunkIndex,
-                    offset = currentOffset,
-                    dataBase64 = Base64.getEncoder().encodeToString(chunkBytes),
-                    chunkSha256 = chunkSha,
-                    isFinalChunk = isFinal
-                )
-
-                val serialized = serializeFileChunk(chunkDto)
-                val ok = onChunk(serialized)
-                if (!ok) {
-                    break
-                }
-
+        var chunkIndex = 0L
+        var chunksSent = 0L
+        val sliceRes = storageAccessLayer.streamFileSlice(
+            relativePath = filePath,
+            startOffset = startOffset,
+            totalSize = totalSize,
+            chunkSizeBytes = chunkSizeBytes
+        ) { offset, chunkBytes, isFinal ->
+            val chunkDto = FileChunkDto(
+                transferId = transferId,
+                chunkIndex = chunkIndex,
+                offset = offset,
+                dataBase64 = Base64.getEncoder().encodeToString(chunkBytes),
+                chunkSha256 = computeChunkSha256(chunkBytes),
+                isFinalChunk = isFinal
+            )
+            val ok = onChunk(serializeFileChunk(chunkDto))
+            if (ok) {
                 chunksSent++
                 chunkIndex++
-                currentOffset += readTotal
             }
+            ok
         }
-        return chunksSent
+        return if (sliceRes.isSuccess) chunksSent else chunksSent
     }
 
     /**
@@ -420,6 +397,7 @@ class FileOperationHandler(
             transferId = transferId,
             finalFile = finalFile,
             partFile = partFile,
+            relativePath = combinedRelPath,
             totalSizeBytes = totalSizeBytes,
             expectedSha256 = sha256Checksum,
             chunkSizeBytes = expectedChunkSize,
@@ -431,6 +409,8 @@ class FileOperationHandler(
         if (totalSizeBytes == 0L) {
             val emptySha = computeChunkSha256(ByteArray(0))
             if (sha256Checksum.isNotEmpty() && !sha256Checksum.equals(emptySha, ignoreCase = true)) {
+                partFile.delete()
+                activeUploads.remove(transferId)
                 return FileUploadInitResponseDto(
                     transferId = transferId,
                     status = STATUS_INTEGRITY_MISMATCH,
@@ -439,7 +419,7 @@ class FileOperationHandler(
                     errorMessage = "Checksum mismatch for 0-byte file"
                 )
             }
-            storageAccessLayer.commitPartFile(partFile, finalFile)
+            storageAccessLayer.commitPartFile(partFile, finalFile, combinedRelPath)
             activeUploads.remove(transferId)
         }
 
@@ -496,6 +476,16 @@ class FileOperationHandler(
             )
         }
 
+        // Bounds check upload offset before seeking
+        if (offset < 0L || offset + chunkBytes.size > state.totalSizeBytes) {
+            return FileChunkAckDto(
+                transferId = transferId,
+                chunkIndex = chunkIndex,
+                status = STATUS_STORAGE_ACCESS_DENIED,
+                errorMessage = "Invalid chunk offset/size ($offset + ${chunkBytes.size} > ${state.totalSizeBytes})"
+            )
+        }
+
         // Write chunk data
         val writeResult = storageAccessLayer.writeChunk(state.partFile, offset, chunkBytes)
         if (writeResult.isFailure) {
@@ -513,6 +503,8 @@ class FileOperationHandler(
             // Verify whole-file SHA-256
             val finalSha = computeFileSha256(state.partFile)
             if (state.expectedSha256.isNotEmpty() && !finalSha.equals(state.expectedSha256, ignoreCase = true)) {
+                state.partFile.delete()
+                activeUploads.remove(transferId)
                 return FileChunkAckDto(
                     transferId = transferId,
                     chunkIndex = chunkIndex,
@@ -522,7 +514,7 @@ class FileOperationHandler(
             }
 
             // Commit part file to final file
-            val commitResult = storageAccessLayer.commitPartFile(state.partFile, state.finalFile)
+            val commitResult = storageAccessLayer.commitPartFile(state.partFile, state.finalFile, state.relativePath)
             activeUploads.remove(transferId)
 
             if (commitResult.isFailure) {
@@ -574,23 +566,26 @@ class FileOperationHandler(
             val filePath = req.optString("file_path", "")
             val startOffset = req.optLong("start_offset", 0L)
 
-            val initDto = handleFileDownloadInit(filePath, startOffset, transferId)
-            val initResponseBytes = serializeFileDownloadInitResponse(initDto)
-
-            if (initDto.status == STATUS_OK && sendAppMessage != null) {
-                // Stream chunks asynchronously to not block message dispatching
-                Thread({
-                    streamFileChunks(
-                        filePath = filePath,
-                        transferId = transferId,
-                        startOffset = startOffset,
-                        chunkSizeBytes = initDto.chunkSizeBytes,
-                        onChunk = sendAppMessage
-                    )
-                }, "PhoneLink-FileDownload-Stream").start()
+            if (sendAppMessage != null) {
+                transferExecutor.execute {
+                    val initDto = handleFileDownloadInit(filePath, startOffset, transferId)
+                    val initBytes = serializeFileDownloadInitResponse(initDto)
+                    val sentInit = sendAppMessage(initBytes)
+                    if (sentInit && initDto.status == STATUS_OK) {
+                        streamFileChunks(
+                            filePath = filePath,
+                            transferId = transferId,
+                            startOffset = startOffset,
+                            chunkSizeBytes = initDto.chunkSizeBytes,
+                            onChunk = sendAppMessage
+                        )
+                    }
+                }
+                return null
             }
 
-            return initResponseBytes
+            val initDto = handleFileDownloadInit(filePath, startOffset, transferId)
+            return serializeFileDownloadInitResponse(initDto)
         }
 
         if (json.has("file_upload_req")) {

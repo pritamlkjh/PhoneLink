@@ -28,12 +28,12 @@ The PhoneLink protocol consists of three layered abstractions:
 │ Plaintext visible ONLY to Android & Mac                │
 ├────────────────────────────────────────────────────────┤
 │ Layer 2: End-to-End (E2E) Encryption Envelope          │
-│ AEAD Ciphertext (XChaCha20-Poly1305 / AES-256-GCM)     │
-│ Keyed with ephemeral E2E session key                   │
+│ JSON `E2E_PAYLOAD` + AES-256-GCM ciphertext & seq AAD │
+│ Keyed with ephemeral X25519 session keys               │
 ├────────────────────────────────────────────────────────┤
-│ Layer 1: Relay Routing Envelope (Protobuf)             │
-│ Headers: source_id, target_id, session_id, seq, payload│
-│ Inspected by VPS for routing, rate limiting, and stats │
+│ Layer 1: Relay Routing & Presence Layer (JSON / WSS)   │
+│ Headers: device_id auth token, PEER_STATUS events      │
+│ Inspected by VPS only for routing and rate limiting    │
 ├────────────────────────────────────────────────────────┤
 │ Layer 0: Secure Transport                              │
 │ WebSocket over TLS 1.3 (WSS)                           │
@@ -61,8 +61,8 @@ To guarantee zero custom cryptography while adhering strictly to high-assurance 
      - $K_{M \to A}$ (Mac to Android encryption key)
      - Resumption master keys and nonce salting factors.
 4. **Authenticated Symmetric Encryption (AEAD):**
-   - **XChaCha20-Poly1305** (256-bit key, 192-bit extended nonce) or **AES-256-GCM** (256-bit key, 96-bit nonce + 64-bit sequence counter).
-   - Additional Authenticated Data (`AAD`) binds `session_id`, `sequence_number`, `source_id`, `target_id`, and `timestamp` to each frame.
+   - **AES-256-GCM** (`96-bit random IV || ciphertext || 16-byte tag`).
+   - Additional Authenticated Data (`AAD`) binds `PhoneLink-E2E-v1|<M2A|A2M>|<seq>` to each encrypted frame, paired with monotonic sequence checking and application-level `message_id` + timestamp replay filtering.
 5. **Transport Security:**
    - **TLS 1.3** mandatory on all WebSocket connections (`wss://`).
    - Server public certificate verified against trusted CA or pinned certificate fingerprint.
@@ -181,46 +181,35 @@ sequenceDiagram
 
 ## 6. Packet Framing & Wire Format
 
-Every transmission across the WebSocket is a binary Protobuf frame.
+Control and encrypted frames transmitted over WebSocket (`/ws/v1/connect`) use UTF-8 JSON envelopes (`E2E_INIT`, `E2E_ACK`, `E2E_PAYLOAD`, `PEER_STATUS`), aligned field-for-field with the canonical schema definitions in `shared/schema/*.proto`.
 
-### 6.1 Outer Relay Frame (`RelayEnvelope`)
-```protobuf
-syntax = "proto3";
-package phonelink.relay;
-
-message RelayEnvelope {
-  uint32 version = 1;          // Protocol version (1)
-  string source_id = 2;        // Source device ID (HEX)
-  string target_id = 3;        // Destination device ID (HEX)
-  string session_id = 4;       // Active session identifier
-  uint64 sequence_number = 5;  // Monotonically increasing sequence number
-  int64 timestamp = 6;         // Epoch timestamp (milliseconds)
-  PayloadType type = 7;        // Envelope type
-  bytes payload = 8;           // Opaque ciphertext for app messages, or control payload
+### 6.1 End-to-End Handshake & Encrypted Payload Envelopes
+```json
+// E2E_INIT (Mac -> Android via VPS)
+{
+  "type": "E2E_INIT",
+  "ephemeral_public_key": "<base64_32B_x25519>",
+  "timestamp": 1774422000000,
+  "signature": "<base64_identity_sig_over_eph_pub_plus_be64_timestamp>"
 }
 
-enum PayloadType {
-  PAYLOAD_TYPE_UNSPECIFIED = 0;
-  CONTROL_PING = 1;
-  CONTROL_PONG = 2;
-  CONTROL_STATUS = 3;
-  CONTROL_RESUME = 4;
-  E2E_HANDSHAKE_INIT = 10;
-  E2E_HANDSHAKE_ACK = 11;
-  E2E_APPLICATION_DATA = 20;   // Encrypted payload
+// E2E_PAYLOAD (Either -> Either via VPS)
+{
+  "type": "E2E_PAYLOAD",
+  "seq": 1,
+  "ciphertext": "<base64_iv12_ciphertext_tag16>"
 }
 ```
+> **Note:** `shared/schema/*.proto` remains the canonical schema documentation and CI round-trip reference (`./tests/test_schema_roundtrip.sh`).
 
-### 6.2 Encrypted Application Container (`EncryptedPayload`)
-When `type == E2E_APPLICATION_DATA`, `payload` bytes contain:
+### 6.2 Encrypted Application Container
+Inside `"ciphertext"`, after AES-256-GCM verification with `AAD = "PhoneLink-E2E-v1|<direction>|<seq>"`:
 ```
 ┌──────────────────────────┬──────────────────────────┬──────────────────────────┐
-│ Nonce / IV (12 or 24 B)  │ Ciphertext (N Bytes)     │ Auth Tag (16 Bytes)      │
+│ Nonce / IV (12 Bytes)    │ Ciphertext (N Bytes)     │ Auth Tag (16 Bytes)      │
 └──────────────────────────┴──────────────────────────┴──────────────────────────┘
 ```
-**Additional Authenticated Data (`AAD`) Input:**
-$$\text{AAD} = \text{version} \mathbin{\Vert} \text{session\_id} \mathbin{\Vert} \text{sequence\_number} \mathbin{\Vert} \text{source\_id} \mathbin{\Vert} \text{target\_id}$$
-This guarantees that an attacker or rogue VPS cannot alter routing fields, splice replay messages, or redirect frames without failing authentication tag validation.
+This guarantees that a rogue relay or active attacker cannot alter direction, reorder/replay packets, or strip sequence metadata without failing AEAD authentication tag validation.
 
 ---
 

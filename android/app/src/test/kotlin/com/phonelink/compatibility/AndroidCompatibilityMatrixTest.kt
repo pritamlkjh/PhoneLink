@@ -213,9 +213,11 @@ class AndroidCompatibilityMatrixTest {
                 assertNotNull(manifest, "AndroidManifest.xml must exist")
                 val text = manifest.readText()
                 assertTrue(
-                    text.contains("android:foregroundServiceType=\"dataSync|camera\"") ||
-                    (text.contains("dataSync") && text.contains("camera")),
-                    "Android 14+ devices require foregroundServiceType dataSync|camera"
+                    text.contains("FOREGROUND_SERVICE_CONNECTED_DEVICE") &&
+                        text.contains("connectedDevice") &&
+                        text.contains("dataSync") &&
+                        text.contains("camera"),
+                    "Android 14+ devices require FOREGROUND_SERVICE_CONNECTED_DEVICE and foregroundServiceType connectedDevice|dataSync|camera"
                 )
             }
         }
