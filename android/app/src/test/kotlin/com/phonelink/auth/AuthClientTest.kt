@@ -165,11 +165,14 @@ class AuthClientTest {
         )
 
         val vpsUrl = mockWebServer.url("").toString().removeSuffix("/")
-        val result = authClient.claimPairing(vpsUrl, "pair_token_abc123", identityManager)
+        val result = authClient.claimPairing(vpsUrl, "pair_token_abc123", identityManager, "bearer_tok_xyz")
 
         assertTrue(result.isSuccess)
         assertEquals(pairedMacId, result.getOrThrow())
         assertEquals(pairedMacId, secureStorage.getPairedDeviceId())
+        val req = mockWebServer.takeRequest(1, java.util.concurrent.TimeUnit.SECONDS)
+        assertNotNull(req)
+        assertEquals("Bearer bearer_tok_xyz", req.getHeader("Authorization"))
     }
 
     @Test

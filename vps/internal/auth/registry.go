@@ -282,15 +282,18 @@ func (r *Registry) persistLocked() error {
 	return nil
 }
 
-// unpairPeerLocked symmetrically clears any existing pairing link held by dev before re-pairing.
-func (r *Registry) unpairPeerLocked(dev *DeviceRecord) {
+// unpairPeerLocked symmetrically clears any existing pairing link held by dev before re-pairing
+// and returns the previously paired peer ID (if any).
+func (r *Registry) unpairPeerLocked(dev *DeviceRecord) string {
 	if dev == nil || dev.PairedDeviceID == "" {
-		return
+		return ""
 	}
-	if oldPeer, ok := r.devices[dev.PairedDeviceID]; ok && oldPeer.PairedDeviceID == dev.DeviceID {
+	prevPeer := dev.PairedDeviceID
+	if oldPeer, ok := r.devices[prevPeer]; ok && oldPeer.PairedDeviceID == dev.DeviceID {
 		oldPeer.PairedDeviceID = ""
 	}
 	dev.PairedDeviceID = ""
+	return prevPeer
 }
 
 // RegisterDevice registers a new authorized device.
@@ -318,7 +321,10 @@ func (r *Registry) RegisterDevice(record DeviceRecord) error {
 
 	recCopy := record
 	r.devices[record.DeviceID] = &recCopy
-	_ = r.persistLocked()
+	if err := r.persistLocked(); err != nil {
+		delete(r.devices, record.DeviceID)
+		return err
+	}
 	return nil
 }
 
@@ -385,11 +391,11 @@ func (r *Registry) RevokeDevice(deviceID string) error {
 		delete(r.deviceResumptionTokens, deviceID)
 	}
 
-	_ = r.persistLocked()
+	if err := r.persistLocked(); err != nil {
+		return err
+	}
 	return nil
 }
-
-// CreateSession generates a new session token for an authorized device.
 func (r *Registry) CreateSession(deviceID string, ttl time.Duration) (string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -511,7 +517,11 @@ func (r *Registry) CreateResumptionToken(deviceID string, ttl time.Duration) (st
 		r.deviceResumptionTokens[deviceID] = make(map[string]struct{})
 	}
 	r.deviceResumptionTokens[deviceID][token] = struct{}{}
-	_ = r.persistLocked()
+	if err := r.persistLocked(); err != nil {
+		delete(r.resumptionTokens, token)
+		delete(r.deviceResumptionTokens[deviceID], token)
+		return "", time.Time{}, err
+	}
 
 	return token, expiresAt, nil
 }
@@ -561,7 +571,9 @@ func (r *Registry) ValidateAndConsumeResumptionToken(deviceID, token string) err
 	if tokens, ok := r.deviceResumptionTokens[deviceID]; ok {
 		delete(tokens, token)
 	}
-	_ = r.persistLocked()
+	if err := r.persistLocked(); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -583,13 +595,35 @@ func (r *Registry) CreatePairingToken(initiatorDeviceID string, ttl time.Duratio
 		ttl = DefaultPairingTokenTTL
 	}
 
-	tokenBytes := make([]byte, 16)
-	if _, err := rand.Read(tokenBytes); err != nil {
-		return "", fmt.Errorf("failed to generate pairing token: %w", err)
-	}
-	token := hex.EncodeToString(tokenBytes)
-
 	now := time.Now()
+	// Prune stale pairing tokens before issuing a new one and check 8-char prefix uniqueness
+	activePrefixes := make(map[string]struct{})
+	for k, existing := range r.pairingTokens {
+		if existing.Used || now.After(existing.ExpiresAt) {
+			delete(r.pairingTokens, k)
+			continue
+		}
+		if len(existing.Token) >= 8 {
+			activePrefixes[strings.ToLower(existing.Token[:8])] = struct{}{}
+		}
+	}
+
+	var token string
+	for attempt := 0; attempt < 8; attempt++ {
+		tokenBytes := make([]byte, 16)
+		if _, err := rand.Read(tokenBytes); err != nil {
+			return "", fmt.Errorf("failed to generate pairing token: %w", err)
+		}
+		candidate := hex.EncodeToString(tokenBytes)
+		if _, collision := activePrefixes[strings.ToLower(candidate[:8])]; !collision {
+			token = candidate
+			break
+		}
+	}
+	if token == "" {
+		return "", errors.New("failed to generate collision-free pairing token")
+	}
+
 	r.pairingTokens[token] = &PairingTokenRecord{
 		Token:             token,
 		InitiatorDeviceID: initiatorDeviceID,
@@ -603,15 +637,22 @@ func (r *Registry) CreatePairingToken(initiatorDeviceID string, ttl time.Duratio
 
 // ClaimPairing allows a claimant device to pair with the initiator using a valid pairing token.
 func (r *Registry) ClaimPairing(token, claimantDeviceID string) error {
+	_, err := r.ClaimPairingWithUnlinked(token, claimantDeviceID)
+	return err
+}
+
+// ClaimPairingWithUnlinked pairs claimantDeviceID with the token initiator and returns any
+// device IDs whose prior pairing link was broken by re-pairing so callers can terminate stale sessions.
+func (r *Registry) ClaimPairingWithUnlinked(token, claimantDeviceID string) ([]string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	claimant, exists := r.devices[claimantDeviceID]
 	if !exists {
-		return ErrDeviceNotFound
+		return nil, ErrDeviceNotFound
 	}
 	if claimant.Revoked {
-		return ErrDeviceRevoked
+		return nil, ErrDeviceRevoked
 	}
 
 	now := time.Now()
@@ -619,7 +660,7 @@ func (r *Registry) ClaimPairing(token, claimantDeviceID string) error {
 	cleanToken := strings.ToLower(strings.TrimSpace(token))
 	if record, exists := r.pairingTokens[cleanToken]; exists && !record.Used && !now.After(record.ExpiresAt) {
 		pt = record
-	} else if len(cleanToken) >= 6 {
+	} else if len(cleanToken) >= 8 {
 		var matches []*PairingTokenRecord
 		for _, record := range r.pairingTokens {
 			if record.Used || now.After(record.ExpiresAt) {
@@ -636,24 +677,43 @@ func (r *Registry) ClaimPairing(token, claimantDeviceID string) error {
 	}
 
 	if pt == nil || pt.Used || now.After(pt.ExpiresAt) {
-		return ErrPairingTokenNotFound
+		return nil, ErrPairingTokenNotFound
 	}
 
 	if pt.InitiatorDeviceID == claimantDeviceID {
-		return ErrCannotPairSelf
+		return nil, ErrCannotPairSelf
 	}
 
 	initiator, exists := r.devices[pt.InitiatorDeviceID]
 	if !exists || initiator.Revoked {
-		return ErrDeviceNotFound
+		return nil, ErrDeviceNotFound
+	}
+
+	var affected []string
+	addAffected := func(id string) {
+		if id == "" {
+			return
+		}
+		for _, existing := range affected {
+			if existing == id {
+				return
+			}
+		}
+		affected = append(affected, id)
 	}
 
 	// Symmetrically unlink any previous peers before establishing the new pairing
 	if initiator.PairedDeviceID != claimantDeviceID {
-		r.unpairPeerLocked(initiator)
+		if prevPeer := r.unpairPeerLocked(initiator); prevPeer != "" {
+			addAffected(prevPeer)
+			addAffected(initiator.DeviceID)
+		}
 	}
 	if claimant.PairedDeviceID != pt.InitiatorDeviceID {
-		r.unpairPeerLocked(claimant)
+		if prevPeer := r.unpairPeerLocked(claimant); prevPeer != "" {
+			addAffected(prevPeer)
+			addAffected(claimant.DeviceID)
+		}
 	}
 
 	// Link devices symmetrically
@@ -661,8 +721,10 @@ func (r *Registry) ClaimPairing(token, claimantDeviceID string) error {
 	claimant.PairedDeviceID = pt.InitiatorDeviceID
 	pt.Used = true
 
-	_ = r.persistLocked()
-	return nil
+	if err := r.persistLocked(); err != nil {
+		return nil, err
+	}
+	return affected, nil
 }
 
 // PairDevices manually pairs two registered devices.
@@ -699,8 +761,7 @@ func (r *Registry) PairDevices(deviceID1, deviceID2 string) error {
 
 	dev1.PairedDeviceID = deviceID2
 	dev2.PairedDeviceID = deviceID1
-	_ = r.persistLocked()
-	return nil
+	return r.persistLocked()
 }
 
 // GetPairedDevice returns the paired peer's device ID.

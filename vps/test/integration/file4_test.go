@@ -66,7 +66,7 @@ func TestFILE4SecureFileUpload(t *testing.T) {
 	andToken := authenticateECDSA(t, httpServer.URL, andDeviceID, andPriv, andPubDER)
 
 	pairToken := createPairingToken(t, httpServer.URL, macDeviceID, macToken)
-	claimPairing(t, httpServer.URL, pairToken, andDeviceID)
+	claimPairing(t, httpServer.URL, pairToken, andDeviceID, andToken)
 
 	// 4. Stage Android Scoped Storage Root Directory
 	tempStorageDir, err := os.MkdirTemp("", "phonelink_upload_storage_*")

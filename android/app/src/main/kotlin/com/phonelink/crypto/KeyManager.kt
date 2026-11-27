@@ -166,6 +166,7 @@ class KeyManager(
     companion object {
         fun createSoftware(): KeyManager = KeyManager(SoftwareEcKeySigner())
 
+        @Synchronized
         fun fromStorage(secureStorage: com.phonelink.storage.SecureStorage): KeyManager {
             return try {
                 KeyManager(AndroidKeyStoreSigner())

@@ -197,15 +197,19 @@ public final class ActionClient: @unchecked Sendable {
             client: client,
             presenceTimeoutSeconds: 2.5
         )
+        let reqId = UUID().uuidString
         return try await session.runSession(
             timeoutSeconds: timeoutSeconds,
             timeoutMessage: "Timed out waiting for device ping response",
             onReady: { activeSession in
-                let reqData = try buildDevicePingRequest(durationSeconds: durationSeconds)
+                let reqData = try buildDevicePingRequest(durationSeconds: durationSeconds, requestId: reqId)
                 try await activeSession.sendEncrypted(plaintext: reqData)
             },
             onPayload: { decrypted, _, finish in
                 let response = try parseDevicePingResponse(data: decrypted)
+                if !response.requestId.isEmpty && response.requestId != reqId {
+                    return
+                }
                 finish(.success(response))
             }
         )
@@ -224,15 +228,19 @@ public final class ActionClient: @unchecked Sendable {
             client: client,
             presenceTimeoutSeconds: 2.5
         )
+        let reqId = UUID().uuidString
         return try await session.runSession(
             timeoutSeconds: timeoutSeconds,
             timeoutMessage: "Timed out waiting for device info response",
             onReady: { activeSession in
-                let reqData = try buildDeviceInfoRequest()
+                let reqData = try buildDeviceInfoRequest(requestId: reqId)
                 try await activeSession.sendEncrypted(plaintext: reqData)
             },
             onPayload: { decrypted, _, finish in
                 let response = try parseDeviceInfoResponse(data: decrypted)
+                if !response.requestId.isEmpty && response.requestId != reqId {
+                    return
+                }
                 finish(.success(response))
             }
         )

@@ -57,7 +57,7 @@ func TestMICIntegrationDualGateStreamingAndRelayAudit(t *testing.T) {
 	andToken := authenticateECDSA(t, httpServer.URL, andDeviceID, andPriv, andPubDER)
 
 	pairToken := createPairingToken(t, httpServer.URL, macDeviceID, macToken)
-	claimPairing(t, httpServer.URL, pairToken, andDeviceID)
+	claimPairing(t, httpServer.URL, pairToken, andDeviceID, andToken)
 
 	macConn, _, err := websocket.DefaultDialer.Dial(wsBaseURL+"/ws/v1/connect?token="+macToken, nil)
 	if err != nil {

@@ -53,7 +53,7 @@ func TestSEC1CrossComponentSecurityHardening(t *testing.T) {
 	andToken := authenticateECDSA(t, httpServer.URL, andDeviceID, andPriv, andPubDER)
 
 	token := createPairingToken(t, httpServer.URL, macDeviceID, macToken)
-	claimPairing(t, httpServer.URL, token, andDeviceID)
+	claimPairing(t, httpServer.URL, token, andDeviceID, andToken)
 
 	macConn, _, err := websocket.DefaultDialer.Dial(fmt.Sprintf("%s/ws/v1/connect?token=%s", wsBaseURL, macToken), nil)
 	if err != nil {

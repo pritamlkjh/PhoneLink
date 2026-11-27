@@ -606,4 +606,59 @@ class CameraCaptureModuleTest {
         assertFalse(testCameraSource.isCapturing())
         assertFalse(blockedModule.isCapturing())
     }
+
+    @Test
+    fun testStaleSessionTimeoutDoesNotStopNewerSessionAndUnexpectedStopNotifiesPeer() {
+        osPermissionGranted = true
+        storage.setCameraAllowed(true)
+
+        var unexpectedListener: ((String) -> Unit)? = null
+        val customSource = object : CameraCaptureModule.CameraSource {
+            val capturing = AtomicBoolean(false)
+            override fun open(
+                lens: CameraCaptureModule.CameraLens,
+                width: Int,
+                height: Int,
+                jpegQuality: Int,
+                targetFps: Int,
+                onFrame: (ByteArray, Int, Int) -> Unit
+            ): Result<Unit> {
+                capturing.set(true)
+                return Result.success(Unit)
+            }
+            override fun close() { capturing.set(false) }
+            override fun isCapturing(): Boolean = capturing.get()
+            override fun setUnexpectedStopListener(listener: ((reason: String) -> Unit)?) {
+                unexpectedListener = listener
+            }
+        }
+
+        val emitted = mutableListOf<ByteArray>()
+        val camModule = CameraCaptureModule(authGate, customSource, testServiceController)
+
+        val startJson = JSONObject().apply {
+            put("camera_start_req", JSONObject().apply {
+                put("session_id", "sess-new")
+                put("lens", "LENS_BACK")
+                put("target_fps", 2)
+            })
+        }.toString().toByteArray(Charsets.UTF_8)
+
+        camModule.processApplicationMessage(startJson) { msg ->
+            emitted.add(msg)
+            true
+        }
+        assertTrue(camModule.isCapturing())
+        assertEquals("sess-new", camModule.getActiveSessionId())
+
+        // Stale timeout for an older session must NOT stop sess-new
+        camModule.stopCapture("sess-old", "session_timeout")
+        assertTrue("Active session must not be stopped by stale session_timeout", camModule.isCapturing())
+        assertEquals("sess-new", camModule.getActiveSessionId())
+
+        // Hardware preemption must stop sess-new and send camera_stop_resp
+        unexpectedListener?.invoke("camera_disconnected")
+        assertFalse(camModule.isCapturing())
+        assertTrue(emitted.any { String(it, Charsets.UTF_8).contains("\"camera_stop_resp\"") })
+    }
 }

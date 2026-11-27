@@ -21,6 +21,19 @@ public final class ConnectionManager: @unchecked Sendable {
             default: return false
             }
         }
+
+        public var statusString: String {
+            switch self {
+            case .disconnected: return "disconnected"
+            case .connecting: return "connecting"
+            case .authenticating: return "authenticating"
+            case .connected: return "connected"
+            case .peerOnline(let id): return "peerOnline(\(id))"
+            case .peerOffline(let id): return "peerOffline(\(id))"
+            case .reconnecting(let attempt, _): return "reconnecting(\(attempt))"
+            case .error(let msg): return "error(\(msg))"
+            }
+        }
     }
 
     public typealias StateChangeHandler = @Sendable (State) -> Void
@@ -37,10 +50,23 @@ public final class ConnectionManager: @unchecked Sendable {
     private var autoReconnectEnabled: Bool = false
     private var reconnectAttempt: Int = 0
     private var reconnectTask: Task<Void, Never>?
+    private var keepaliveTask: Task<Void, Never>?
+    private var connectionGeneration: UInt64 = 0
+    private var manualDisconnected: Bool = false
     private let lock = NSLock()
 
-    public var onStateChange: StateChangeHandler?
-    public var onMessageReceived: MessageHandler?
+    private var _onStateChange: StateChangeHandler?
+    private var _onMessageReceived: MessageHandler?
+
+    public var onStateChange: StateChangeHandler? {
+        get { lock.withLock { _onStateChange } }
+        set { lock.withLock { _onStateChange = newValue } }
+    }
+
+    public var onMessageReceived: MessageHandler? {
+        get { lock.withLock { _onMessageReceived } }
+        set { lock.withLock { _onMessageReceived = newValue } }
+    }
 
     public init(
         vpsBaseURL: URL,
@@ -81,54 +107,99 @@ public final class ConnectionManager: @unchecked Sendable {
            let isOnline = json["is_online"] as? Bool {
             return isOnline ? .peerOnline(peerDeviceID: peerID) : .peerOffline(peerDeviceID: peerID)
         }
-        if let errMsg = json["error"] as? String, json["type"] == nil {
+        if let errMsg = json["error"] as? String, json["ciphertext"] == nil {
             return .relayError(message: errMsg)
         }
         return nil
     }
 
     private func transition(to newState: State) {
-        lock.lock()
-        currentState = newState
-        let handler = onStateChange
-        lock.unlock()
+        let handler: StateChangeHandler? = lock.withLock {
+            currentState = newState
+            return _onStateChange
+        }
 
         handler?(newState)
     }
 
+    private func beginConnectAttempt() -> (generation: UInt64, priorTask: URLSessionWebSocketTask?, priorKeepalive: Task<Void, Never>?) {
+        lock.withLock {
+            connectionGeneration &+= 1
+            manualDisconnected = false
+            let prior = webSocketTask
+            webSocketTask = nil
+            let priorPing = keepaliveTask
+            keepaliveTask = nil
+            return (connectionGeneration, prior, priorPing)
+        }
+    }
+
+    private func isActiveGeneration(_ generation: UInt64) -> Bool {
+        lock.withLock { !manualDisconnected && connectionGeneration == generation }
+    }
+
+    private func isNonRetryableError(_ message: String) -> Bool {
+        let lower = message.lowercased()
+        return lower.contains("unauthorized") ||
+               lower.contains("401") ||
+               lower.contains("revoked") ||
+               lower.contains("forbidden") ||
+               lower.contains("device_not_found")
+    }
+
     /// Establishes authentication and opens the WebSocket connection to the VPS.
     public func connect() async {
+        let (generation, priorTask, priorPing) = beginConnectAttempt()
+        priorPing?.cancel()
+        priorTask?.cancel(with: .normalClosure, reason: nil)
+
         transition(to: .connecting)
 
         do {
             // Step 1: Register device if needed
             try await authClient.registerDevice(vpsBaseURL: vpsBaseURL, identity: identity)
+            guard isActiveGeneration(generation) else { return }
 
             // Step 2: Authenticate and acquire session token
             transition(to: .authenticating)
             let sessionToken = try await authClient.authenticate(vpsBaseURL: vpsBaseURL, identity: identity)
+            guard isActiveGeneration(generation) else { return }
 
-            // Step 3: Upgrade to WebSocket
-            var wsURLComponents = URLComponents(url: vpsBaseURL, resolvingAgainstBaseURL: true)!
-            wsURLComponents.scheme = (vpsBaseURL.scheme == "https") ? "wss" : "ws"
-            wsURLComponents.path = "/ws/v1/connect"
-            wsURLComponents.queryItems = [URLQueryItem(name: "token", value: sessionToken)]
+            // Step 3: Upgrade to WebSocket (preserve proxy path; send bearer token via Authorization header)
+            guard var wsURLComponents = URLComponents(url: vpsBaseURL, resolvingAgainstBaseURL: true) else {
+                transition(to: .error(message: "Failed to parse relay URL components"))
+                return
+            }
+            let scheme = vpsBaseURL.scheme?.lowercased() ?? "http"
+            wsURLComponents.scheme = (scheme == "https" || scheme == "wss") ? "wss" : "ws"
+            let basePath = wsURLComponents.path.hasSuffix("/") ? String(wsURLComponents.path.dropLast()) : wsURLComponents.path
+            wsURLComponents.path = basePath + "/ws/v1/connect"
 
             guard let wsURL = wsURLComponents.url else {
                 transition(to: .error(message: "Failed to construct WebSocket URL"))
                 return
             }
 
-            let task = urlSession.webSocketTask(with: wsURL)
-            setSessionConnected(task: task, token: sessionToken)
+            var wsRequest = URLRequest(url: wsURL)
+            wsRequest.setValue("Bearer \(sessionToken)", forHTTPHeaderField: "Authorization")
+
+            let task = urlSession.webSocketTask(with: wsRequest)
+            guard setSessionConnected(task: task, token: sessionToken, generation: generation) else {
+                task.cancel(with: .normalClosure, reason: nil)
+                return
+            }
 
             task.resume()
             transition(to: .connected(sessionToken: sessionToken))
 
-            listenForMessages(task)
+            startKeepalive(for: task, generation: generation)
+            listenForMessages(task, generation: generation)
         } catch {
+            guard isActiveGeneration(generation) else { return }
             transition(to: .error(message: error.localizedDescription))
-            scheduleAutoReconnectIfEnabled()
+            if !isNonRetryableError(error.localizedDescription) {
+                scheduleAutoReconnectIfEnabled(generation: generation)
+            }
         }
     }
 
@@ -137,11 +208,53 @@ public final class ConnectionManager: @unchecked Sendable {
         await connect()
     }
 
-    private func setSessionConnected(task: URLSessionWebSocketTask, token: String) {
+    @discardableResult
+    private func setSessionConnected(task: URLSessionWebSocketTask, token: String, generation: UInt64) -> Bool {
         lock.withLock {
+            guard !manualDisconnected && connectionGeneration == generation else {
+                return false
+            }
             self.webSocketTask = task
             self.activeSessionToken = token
             self.reconnectAttempt = 0
+            return true
+        }
+    }
+
+    private func startKeepalive(for task: URLSessionWebSocketTask, generation: UInt64) {
+        let pingTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 20_000_000_000)
+                guard !Task.isCancelled, let self = self else { return }
+                guard self.isCurrentSocket(task, generation: generation) else { return }
+                let pingFailed = await withCheckedContinuation { (cont: CheckedContinuation<Bool, Never>) in
+                    task.sendPing { err in
+                        cont.resume(returning: err != nil)
+                    }
+                }
+                if pingFailed {
+                    guard self.isCurrentSocket(task, generation: generation) else { return }
+                    task.cancel(with: .abnormalClosure, reason: nil)
+                    return
+                }
+            }
+        }
+        let cancelledEarly: Bool = lock.withLock {
+            guard !manualDisconnected && connectionGeneration == generation && webSocketTask === task else {
+                return true
+            }
+            keepaliveTask?.cancel()
+            keepaliveTask = pingTask
+            return false
+        }
+        if cancelledEarly {
+            pingTask.cancel()
+        }
+    }
+
+    private func isCurrentSocket(_ task: URLSessionWebSocketTask, generation: UInt64) -> Bool {
+        lock.withLock {
+            !manualDisconnected && connectionGeneration == generation && webSocketTask === task
         }
     }
 
@@ -156,31 +269,32 @@ public final class ConnectionManager: @unchecked Sendable {
         lock.withLock { autoReconnectEnabled }
     }
 
-    private func scheduleAutoReconnectIfEnabled() {
-        lock.lock()
-        let enabled = autoReconnectEnabled
-        if !enabled {
-            lock.unlock()
-            return
-        }
-        reconnectAttempt += 1
-        let attempt = reconnectAttempt
-        reconnectTask?.cancel()
-        let maxDelay = min(30.0, pow(2.0, Double(min(attempt - 1, 5))))
-        let jitterDelay = (maxDelay / 2.0) + Double.random(in: 0...(maxDelay / 2.0))
-        lock.unlock()
-
-        transition(to: .reconnecting(attempt: attempt, delaySeconds: jitterDelay))
-        let task = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(jitterDelay * 1_000_000_000))
-            guard !Task.isCancelled, let self = self else { return }
-            if self.isAutoReconnectEnabled() {
-                await self.connect()
+    private func scheduleAutoReconnectIfEnabled(generation: UInt64) {
+        let pendingState: State? = lock.withLock {
+            guard autoReconnectEnabled && !manualDisconnected && connectionGeneration == generation else {
+                return nil
             }
+            reconnectAttempt += 1
+            let attempt = reconnectAttempt
+            reconnectTask?.cancel()
+            let maxDelay = min(30.0, pow(2.0, Double(min(attempt - 1, 5))))
+            let jitterDelay = (maxDelay / 2.0) + Double.random(in: 0...(maxDelay / 2.0))
+            let task = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: UInt64(jitterDelay * 1_000_000_000))
+                guard !Task.isCancelled, let self = self else { return }
+                if self.isAutoReconnectEnabled() && self.isActiveGeneration(generation) {
+                    await self.connect()
+                }
+            }
+            reconnectTask = task
+            currentState = .reconnecting(attempt: attempt, delaySeconds: jitterDelay)
+            return currentState
         }
-        lock.lock()
-        reconnectTask = task
-        lock.unlock()
+
+        if let nextState = pendingState {
+            let handler = lock.withLock { _onStateChange }
+            handler?(nextState)
+        }
     }
 
     /// Connects and waits until the initial peer presence is resolved (or timeout).
@@ -188,8 +302,9 @@ public final class ConnectionManager: @unchecked Sendable {
     public func connectAndWaitForPresence(timeoutSeconds: Double = 3.0) async -> State {
         await connect()
 
-        let deadline = Date().addingTimeInterval(timeoutSeconds)
-        while Date() < deadline {
+        let safeTimeout = timeoutSeconds.isFinite && timeoutSeconds > 0 ? timeoutSeconds : 3.0
+        let deadline = Date().addingTimeInterval(safeTimeout)
+        while Date() < deadline && !Task.isCancelled {
             let current = self.state
             switch current {
             case .peerOnline, .peerOffline, .error:
@@ -202,9 +317,10 @@ public final class ConnectionManager: @unchecked Sendable {
     }
 
     /// Listens continuously for incoming WebSocket frames from the VPS relay.
-    private func listenForMessages(_ task: URLSessionWebSocketTask) {
+    private func listenForMessages(_ task: URLSessionWebSocketTask, generation: UInt64) {
         task.receive { [weak self] result in
             guard let self = self else { return }
+            guard self.isCurrentSocket(task, generation: generation) else { return }
 
             switch result {
             case .success(let message):
@@ -223,50 +339,61 @@ public final class ConnectionManager: @unchecked Sendable {
                     switch event {
                     case .peerOnline(let peerID):
                         self.transition(to: .peerOnline(peerDeviceID: peerID))
-                        self.listenForMessages(task)
+                        self.listenForMessages(task, generation: generation)
                         return
                     case .peerOffline(let peerID):
                         self.transition(to: .peerOffline(peerDeviceID: peerID))
-                        self.listenForMessages(task)
+                        self.listenForMessages(task, generation: generation)
                         return
                     case .relayError(let errMsg):
+                        self.clearSocketAndPing(task, generation: generation)
+                        task.cancel(with: .policyViolation, reason: nil)
                         self.transition(to: .error(message: errMsg))
-                        self.scheduleAutoReconnectIfEnabled()
+                        if !self.isNonRetryableError(errMsg) {
+                            self.scheduleAutoReconnectIfEnabled(generation: generation)
+                        }
                         return
                     }
                 }
 
                 // Regular application / E2E payload
-                self.onMessageReceived?(data)
+                let handler = self.lock.withLock { self._onMessageReceived }
+                handler?(data)
 
                 // Continue listening
-                self.listenForMessages(task)
+                self.listenForMessages(task, generation: generation)
 
             case .failure(let error):
-                self.lock.lock()
-                let current = self.currentState
-                self.lock.unlock()
-
+                self.clearSocketAndPing(task, generation: generation)
+                let current = self.lock.withLock { self.currentState }
                 if case .disconnected = current {
-                    // Normal disconnect
                     return
                 }
-                self.transition(to: .error(message: error.localizedDescription))
-                self.scheduleAutoReconnectIfEnabled()
+                let errDesc = error.localizedDescription
+                self.transition(to: .error(message: errDesc))
+                let isPolicyClose = (task.closeCode == .policyViolation)
+                if !isPolicyClose && !self.isNonRetryableError(errDesc) {
+                    self.scheduleAutoReconnectIfEnabled(generation: generation)
+                }
             }
         }
     }
 
-    private func setWebSocketTask(_ task: URLSessionWebSocketTask?) {
-        lock.lock()
-        self.webSocketTask = task
-        lock.unlock()
+    private func clearSocketAndPing(_ task: URLSessionWebSocketTask, generation: UInt64) {
+        let pingToCancel: Task<Void, Never>? = lock.withLock {
+            guard connectionGeneration == generation && webSocketTask === task else {
+                return nil
+            }
+            webSocketTask = nil
+            let p = keepaliveTask
+            keepaliveTask = nil
+            return p
+        }
+        pingToCancel?.cancel()
     }
 
     private func getWebSocketTask() -> URLSessionWebSocketTask? {
-        lock.lock()
-        defer { lock.unlock() }
-        return webSocketTask
+        lock.withLock { webSocketTask }
     }
 
     /// Sends raw bytes over the WebSocket relay.
@@ -279,15 +406,22 @@ public final class ConnectionManager: @unchecked Sendable {
 
     /// Disconnects the session.
     public func disconnect() {
-        lock.lock()
-        autoReconnectEnabled = false
-        reconnectTask?.cancel()
-        reconnectTask = nil
-        let task = webSocketTask
-        webSocketTask = nil
-        activeSessionToken = nil
-        lock.unlock()
+        let (task, rTask, pTask): (URLSessionWebSocketTask?, Task<Void, Never>?, Task<Void, Never>?) = lock.withLock {
+            manualDisconnected = true
+            connectionGeneration &+= 1
+            autoReconnectEnabled = false
+            let r = reconnectTask
+            reconnectTask = nil
+            let p = keepaliveTask
+            keepaliveTask = nil
+            let t = webSocketTask
+            webSocketTask = nil
+            activeSessionToken = nil
+            return (t, r, p)
+        }
 
+        rTask?.cancel()
+        pTask?.cancel()
         task?.cancel(with: .normalClosure, reason: nil)
         transition(to: .disconnected)
     }
@@ -314,6 +448,11 @@ public final class PinnedURLSessionDelegate: NSObject, URLSessionDelegate, Senda
         didReceive challenge: URLAuthenticationChallenge,
         completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
     ) {
+        guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust else {
+            completionHandler(.performDefaultHandling, nil)
+            return
+        }
+
         guard let serverTrust = challenge.protectionSpace.serverTrust else {
             completionHandler(.cancelAuthenticationChallenge, nil)
             return
@@ -370,6 +509,13 @@ public final class PinnedURLSessionDelegate: NSObject, URLSessionDelegate, Senda
                 0x30, 0x76, 0x30, 0x10, 0x06, 0x07, 0x2a, 0x86,
                 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06, 0x05, 0x2b,
                 0x81, 0x04, 0x00, 0x22, 0x03, 0x62, 0x00
+            ]
+        } else if keyType == (kSecAttrKeyTypeECSECPrimeRandom as String) && keySize == 521 {
+            header = [
+                0x30, 0x81, 0x9b, 0x30, 0x10, 0x06, 0x07, 0x2a,
+                0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06, 0x05,
+                0x2b, 0x81, 0x04, 0x00, 0x23, 0x03, 0x81, 0x86,
+                0x00
             ]
         } else if keyType == (kSecAttrKeyTypeRSA as String) {
             return buildRSASpki(rawPub)

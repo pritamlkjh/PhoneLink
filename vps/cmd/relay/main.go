@@ -35,9 +35,16 @@ func main() {
 	if *portFlag != 0 {
 		cfg.Port = *portFlag
 	} else if envPort := os.Getenv("PHONELINK_PORT"); envPort != "" {
-		if p, err := strconv.Atoi(envPort); err == nil {
-			cfg.Port = p
+		p, err := strconv.Atoi(envPort)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "invalid PHONELINK_PORT %q: %v\n", envPort, err)
+			os.Exit(1)
 		}
+		cfg.Port = p
+	}
+	if cfg.Port < 1 || cfg.Port > 65535 {
+		fmt.Fprintf(os.Stderr, "invalid port %d: must be in range 1..65535\n", cfg.Port)
+		os.Exit(1)
 	}
 
 	dataDir := *dataDirFlag
@@ -56,6 +63,10 @@ func main() {
 	if tlsKey == "" {
 		tlsKey = os.Getenv("PHONELINK_TLS_KEY")
 	}
+	if (tlsCert == "") != (tlsKey == "") {
+		fmt.Fprintln(os.Stderr, "TLS configuration error: both --tls-cert and --tls-key must be set together")
+		os.Exit(1)
+	}
 	if tlsCert != "" && tlsKey != "" {
 		cfg.TLSCertFile = tlsCert
 		cfg.TLSKeyFile = tlsKey
@@ -65,7 +76,11 @@ func main() {
 		Level: slog.LevelInfo,
 	}))
 
-	srv := server.NewServer(cfg, logger)
+	srv, err := server.NewServerWithError(cfg, logger)
+	if err != nil {
+		logger.Error("Failed to initialize VPS relay", "error", err)
+		os.Exit(1)
+	}
 
 	// Graceful shutdown channel
 	shutdownChan := make(chan os.Signal, 1)

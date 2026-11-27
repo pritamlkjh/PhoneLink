@@ -4,7 +4,6 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
-import android.net.NetworkRequest
 import com.phonelink.auth.AuthClient
 import com.phonelink.crypto.KeyManager
 import com.phonelink.identity.DeviceIdentityManager
@@ -89,20 +88,25 @@ class ReconnectionManager(
 
         override fun registerCallback(onAvailable: () -> Unit, onLost: () -> Unit) {
             val cm = connectivityManager ?: return
-            val request = NetworkRequest.Builder()
-                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-                .build()
+            unregisterCallback()
 
-            networkCallback = object : ConnectivityManager.NetworkCallback() {
+            val cb = object : ConnectivityManager.NetworkCallback() {
                 override fun onAvailable(network: Network) {
                     onAvailable()
                 }
 
                 override fun onLost(network: Network) {
-                    onLost()
+                    if (!isNetworkAvailable()) {
+                        onLost()
+                    }
                 }
             }
-            cm.registerNetworkCallback(request, networkCallback!!)
+            networkCallback = cb
+            try {
+                cm.registerDefaultNetworkCallback(cb)
+            } catch (_: SecurityException) {
+                networkCallback = null
+            }
         }
 
         override fun unregisterCallback() {
@@ -120,6 +124,7 @@ class ReconnectionManager(
     private val consecutiveFailures = AtomicInteger(0)
     private val isStarted = AtomicBoolean(false)
     private var scheduledTask: ScheduledFuture<*>? = null
+    private val activeAttemptCancelled = AtomicReference<AtomicBoolean?>(null)
     private var ownedScheduler: ScheduledExecutorService? = null
     private var vpsBaseUrl: String = ""
 
@@ -243,7 +248,8 @@ class ReconnectionManager(
     }
 
     private fun cancelScheduledRetry() {
-        scheduledTask?.cancel(true)
+        activeAttemptCancelled.getAndSet(null)?.set(true)
+        scheduledTask?.cancel(false)
         scheduledTask = null
     }
 
@@ -259,21 +265,25 @@ class ReconnectionManager(
 
         val attempt = consecutiveFailures.incrementAndGet()
         val delayMillis = if (immediate) 0L else calculateBackoffDelay(attempt)
+        val cancelledFlag = AtomicBoolean(false)
+        activeAttemptCancelled.set(cancelledFlag)
 
         if (delayMillis > 0L) {
             val nextAttemptAt = System.currentTimeMillis() + delayMillis
             setState(State.BackingOff(attempt, delayMillis, nextAttemptAt))
         }
         scheduledTask = getOrCreateScheduler().schedule(
-            { executeReconnect(attempt) },
+            { executeReconnect(attempt, cancelledFlag) },
             delayMillis,
             TimeUnit.MILLISECONDS
         )
     }
 
-    private fun executeReconnect(attempt: Int) {
-        if (!isStarted.get() || !networkStateProvider.isNetworkAvailable()) {
-            setState(State.WaitingForNetwork)
+    private fun executeReconnect(attempt: Int, cancelled: AtomicBoolean) {
+        if (cancelled.get() || !isStarted.get() || !networkStateProvider.isNetworkAvailable()) {
+            if (isStarted.get() && !cancelled.get() && !networkStateProvider.isNetworkAvailable()) {
+                setState(State.WaitingForNetwork)
+            }
             return
         }
 
@@ -284,6 +294,7 @@ class ReconnectionManager(
         if (resumptionToken != null) {
             val deviceId = identityManager.getDeviceId()
             val resumeResult = authClient.resumeSession(vpsBaseUrl, deviceId, resumptionToken)
+            if (cancelled.get() || !isStarted.get()) return
             if (resumeResult.isSuccess) {
                 val sessionToken = resumeResult.getOrThrow()
                 consecutiveFailures.set(0)
@@ -298,8 +309,12 @@ class ReconnectionManager(
             // Resumption failed (e.g. token expired, 401) -> Fall through to full re-auth
         }
 
+        if (cancelled.get() || !isStarted.get()) return
+
         // Step 2: Fall back to full cryptographic challenge-response authentication (AND-6)
         val authResult = authClient.authenticate(vpsBaseUrl, identityManager, keyManager)
+        if (cancelled.get() || !isStarted.get()) return
+
         if (authResult.isSuccess) {
             val sessionToken = authResult.getOrThrow()
             consecutiveFailures.set(0)
@@ -318,9 +333,9 @@ class ReconnectionManager(
             }
 
             // Schedule next attempt with jittered backoff
-            if (isStarted.get()) {
+            if (isStarted.get() && !cancelled.get()) {
                 attemptReconnect(immediate = false)
-            } else {
+            } else if (!cancelled.get()) {
                 setState(State.Failed(error))
             }
         }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"strings"
 	"sync"
@@ -72,9 +73,11 @@ func NewAuthFailureMonitor(threshold int, window time.Duration, alertHandler fun
 // RecordFailure records an authentication failure for a source (IP or device ID)
 // Returns true if an alert was triggered.
 func (m *AuthFailureMonitor) RecordFailure(source string, reason string) bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	var triggered bool
+	var handler func(AlertEvent)
+	var alert AlertEvent
 
+	m.mu.Lock()
 	now := time.Now()
 	cutoff := now.Add(-m.window)
 
@@ -88,8 +91,29 @@ func (m *AuthFailureMonitor) RecordFailure(source string, reason string) bool {
 	validTimes = append(validTimes, now)
 	m.failures[source] = validTimes
 
+	// Bound map size by pruning expired entries when table grows
+	if len(m.failures) > 4096 {
+		for k, times := range m.failures {
+			if k == source {
+				continue
+			}
+			hasRecent := false
+			for _, t := range times {
+				if t.After(cutoff) {
+					hasRecent = true
+					break
+				}
+			}
+			if !hasRecent {
+				delete(m.failures, k)
+			}
+		}
+	}
+
 	if len(validTimes) >= m.threshold {
-		alert := AlertEvent{
+		triggered = true
+		handler = m.alertHandler
+		alert = AlertEvent{
 			Type:      AlertExcessiveAuthFailures,
 			Severity:  "CRITICAL",
 			Source:    source,
@@ -97,12 +121,13 @@ func (m *AuthFailureMonitor) RecordFailure(source string, reason string) bool {
 			Message:   fmt.Sprintf("Repeated authentication failures detected: %d attempts within %v (last reason: %s)", len(validTimes), m.window, reason),
 			Timestamp: now,
 		}
-		if m.alertHandler != nil {
-			m.alertHandler(alert)
-		}
-		return true
 	}
-	return false
+	m.mu.Unlock()
+
+	if triggered && handler != nil {
+		handler(alert)
+	}
+	return triggered
 }
 
 // RecordSuccess resets/clears failure tracking for a source upon successful authentication
@@ -167,6 +192,14 @@ func (l *AuditLogger) SetAlertHandler(fn func(alert AlertEvent)) {
 	}
 }
 
+func normalizeRemoteHost(remoteAddr string) string {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err == nil && host != "" {
+		return host
+	}
+	return remoteAddr
+}
+
 // LogAuthAttempt logs an initial authentication request
 func (l *AuditLogger) LogAuthAttempt(remoteAddr, deviceID string) {
 	l.logger.Info("Authentication attempt",
@@ -178,8 +211,11 @@ func (l *AuditLogger) LogAuthAttempt(remoteAddr, deviceID string) {
 
 // LogAuthSuccess logs successful verification and session issuance
 func (l *AuditLogger) LogAuthSuccess(remoteAddr, deviceID string) {
+	host := normalizeRemoteHost(remoteAddr)
 	if l.monitor != nil {
-		l.monitor.RecordSuccess(remoteAddr)
+		if host != "" {
+			l.monitor.RecordSuccess(host)
+		}
 		if deviceID != "" {
 			l.monitor.RecordSuccess(deviceID)
 		}
@@ -195,15 +231,16 @@ func (l *AuditLogger) LogAuthSuccess(remoteAddr, deviceID string) {
 func (l *AuditLogger) LogAuthFailure(remoteAddr, deviceID, reason string) {
 	alertTriggered := false
 	var triggeredSource string
+	host := normalizeRemoteHost(remoteAddr)
 
 	if l.monitor != nil {
-		if remoteAddr != "" {
-			if l.monitor.RecordFailure(remoteAddr, reason) {
+		if host != "" {
+			if l.monitor.RecordFailure(host, reason) {
 				alertTriggered = true
-				triggeredSource = remoteAddr
+				triggeredSource = host
 			}
 		}
-		if deviceID != "" && deviceID != remoteAddr {
+		if deviceID != "" && deviceID != host {
 			if l.monitor.RecordFailure(deviceID, reason) {
 				alertTriggered = true
 				if triggeredSource == "" {

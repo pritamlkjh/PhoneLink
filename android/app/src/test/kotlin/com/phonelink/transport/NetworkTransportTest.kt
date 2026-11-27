@@ -142,4 +142,40 @@ class NetworkTransportTest {
             "State machine must not hang in ambiguous state: $state"
         )
     }
+
+    @Test
+    fun testReconnectWithNewUrlSupersedesOldSocket() {
+        val oldSocketClosed = CountDownLatch(1)
+        mockWebServer.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {
+            override fun onOpen(webSocket: WebSocket, response: okhttp3.Response) {
+                webSocket.close(1000, "old")
+            }
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                oldSocketClosed.countDown()
+            }
+        }))
+        mockWebServer.enqueue(MockResponse().withWebSocketUpgrade(object : WebSocketListener() {}))
+
+        val url1 = mockWebServer.url("/ws/v1/connect?token=tok1").toString()
+        val url2 = mockWebServer.url("/ws/v1/connect?token=tok2").toString()
+
+        val connectedToUrl2 = CountDownLatch(1)
+        transport.addListener(object : NetworkTransport.Listener {
+            override fun onStateChanged(newState: NetworkTransport.ConnectionState) {
+                if (newState is NetworkTransport.ConnectionState.Connected && newState.url == url2) {
+                    connectedToUrl2.countDown()
+                }
+            }
+        })
+
+        transport.connect(url1)
+        Thread.sleep(50)
+        transport.connect(url2)
+
+        assertTrue(connectedToUrl2.await(5, TimeUnit.SECONDS), "Should connect cleanly to url2")
+        Thread.sleep(100)
+        val state = transport.getState()
+        assertTrue(state is NetworkTransport.ConnectionState.Connected && state.url == url2,
+            "Stale url1 close must not overwrite url2 Connected state: $state")
+    }
 }

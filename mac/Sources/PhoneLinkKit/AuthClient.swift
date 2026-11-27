@@ -23,6 +23,8 @@ public struct AuthClient: Sendable {
 
     public var configuredURLSession: URLSession { urlSession }
 
+    private static let defaultRequestTimeout: TimeInterval = 15
+
     public init(urlSession: URLSession = .shared) {
         self.urlSession = urlSession
     }
@@ -30,7 +32,7 @@ public struct AuthClient: Sendable {
     /// Registers the Mac device public key with the VPS registry.
     public func registerDevice(vpsBaseURL: URL, identity: DeviceIdentityManager) async throws {
         let registerEndpoint = vpsBaseURL.appendingPathComponent("/api/v1/devices/register")
-        var request = URLRequest(url: registerEndpoint)
+        var request = URLRequest(url: registerEndpoint, timeoutInterval: Self.defaultRequestTimeout)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
@@ -57,7 +59,7 @@ public struct AuthClient: Sendable {
     public func authenticate(vpsBaseURL: URL, identity: DeviceIdentityManager) async throws -> String {
         // Step 1: Request Challenge
         let challengeEndpoint = vpsBaseURL.appendingPathComponent("/api/v1/auth/challenge")
-        var chReq = URLRequest(url: challengeEndpoint)
+        var chReq = URLRequest(url: challengeEndpoint, timeoutInterval: Self.defaultRequestTimeout)
         chReq.httpMethod = "POST"
         chReq.setValue("application/json", forHTTPHeaderField: "Content-Type")
         chReq.httpBody = try JSONSerialization.data(withJSONObject: ["device_id": identity.deviceID])
@@ -74,19 +76,26 @@ public struct AuthClient: Sendable {
         guard let chJSON = try JSONSerialization.jsonObject(with: chData) as? [String: Any],
               let serverNonceB64 = chJSON["server_nonce"] as? String,
               let serverNonce = Data(base64Encoded: serverNonceB64),
-              let timestamp = chJSON["timestamp"] as? Int64 else {
+              serverNonce.count == 32,
+              let timestamp = (chJSON["timestamp"] as? NSNumber)?.int64Value else {
             throw AuthClientError.invalidResponse("Malformed challenge response from VPS")
         }
 
         // Step 2: Generate random 32-byte client nonce and sign
         var clientNonce = Data(count: 32)
-        _ = clientNonce.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, 32, $0.baseAddress!) }
+        let rngStatus = clientNonce.withUnsafeMutableBytes { ptr -> OSStatus in
+            guard let baseAddress = ptr.baseAddress else { return errSecParam }
+            return SecRandomCopyBytes(kSecRandomDefault, 32, baseAddress)
+        }
+        guard rngStatus == errSecSuccess else {
+            throw AuthClientError.invalidResponse("System CSPRNG failed (OSStatus \(rngStatus))")
+        }
 
         let signature = try identity.signChallenge(serverNonce: serverNonce, clientNonce: clientNonce, timestamp: timestamp)
 
         // Step 3: Verify with VPS
         let verifyEndpoint = vpsBaseURL.appendingPathComponent("/api/v1/auth/verify")
-        var verReq = URLRequest(url: verifyEndpoint)
+        var verReq = URLRequest(url: verifyEndpoint, timeoutInterval: Self.defaultRequestTimeout)
         verReq.httpMethod = "POST"
         verReq.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
@@ -109,7 +118,8 @@ public struct AuthClient: Sendable {
         }
 
         guard let verJSON = try JSONSerialization.jsonObject(with: verData) as? [String: Any],
-              let sessionToken = verJSON["session_token"] as? String else {
+              let sessionToken = verJSON["session_token"] as? String,
+              !sessionToken.isEmpty else {
             throw AuthClientError.invalidResponse("Missing session token in auth response")
         }
 
@@ -119,7 +129,7 @@ public struct AuthClient: Sendable {
     /// Generates a one-time pairing token for out-of-band QR ceremony.
     public func createPairingToken(vpsBaseURL: URL, deviceID: String, sessionToken: String? = nil) async throws -> String {
         let endpoint = vpsBaseURL.appendingPathComponent("/api/v1/pairing/create")
-        var req = URLRequest(url: endpoint)
+        var req = URLRequest(url: endpoint, timeoutInterval: Self.defaultRequestTimeout)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if let token = sessionToken, !token.isEmpty {
@@ -128,13 +138,17 @@ public struct AuthClient: Sendable {
         req.httpBody = try JSONSerialization.data(withJSONObject: ["device_id": deviceID])
 
         let (data, response) = try await urlSession.data(for: req)
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+        guard let http = response as? HTTPURLResponse else {
+            throw AuthClientError.invalidResponse("Not an HTTP response")
+        }
+        guard http.statusCode == 200 else {
             let msg = String(data: data, encoding: .utf8) ?? ""
-            throw AuthClientError.serverError(statusCode: (response as? HTTPURLResponse)?.statusCode ?? 500, message: msg)
+            throw AuthClientError.serverError(statusCode: http.statusCode, message: msg)
         }
 
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let token = json["pairing_token"] as? String else {
+              let token = json["pairing_token"] as? String,
+              !token.isEmpty else {
             throw AuthClientError.invalidResponse("Missing pairing_token in response")
         }
 
@@ -144,16 +158,19 @@ public struct AuthClient: Sendable {
     /// Revokes a registered device (self or currently paired peer) on the VPS relay immediately.
     public func revokeDevice(vpsBaseURL: URL, deviceID: String, sessionToken: String) async throws {
         let endpoint = vpsBaseURL.appendingPathComponent("/api/v1/devices/revoke")
-        var req = URLRequest(url: endpoint)
+        var req = URLRequest(url: endpoint, timeoutInterval: Self.defaultRequestTimeout)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue("Bearer \(sessionToken)", forHTTPHeaderField: "Authorization")
         req.httpBody = try JSONSerialization.data(withJSONObject: ["device_id": deviceID])
 
         let (data, response) = try await urlSession.data(for: req)
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+        guard let http = response as? HTTPURLResponse else {
+            throw AuthClientError.invalidResponse("Not an HTTP response")
+        }
+        guard http.statusCode == 200 else {
             let msg = String(data: data, encoding: .utf8) ?? ""
-            throw AuthClientError.serverError(statusCode: (response as? HTTPURLResponse)?.statusCode ?? 500, message: msg)
+            throw AuthClientError.serverError(statusCode: http.statusCode, message: msg)
         }
     }
 
@@ -203,7 +220,7 @@ public struct AuthClient: Sendable {
     /// Fetches the real-time device status and paired peer presence via REST.
     public func getDeviceStatus(vpsBaseURL: URL, sessionToken: String) async throws -> DeviceStatus {
         let endpoint = vpsBaseURL.appendingPathComponent("/api/v1/devices/status")
-        var req = URLRequest(url: endpoint)
+        var req = URLRequest(url: endpoint, timeoutInterval: Self.defaultRequestTimeout)
         req.httpMethod = "GET"
         req.setValue("Bearer \(sessionToken)", forHTTPHeaderField: "Authorization")
 

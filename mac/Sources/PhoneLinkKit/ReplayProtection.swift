@@ -20,6 +20,8 @@ public final class ReplayProtectionFilter: @unchecked Sendable {
     private let maxClockSkewMs: Int64
     private let maxCacheSize: Int
     private var seenMessageIds: [String: Int64] = [:]
+    private var insertionOrder: [String] = []
+    private var insertionHeadIndex: Int = 0
     private var totalValidated: UInt64 = 0
     private var totalReplayed: UInt64 = 0
     private var totalExpired: UInt64 = 0
@@ -30,8 +32,8 @@ public final class ReplayProtectionFilter: @unchecked Sendable {
         maxCacheSize: Int = defaultMaxCacheSize,
         timeProvider: (@Sendable () -> Int64)? = nil
     ) {
-        self.maxClockSkewMs = maxClockSkewMs
-        self.maxCacheSize = maxCacheSize
+        self.maxClockSkewMs = max(0, maxClockSkewMs)
+        self.maxCacheSize = max(1, maxCacheSize)
         self.timeProvider = timeProvider ?? { Int64(Date().timeIntervalSince1970 * 1000) }
     }
 
@@ -52,14 +54,18 @@ public final class ReplayProtectionFilter: @unchecked Sendable {
         }
         let timestamp = timestampNum.int64Value
         let now = timeProvider()
-        let skew = abs(now - timestamp)
+        // Overflow-safe magnitude comparison across full signed 64-bit integer range (avoids SIGILL on Int64.min)
+        let skewMagnitude: UInt64 = now >= timestamp
+            ? UInt64(bitPattern: now) &- UInt64(bitPattern: timestamp)
+            : UInt64(bitPattern: timestamp) &- UInt64(bitPattern: now)
+        let maxSkewUInt = UInt64(maxClockSkewMs)
 
         // 1. Clock skew / freshness check
-        if skew > maxClockSkewMs {
+        if skewMagnitude > maxSkewUInt {
             totalExpired += 1
             return .rejected(
                 status: Self.statusMessageExpired,
-                message: "Message timestamp (\(timestamp)) exceeds max clock skew (\(skew)ms > \(maxClockSkewMs)ms)"
+                message: "Message timestamp (\(timestamp)) exceeds max clock skew (\(skewMagnitude)ms > \(maxClockSkewMs)ms)"
             )
         }
 
@@ -72,13 +78,19 @@ public final class ReplayProtectionFilter: @unchecked Sendable {
             )
         }
 
-        // Prune old entries if cache is growing
-        if seenMessageIds.count >= maxCacheSize {
-            let cutoff = now - (maxClockSkewMs * 2)
-            seenMessageIds = seenMessageIds.filter { $0.value >= cutoff }
+        // Prune expired / oldest FIFO entries in O(1) amortized to keep memory bounded
+        while seenMessageIds.count >= maxCacheSize && insertionHeadIndex < insertionOrder.count {
+            let oldestId = insertionOrder[insertionHeadIndex]
+            insertionHeadIndex += 1
+            seenMessageIds.removeValue(forKey: oldestId)
+        }
+        if insertionHeadIndex > 1024 && insertionHeadIndex * 2 >= insertionOrder.count {
+            insertionOrder.removeFirst(insertionHeadIndex)
+            insertionHeadIndex = 0
         }
 
         seenMessageIds[messageId] = timestamp
+        insertionOrder.append(messageId)
         totalValidated += 1
         return .valid
     }
@@ -87,6 +99,8 @@ public final class ReplayProtectionFilter: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         seenMessageIds.removeAll()
+        insertionOrder.removeAll()
+        insertionHeadIndex = 0
         totalValidated = 0
         totalReplayed = 0
         totalExpired = 0

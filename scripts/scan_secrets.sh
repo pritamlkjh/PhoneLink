@@ -14,7 +14,7 @@ check_pattern() {
     local pattern="$2"
     echo -n "Scanning for $desc... "
     local matches
-    matches=$(cd "$REPO_ROOT" && git grep -i -I -E -e "$pattern" -- ':(exclude)*.png' ':(exclude)*.svg' ':(exclude)*.desc' ':(exclude)*.bin' ':(exclude)scripts/scan_secrets.sh' || true)
+    matches=$(cd "$REPO_ROOT" && git grep -i -I -E --untracked -e "$pattern" -- ':(exclude)*.png' ':(exclude)*.svg' ':(exclude)*.desc' ':(exclude)*.bin' ':(exclude)scripts/scan_secrets.sh' || true)
 
     if [ -n "$matches" ]; then
         echo "FAILED!"
@@ -26,9 +26,9 @@ check_pattern() {
 }
 
 check_tracked_keyfiles() {
-    echo -n "Scanning for tracked keystores and private key files... "
+    echo -n "Scanning for tracked or untracked keystores and private key files... "
     local keyfiles
-    keyfiles=$(cd "$REPO_ROOT" && git ls-files '*.keystore' '*.jks' '*.p12' '*.pfx' '*.pem' '*.key' || true)
+    keyfiles=$(cd "$REPO_ROOT" && git ls-files --cached --others --exclude-standard '*.keystore' '*.jks' '*.p12' '*.pfx' '*.pem' '*.key' || true)
     if [ -n "$keyfiles" ]; then
         echo "FAILED!"
         echo "$keyfiles"

@@ -464,7 +464,7 @@ func TestTEST3_AbruptVPSRestartUnderTransitLoad(t *testing.T) {
 	andAuth := authenticateWithResumption(t, httpServer.URL, andDeviceID, andPriv)
 
 	pairingToken := createPairingToken(t, httpServer.URL, macDeviceID, macAuth.SessionToken)
-	claimPairing(t, httpServer.URL, pairingToken, andDeviceID)
+	claimPairing(t, httpServer.URL, pairingToken, andDeviceID, andAuth.SessionToken)
 
 	macWS, _, _ := websocket.DefaultDialer.Dial(fmt.Sprintf("%s/ws/v1/connect?token=%s", wsBaseURL, macAuth.SessionToken), nil)
 	defer macWS.Close()

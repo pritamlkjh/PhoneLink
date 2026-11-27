@@ -523,3 +523,64 @@ func TestSecurityMiddlewareCSPAndEndpointAuth(t *testing.T) {
 		t.Fatalf("expected 200 when paired peer revokes lost phone, got %d", rec.Code)
 	}
 }
+
+func TestPairingClaimRequiresCallerAuthAndInstallTrailingSlashWorks(t *testing.T) {
+	s := NewServer(DefaultConfig(), nil)
+
+	macPub, _, _ := ed25519.GenerateKey(rand.Reader)
+	macID := auth.DeriveDeviceID(macPub)
+	andPub, _, _ := ed25519.GenerateKey(rand.Reader)
+	andID := auth.DeriveDeviceID(andPub)
+	intPub, _, _ := ed25519.GenerateKey(rand.Reader)
+	intID := auth.DeriveDeviceID(intPub)
+
+	_ = s.Registry().RegisterDevice(auth.DeviceRecord{DeviceID: macID, DeviceType: auth.DeviceTypeMac, PublicKey: macPub, KeyAlgorithm: auth.AlgorithmEd25519})
+	_ = s.Registry().RegisterDevice(auth.DeviceRecord{DeviceID: andID, DeviceType: auth.DeviceTypeAndroid, PublicKey: andPub, KeyAlgorithm: auth.AlgorithmEd25519})
+	_ = s.Registry().RegisterDevice(auth.DeviceRecord{DeviceID: intID, DeviceType: auth.DeviceTypeAndroid, PublicKey: intPub, KeyAlgorithm: auth.AlgorithmEd25519})
+
+	pairToken, err := s.Registry().CreatePairingToken(macID, time.Minute)
+	if err != nil {
+		t.Fatalf("CreatePairingToken failed: %v", err)
+	}
+	andTok, _ := s.Registry().CreateSession(andID, time.Hour)
+	intTok, _ := s.Registry().CreateSession(intID, time.Hour)
+
+	claimBody, _ := json.Marshal(PairingClaimRequest{
+		PairingToken:     pairToken[:8],
+		ClaimantDeviceID: andID,
+	})
+
+	// 1. Unauthenticated claim must fail with 401
+	unauthReq := httptest.NewRequest(http.MethodPost, "/api/v1/pairing/claim", bytes.NewReader(claimBody))
+	unauthRec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(unauthRec, unauthReq)
+	if unauthRec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 on unauthenticated pairing claim, got %d", unauthRec.Code)
+	}
+
+	// 2. Spoofed claimant_device_id by another caller must fail with 403
+	spoofReq := httptest.NewRequest(http.MethodPost, "/api/v1/pairing/claim", bytes.NewReader(claimBody))
+	spoofReq.Header.Set("Authorization", "Bearer "+intTok)
+	spoofRec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(spoofRec, spoofReq)
+	if spoofRec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 on mismatched claimant_device_id, got %d", spoofRec.Code)
+	}
+
+	// 3. Authenticated claimant succeeds with 200
+	okReq := httptest.NewRequest(http.MethodPost, "/api/v1/pairing/claim", bytes.NewReader(claimBody))
+	okReq.Header.Set("Authorization", "Bearer "+andTok)
+	okRec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(okRec, okReq)
+	if okRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 on authenticated pairing claim, got %d: %s", okRec.Code, okRec.Body.String())
+	}
+
+	// 4. Trailing slash GET /install/ returns 200 HTML
+	slashReq := httptest.NewRequest(http.MethodGet, "/install/", nil)
+	slashRec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(slashRec, slashReq)
+	if slashRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 on GET /install/, got %d", slashRec.Code)
+	}
+}

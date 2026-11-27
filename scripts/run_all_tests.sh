@@ -42,12 +42,13 @@ run_step "Mac Client (Swift) Tests" \
     "cd $REPO_ROOT/mac && swift build && swift run PhoneLinkTests"
 
 # 3. VPS Relay Unit Tests
+GO_BIN="$(command -v go || echo /opt/homebrew/bin/go)"
 run_step "VPS Relay (Go) Tests" \
-    "cd $REPO_ROOT/vps && /opt/homebrew/bin/go test -v ./..."
+    "cd $REPO_ROOT/vps && $GO_BIN test -v ./..."
 
-# 4. Android Unit Tests
-run_step "Android Client (Gradle) Tests" \
-    "cd $REPO_ROOT/android && ./gradlew testDebugUnitTest"
+# 4. Android Unit Tests & Lint
+run_step "Android Client (Gradle) Tests & Lint" \
+    "cd $REPO_ROOT/android && ./gradlew testDebugUnitTest lintDebug"
 
 # 5. INT-1 End-to-End Relay Integration Tests
 run_step "INT-1 End-to-End Encrypted Relay Integration Test" \

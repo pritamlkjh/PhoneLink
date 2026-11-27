@@ -97,8 +97,12 @@ class AuthClient(
                 }
                 val respJson = JSONObject(resp.body?.string() ?: "{}")
                 val serverNonceB64 = respJson.getString("server_nonce")
+                val nonceBytes = Base64.getDecoder().decode(serverNonceB64)
+                if (nonceBytes.size != 32) {
+                    return Result.failure(AuthenticationException("Invalid server nonce length: ${nonceBytes.size}"))
+                }
                 val ts = respJson.getLong("timestamp")
-                Pair(Base64.getDecoder().decode(serverNonceB64), ts)
+                Pair(nonceBytes, ts)
             }
         } catch (e: Exception) {
             return Result.failure(e)
@@ -199,7 +203,8 @@ class AuthClient(
     fun claimPairing(
         vpsBaseUrl: String,
         pairingToken: String,
-        identityManager: DeviceIdentityManager
+        identityManager: DeviceIdentityManager,
+        sessionToken: String? = null
     ): Result<String> {
         val deviceId = identityManager.getDeviceId()
 
@@ -208,10 +213,13 @@ class AuthClient(
             put("claimant_device_id", deviceId)
         }
 
-        val request = Request.Builder()
+        val reqBuilder = Request.Builder()
             .url("$vpsBaseUrl/api/v1/pairing/claim")
             .post(json.toString().toRequestBody(JSON_MEDIA_TYPE))
-            .build()
+        if (!sessionToken.isNullOrBlank()) {
+            reqBuilder.header("Authorization", "Bearer $sessionToken")
+        }
+        val request = reqBuilder.build()
 
         return try {
             val response = okHttpClient.newCall(request).execute()
@@ -221,8 +229,8 @@ class AuthClient(
                     Result.failure(AuthenticationException("Pairing claim failed (HTTP ${resp.code}): $body"))
                 } else {
                     val respJson = JSONObject(resp.body?.string() ?: "{}")
-                    val pairedPeerId = respJson.optString("paired_peer_id", "")
-                    val pairedPubKey = respJson.optString("paired_public_key", "")
+                    val pairedPeerId = if (!respJson.isNull("paired_peer_id")) respJson.optString("paired_peer_id", "") else ""
+                    val pairedPubKey = if (!respJson.isNull("paired_public_key")) respJson.optString("paired_public_key", "") else ""
                     if (pairedPeerId.isNotEmpty()) {
                         secureStorage.savePairedDevice(pairedPeerId, pairedPubKey)
                     }
@@ -263,9 +271,9 @@ class AuthClient(
                     return Result.failure(AuthenticationException("Status query failed (HTTP ${resp.code}): $body"))
                 }
                 val json = JSONObject(resp.body?.string() ?: "{}")
-                val peerId = if (json.has("peer_device_id")) json.getString("peer_device_id") else null
-                val peerPub = if (json.has("peer_public_key")) json.optString("peer_public_key", "") else null
-                val peerAlg = if (json.has("peer_key_algorithm")) json.optString("peer_key_algorithm", "") else null
+                val peerId = if (json.has("peer_device_id") && !json.isNull("peer_device_id")) json.getString("peer_device_id") else null
+                val peerPub = if (json.has("peer_public_key") && !json.isNull("peer_public_key")) json.optString("peer_public_key", "") else null
+                val peerAlg = if (json.has("peer_key_algorithm") && !json.isNull("peer_key_algorithm")) json.optString("peer_key_algorithm", "") else null
                 if (!peerId.isNullOrEmpty() && !peerPub.isNullOrEmpty()) {
                     secureStorage.savePairedDevice(peerId, peerPub)
                 }

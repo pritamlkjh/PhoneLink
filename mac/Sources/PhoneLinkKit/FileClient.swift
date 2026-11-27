@@ -269,10 +269,20 @@ public final class FileClient: @unchecked Sendable {
         return try JSONSerialization.data(withJSONObject: dict)
     }
 
+    private static func extractRemoteError(from json: [String: Any]) -> Error? {
+        guard let errObj = json["error"] as? [String: Any] else { return nil }
+        let code = errObj["code"] as? String ?? "STATUS_ERROR_UNKNOWN"
+        let msg = errObj["message"] as? String ?? "Unknown remote error"
+        return AuthClientError.invalidResponse("\(code): \(msg)")
+    }
+
     /// Parses an ApplicationMessage containing FileListResponse.
     public static func parseFileListResponse(data: Data) throws -> FileListResponse {
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let fileListRespObj = json["file_list_resp"] as? [String: Any] else {
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw AuthClientError.invalidResponse("Malformed decrypted payload")
+        }
+        if let err = extractRemoteError(from: json) { throw err }
+        guard let fileListRespObj = json["file_list_resp"] as? [String: Any] else {
             throw AuthClientError.invalidResponse("Missing file_list_resp in decrypted payload")
         }
         let subData = try JSONSerialization.data(withJSONObject: fileListRespObj)
@@ -300,8 +310,11 @@ public final class FileClient: @unchecked Sendable {
 
     /// Parses an ApplicationMessage containing FileDownloadInitResponse.
     public static func parseFileDownloadInitResponse(data: Data) throws -> FileDownloadInitResponse {
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let subObj = json["file_download_init_resp"] as? [String: Any] else {
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw AuthClientError.invalidResponse("Malformed decrypted payload")
+        }
+        if let err = extractRemoteError(from: json) { throw err }
+        guard let subObj = json["file_download_init_resp"] as? [String: Any] else {
             throw AuthClientError.invalidResponse("Missing file_download_init_resp in decrypted payload")
         }
         let subData = try JSONSerialization.data(withJSONObject: subObj)
@@ -310,8 +323,11 @@ public final class FileClient: @unchecked Sendable {
 
     /// Parses an ApplicationMessage containing FileChunk.
     public static func parseFileChunk(data: Data) throws -> FileChunk {
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let subObj = json["file_chunk"] as? [String: Any] else {
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw AuthClientError.invalidResponse("Malformed decrypted payload")
+        }
+        if let err = extractRemoteError(from: json) { throw err }
+        guard let subObj = json["file_chunk"] as? [String: Any] else {
             throw AuthClientError.invalidResponse("Missing file_chunk in decrypted payload")
         }
         let subData = try JSONSerialization.data(withJSONObject: subObj)
@@ -362,8 +378,11 @@ public final class FileClient: @unchecked Sendable {
 
     /// Parses an ApplicationMessage containing FileUploadInitResponse.
     public static func parseFileUploadInitResponse(data: Data) throws -> FileUploadInitResponse {
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let subObj = json["file_upload_init_resp"] as? [String: Any] else {
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw AuthClientError.invalidResponse("Malformed decrypted payload")
+        }
+        if let err = extractRemoteError(from: json) { throw err }
+        guard let subObj = json["file_upload_init_resp"] as? [String: Any] else {
             throw AuthClientError.invalidResponse("Missing file_upload_init_resp in decrypted payload")
         }
         let subData = try JSONSerialization.data(withJSONObject: subObj)
@@ -397,8 +416,11 @@ public final class FileClient: @unchecked Sendable {
 
     /// Parses an ApplicationMessage containing FileChunkAck.
     public static func parseFileChunkAck(data: Data) throws -> FileChunkAck {
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let subObj = json["file_chunk_ack"] as? [String: Any] else {
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw AuthClientError.invalidResponse("Malformed decrypted payload")
+        }
+        if let err = extractRemoteError(from: json) { throw err }
+        guard let subObj = json["file_chunk_ack"] as? [String: Any] else {
             throw AuthClientError.invalidResponse("Missing file_chunk_ack in decrypted payload")
         }
         let subData = try JSONSerialization.data(withJSONObject: subObj)
@@ -444,14 +466,17 @@ public final class FileClient: @unchecked Sendable {
         bytesPerSecond: Double,
         barWidth: Int = 30
     ) -> String {
-        let pct = totalBytes > 0 ? (Double(bytesTransferred) / Double(totalBytes)) * 100.0 : 100.0
+        let rawPct = totalBytes > 0 ? (Double(bytesTransferred) / Double(totalBytes)) * 100.0 : 100.0
+        let pct = rawPct.isFinite ? min(100.0, max(0.0, rawPct)) : 0.0
+        let safeBps = bytesPerSecond.isFinite ? min(Double(UInt64.max - 1), max(0.0, bytesPerSecond)) : 0.0
+        let safeBarWidth = max(1, min(120, barWidth))
         let transferredStr = formatByteSize(bytesTransferred)
         let totalStr = formatByteSize(totalBytes)
-        let speedStr = formatByteSize(UInt64(max(0, bytesPerSecond))) + "/s"
-        let completedChars = Int((pct / 100.0) * Double(barWidth))
-        let fillCount = max(0, min(barWidth, completedChars))
-        let arrowCount = completedChars < barWidth ? 1 : 0
-        let spaceCount = max(0, barWidth - fillCount - arrowCount)
+        let speedStr = formatByteSize(UInt64(safeBps)) + "/s"
+        let completedChars = Int((pct / 100.0) * Double(safeBarWidth))
+        let fillCount = max(0, min(safeBarWidth, completedChars))
+        let arrowCount = completedChars < safeBarWidth ? 1 : 0
+        let spaceCount = max(0, safeBarWidth - fillCount - arrowCount)
         let bar = String(repeating: "=", count: fillCount)
             + (arrowCount > 0 ? ">" : "")
             + String(repeating: " ", count: spaceCount)
@@ -540,6 +565,12 @@ public final class FileClient: @unchecked Sendable {
         timeoutSeconds: Double = 60.0,
         progressHandler: (@Sendable (DownloadProgress) -> Void)? = nil
     ) async throws -> (bytesTransferred: UInt64, sha256: String) {
+        var destIsDir: ObjCBool = false
+        if FileManager.default.fileExists(atPath: localDestinationURL.path, isDirectory: &destIsDir), destIsDir.boolValue {
+            throw AuthClientError.invalidResponse("Destination path is an existing directory: \(localDestinationURL.path)")
+        }
+
+        let safeTimeout = (timeoutSeconds.isFinite && timeoutSeconds > 0) ? timeoutSeconds : 60.0
         let partURL = localDestinationURL.appendingPathExtension("part")
         var startOffset: UInt64 = 0
         var hasher = SHA256()
@@ -557,22 +588,17 @@ public final class FileClient: @unchecked Sendable {
                 }
                 try reader.close()
             }
-        } else {
-            let parentDir = localDestinationURL.deletingLastPathComponent()
-            try FileManager.default.createDirectory(at: parentDir, withIntermediateDirectories: true)
-            FileManager.default.createFile(atPath: partURL.path, contents: nil)
         }
 
-        let writer = try FileHandle(forWritingTo: partURL)
-        try writer.seekToEnd()
         let initialOffset = startOffset
+        let expectedTransferId = UUID().uuidString
 
         let state = DownloadSessionState(
             hasher: hasher,
             initialBytes: initialOffset,
-            fileHandle: writer,
             partURL: partURL,
-            destinationURL: localDestinationURL
+            destinationURL: localDestinationURL,
+            expectedTransferId: expectedTransferId
         )
 
         let session: E2ETransportSession
@@ -590,14 +616,23 @@ public final class FileClient: @unchecked Sendable {
 
         do {
             return try await session.runSession(
-                timeoutSeconds: timeoutSeconds,
+                timeoutSeconds: safeTimeout,
                 timeoutMessage: "Request timed out during file download",
                 onReady: { activeSession in
-                    let reqData = try buildFileDownloadRequest(filePath: remotePath, startOffset: initialOffset)
+                    let reqData = try buildFileDownloadRequest(
+                        filePath: remotePath,
+                        startOffset: initialOffset,
+                        transferId: expectedTransferId
+                    )
                     try await activeSession.sendEncrypted(plaintext: reqData)
                 },
-                onPayload: { decrypted, _, finish in
+                onPayload: { decrypted, activeSession, finish in
                     guard let subJson = try JSONSerialization.jsonObject(with: decrypted) as? [String: Any] else {
+                        return
+                    }
+                    if let err = extractRemoteError(from: subJson) {
+                        state.closeHandle()
+                        finish(.failure(err))
                         return
                     }
 
@@ -605,23 +640,29 @@ public final class FileClient: @unchecked Sendable {
                         let initResp = try parseFileDownloadInitResponse(data: decrypted)
                         if initResp.status != "STATUS_OK" {
                             state.closeHandle()
-                            if initResp.totalSizeBytes > 0 && initialOffset > initResp.totalSizeBytes {
+                            if initialOffset > initResp.totalSizeBytes {
                                 try? FileManager.default.removeItem(at: partURL)
                             }
                             let errMsg = initResp.errorMessage ?? initResp.status
                             finish(.failure(AuthClientError.invalidResponse(errMsg)))
                             return
                         }
-                        state.setInitResponse(initResp)
+                        if initialOffset > initResp.totalSizeBytes {
+                            state.closeHandle()
+                            try? FileManager.default.removeItem(at: partURL)
+                            finish(.failure(AuthClientError.invalidResponse("Local .part size (\(initialOffset)) exceeds remote size (\(initResp.totalSizeBytes)); removed stale .part file, please retry")))
+                            return
+                        }
+                        activeSession.refreshInactivityTimeout()
+                        try state.setInitResponseAndOpenFile(initResp)
 
                         if initResp.totalSizeBytes == 0 {
-                            state.closeHandle()
-                            try? FileManager.default.removeItem(at: localDestinationURL)
-                            try FileManager.default.moveItem(at: partURL, to: localDestinationURL)
+                            try state.finalizeEmptyFile()
                             finish(.success((bytesTransferred: 0, sha256: initResp.sha256Checksum)))
                         }
                     } else if subJson["file_chunk"] != nil {
                         let chunk = try parseFileChunk(data: decrypted)
+                        activeSession.refreshInactivityTimeout()
                         let (isFinal, progress, finalSha) = try state.processChunk(chunk: chunk)
                         progressHandler?(progress)
 
@@ -648,14 +689,17 @@ public final class FileClient: @unchecked Sendable {
         timeoutSeconds: Double = 60.0,
         progressHandler: (@Sendable (UploadProgress) -> Void)? = nil
     ) async throws -> (bytesTransferred: UInt64, sha256: String) {
-        guard FileManager.default.fileExists(atPath: localSourceURL.path) else {
-            throw AuthClientError.invalidResponse("Local file not found: \(localSourceURL.path)")
+        var srcIsDir: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: localSourceURL.path, isDirectory: &srcIsDir), !srcIsDir.boolValue else {
+            throw AuthClientError.invalidResponse("Local file not found or is a directory: \(localSourceURL.path)")
         }
 
+        let safeTimeout = (timeoutSeconds.isFinite && timeoutSeconds > 0) ? timeoutSeconds : 60.0
         let attrs = try FileManager.default.attributesOfItem(atPath: localSourceURL.path)
         let totalSizeBytes = (attrs[.size] as? NSNumber)?.uint64Value ?? 0
         let wholeFileSha256 = try computeFileSHA256Hex(at: localSourceURL)
         let fileName = remoteFileName ?? localSourceURL.lastPathComponent
+        let reqTransferId = UUID().uuidString
 
         let session = try await E2ETransportSession.connectAndAuthenticate(
             vpsBaseURL: vpsBaseURL,
@@ -669,71 +713,99 @@ public final class FileClient: @unchecked Sendable {
             wholeFileSha: wholeFileSha256,
             sourceURL: localSourceURL
         )
+        let flowWindow = UploadFlowController()
 
-        return try await session.runSession(
-            timeoutSeconds: timeoutSeconds,
-            timeoutMessage: "Request timed out during file upload",
-            onReady: { activeSession in
-                let reqData = try buildFileUploadRequest(
-                    destinationPath: remoteDestinationDirectory,
-                    fileName: fileName,
-                    totalSizeBytes: totalSizeBytes,
-                    sha256Checksum: wholeFileSha256
-                )
-                try await activeSession.sendEncrypted(plaintext: reqData)
-            },
-            onPayload: { decrypted, activeSession, finish in
-                guard let subJson = try JSONSerialization.jsonObject(with: decrypted) as? [String: Any] else {
-                    return
-                }
-
-                if subJson["file_upload_init_resp"] != nil {
-                    let initResp = try parseFileUploadInitResponse(data: decrypted)
-                    if initResp.status != "STATUS_OK" {
-                        let errMsg = initResp.errorMessage ?? initResp.status
-                        finish(.failure(AuthClientError.invalidResponse(errMsg)))
+        do {
+            return try await session.runSession(
+                timeoutSeconds: safeTimeout,
+                timeoutMessage: "Request timed out during file upload",
+                onReady: { activeSession in
+                    let reqData = try buildFileUploadRequest(
+                        destinationPath: remoteDestinationDirectory,
+                        fileName: fileName,
+                        totalSizeBytes: totalSizeBytes,
+                        sha256Checksum: wholeFileSha256,
+                        transferId: reqTransferId
+                    )
+                    try await activeSession.sendEncrypted(plaintext: reqData)
+                },
+                onPayload: { decrypted, activeSession, finish in
+                    guard let subJson = try JSONSerialization.jsonObject(with: decrypted) as? [String: Any] else {
+                        return
+                    }
+                    if let err = extractRemoteError(from: subJson) {
+                        Task { await flowWindow.finish() }
+                        finish(.failure(err))
                         return
                     }
 
-                    if totalSizeBytes == 0 {
-                        finish(.success((bytesTransferred: 0, sha256: wholeFileSha256)))
-                        return
-                    }
+                    if subJson["file_upload_init_resp"] != nil {
+                        let initResp = try parseFileUploadInitResponse(data: decrypted)
+                        if initResp.status != "STATUS_OK" {
+                            let errMsg = initResp.errorMessage ?? initResp.status
+                            Task { await flowWindow.finish() }
+                            finish(.failure(AuthClientError.invalidResponse(errMsg)))
+                            return
+                        }
+                        if initResp.resumeOffset > totalSizeBytes {
+                            Task { await flowWindow.finish() }
+                            finish(.failure(AuthClientError.invalidResponse("Invalid resume offset \(initResp.resumeOffset) > total \(totalSizeBytes)")))
+                            return
+                        }
 
-                    state.setTransferId(initResp.transferId)
-                    let chunkSize = max(UInt32(4096), initResp.expectedChunkSize)
-                    Task {
-                        do {
-                            try await streamUploadChunks(
-                                session: activeSession,
-                                state: state,
-                                resumeOffset: initResp.resumeOffset,
-                                chunkSize: chunkSize,
-                                progressHandler: progressHandler
-                            )
-                        } catch {
-                            finish(.failure(error))
+                        if totalSizeBytes == 0 || initResp.resumeOffset == totalSizeBytes {
+                            Task { await flowWindow.finish() }
+                            finish(.success((bytesTransferred: totalSizeBytes, sha256: wholeFileSha256)))
+                            return
+                        }
+
+                        activeSession.refreshInactivityTimeout()
+                        state.setTransferId(initResp.transferId)
+                        let chunkSize = max(UInt32(4096), initResp.expectedChunkSize)
+                        Task {
+                            do {
+                                try await streamUploadChunks(
+                                    session: activeSession,
+                                    state: state,
+                                    flowWindow: flowWindow,
+                                    resumeOffset: initResp.resumeOffset,
+                                    chunkSize: chunkSize,
+                                    progressHandler: progressHandler
+                                )
+                            } catch {
+                                await flowWindow.finish()
+                                finish(.failure(error))
+                            }
+                        }
+                    } else if subJson["file_chunk_ack"] != nil {
+                        let ack = try parseFileChunkAck(data: decrypted)
+                        if ack.status != "STATUS_OK" {
+                            let errMsg = ack.errorMessage ?? ack.status
+                            Task { await flowWindow.finish() }
+                            finish(.failure(AuthClientError.invalidResponse(errMsg)))
+                            return
+                        }
+                        guard ack.transferId == state.getTransferId() else { return }
+                        activeSession.refreshInactivityTimeout()
+                        Task { await flowWindow.recordAck() }
+
+                        if state.isExpectedFinalAck(transferId: ack.transferId, chunkIndex: ack.chunkIndex) {
+                            Task { await flowWindow.finish() }
+                            finish(.success((bytesTransferred: totalSizeBytes, sha256: wholeFileSha256)))
                         }
                     }
-                } else if subJson["file_chunk_ack"] != nil {
-                    let ack = try parseFileChunkAck(data: decrypted)
-                    if ack.status != "STATUS_OK" {
-                        let errMsg = ack.errorMessage ?? ack.status
-                        finish(.failure(AuthClientError.invalidResponse(errMsg)))
-                        return
-                    }
-
-                    if state.isExpectedFinalAck(transferId: ack.transferId, chunkIndex: ack.chunkIndex) {
-                        finish(.success((bytesTransferred: totalSizeBytes, sha256: wholeFileSha256)))
-                    }
                 }
-            }
-        )
+            )
+        } catch {
+            await flowWindow.finish()
+            throw error
+        }
     }
 
     private static func streamUploadChunks(
         session: E2ETransportSession,
         state: UploadSessionState,
+        flowWindow: UploadFlowController,
         resumeOffset: UInt64,
         chunkSize: UInt32,
         progressHandler: (@Sendable (UploadProgress) -> Void)?
@@ -747,11 +819,14 @@ public final class FileClient: @unchecked Sendable {
 
         var currentOffset = resumeOffset
         var chunkIndex = resumeOffset / UInt64(chunkSize)
+        var sentInSession: UInt64 = 0
         let total = state.totalBytes
         let startTime = Date()
 
         while currentOffset < total {
-            guard !session.isTerminated() else { return }
+            guard !session.isTerminated() && !Task.isCancelled else { return }
+            await flowWindow.waitForWindow(sentCount: sentInSession, maxInFlight: 16)
+            guard !session.isTerminated() && !Task.isCancelled else { return }
 
             let bytesToRead = min(Int(chunkSize), Int(total - currentOffset))
             guard let chunkData = try handle.read(upToCount: bytesToRead), !chunkData.isEmpty else {
@@ -771,9 +846,11 @@ public final class FileClient: @unchecked Sendable {
                 isFinalChunk: isFinal
             )
             try await session.sendEncrypted(plaintext: chunkPayload)
+            session.refreshInactivityTimeout()
 
             currentOffset += UInt64(chunkData.count)
             chunkIndex += 1
+            sentInSession += 1
 
             let elapsed = max(0.001, Date().timeIntervalSince(startTime))
             let speed = Double(currentOffset - resumeOffset) / elapsed
@@ -783,6 +860,43 @@ public final class FileClient: @unchecked Sendable {
                 chunkIndex: chunkIndex,
                 bytesPerSecond: speed
             ))
+        }
+    }
+}
+
+private actor UploadFlowController {
+    private var ackedChunks: UInt64 = 0
+    private var finished = false
+    private var waiters: [(threshold: UInt64, cont: CheckedContinuation<Void, Never>)] = []
+
+    func waitForWindow(sentCount: UInt64, maxInFlight: UInt64 = 16) async {
+        while !finished && sentCount >= ackedChunks + maxInFlight {
+            let targetAck = sentCount - maxInFlight + 1
+            await withCheckedContinuation { cont in
+                waiters.append((targetAck, cont))
+            }
+        }
+    }
+
+    func recordAck() {
+        ackedChunks += 1
+        var remaining: [(UInt64, CheckedContinuation<Void, Never>)] = []
+        for w in waiters {
+            if ackedChunks >= w.threshold || finished {
+                w.cont.resume()
+            } else {
+                remaining.append(w)
+            }
+        }
+        waiters = remaining
+    }
+
+    func finish() {
+        finished = true
+        let all = waiters
+        waiters.removeAll()
+        for w in all {
+            w.cont.resume()
         }
     }
 }
@@ -836,70 +950,114 @@ private final class DownloadSessionState: @unchecked Sendable {
     private var fileHandle: FileHandle?
     private let partURL: URL
     private let destinationURL: URL
+    private let expectedTransferId: String
 
-    init(hasher: SHA256, initialBytes: UInt64, fileHandle: FileHandle, partURL: URL, destinationURL: URL) {
+    init(hasher: SHA256, initialBytes: UInt64, partURL: URL, destinationURL: URL, expectedTransferId: String) {
         self.hasher = hasher
         self.bytesWritten = initialBytes
-        self.fileHandle = fileHandle
         self.partURL = partURL
         self.destinationURL = destinationURL
+        self.expectedTransferId = expectedTransferId
     }
 
-    func setInitResponse(_ resp: FileDownloadInitResponse) {
-        lock.lock(); defer { lock.unlock() }
-        self.initResp = resp
+    func setInitResponseAndOpenFile(_ resp: FileDownloadInitResponse) throws {
+        try lock.withLock {
+            self.initResp = resp
+            let parentDir = destinationURL.deletingLastPathComponent()
+            try FileManager.default.createDirectory(at: parentDir, withIntermediateDirectories: true)
+            if !FileManager.default.fileExists(atPath: partURL.path) {
+                guard FileManager.default.createFile(atPath: partURL.path, contents: nil) else {
+                    throw AuthClientError.invalidResponse("Failed to create partial file at \(partURL.path)")
+                }
+            }
+            let writer = try FileHandle(forWritingTo: partURL)
+            try writer.seekToEnd()
+            self.fileHandle = writer
+        }
+    }
+
+    func finalizeEmptyFile() throws {
+        try lock.withLock {
+            try? fileHandle?.close()
+            fileHandle = nil
+            try commitPartToDestinationLocked()
+        }
+    }
+
+    private func commitPartToDestinationLocked() throws {
+        var isDir: ObjCBool = false
+        if FileManager.default.fileExists(atPath: destinationURL.path, isDirectory: &isDir) {
+            if isDir.boolValue {
+                throw AuthClientError.invalidResponse("Destination path is an existing directory: \(destinationURL.path)")
+            }
+            _ = try FileManager.default.replaceItemAt(destinationURL, withItemAt: partURL)
+        } else {
+            try FileManager.default.moveItem(at: partURL, to: destinationURL)
+        }
     }
 
     func processChunk(chunk: FileChunk) throws -> (isFinal: Bool, progress: DownloadProgress, finalSha256: String?) {
-        lock.lock(); defer { lock.unlock() }
-
-        try FileClient.validateDownloadChunkOffset(chunkOffset: chunk.offset, bytesWritten: bytesWritten)
-
-        guard let chunkData = Data(base64Encoded: chunk.dataBase64) else {
-            throw AuthClientError.invalidResponse("Invalid base64 payload in chunk \(chunk.chunkIndex)")
-        }
-
-        // Verify chunk checksum
-        let computedSha = SHA256.hash(data: chunkData).map { String(format: "%02x", $0) }.joined()
-        guard computedSha.lowercased() == chunk.chunkSha256.lowercased() else {
-            throw AuthClientError.invalidResponse("STATUS_INTEGRITY_MISMATCH: Chunk \(chunk.chunkIndex) SHA-256 mismatch")
-        }
-
-        if !chunkData.isEmpty {
-            fileHandle?.write(chunkData)
-            hasher.update(data: chunkData)
-            bytesWritten += UInt64(chunkData.count)
-        }
-
-        let elapsed = max(0.001, Date().timeIntervalSince(startTime))
-        let speed = Double(bytesWritten) / elapsed
-        let total = initResp?.totalSizeBytes ?? bytesWritten
-        let progress = DownloadProgress(
-            bytesTransferred: bytesWritten,
-            totalBytes: total,
-            chunkIndex: chunk.chunkIndex,
-            bytesPerSecond: speed
-        )
-
-        var finalSha: String? = nil
-        if chunk.isFinalChunk {
-            try? fileHandle?.close()
-            fileHandle = nil
-            let digest = hasher.finalize()
-            finalSha = digest.map { String(format: "%02x", $0) }.joined()
-
-            if let expected = initResp?.sha256Checksum, !expected.isEmpty {
-                guard finalSha?.lowercased() == expected.lowercased() else {
-                    try? FileManager.default.removeItem(at: partURL)
-                    throw AuthClientError.invalidResponse("STATUS_INTEGRITY_MISMATCH: Whole-file SHA-256 mismatch (expected \(expected), got \(finalSha ?? ""))")
-                }
+        try lock.withLock {
+            guard let expectedInit = initResp else {
+                throw AuthClientError.invalidResponse("Received file_chunk before file_download_init_resp")
+            }
+            if !expectedInit.transferId.isEmpty && !chunk.transferId.isEmpty && chunk.transferId != expectedInit.transferId {
+                throw AuthClientError.invalidResponse("Unexpected transfer_id \(chunk.transferId) (expected \(expectedInit.transferId))")
             }
 
-            try? FileManager.default.removeItem(at: destinationURL)
-            try FileManager.default.moveItem(at: partURL, to: destinationURL)
-        }
+            try FileClient.validateDownloadChunkOffset(chunkOffset: chunk.offset, bytesWritten: bytesWritten)
 
-        return (chunk.isFinalChunk, progress, finalSha)
+            guard let chunkData = Data(base64Encoded: chunk.dataBase64) else {
+                throw AuthClientError.invalidResponse("Invalid base64 payload in chunk \(chunk.chunkIndex)")
+            }
+
+            // Verify chunk checksum
+            let computedSha = SHA256.hash(data: chunkData).map { String(format: "%02x", $0) }.joined()
+            guard computedSha.lowercased() == chunk.chunkSha256.lowercased() else {
+                throw AuthClientError.invalidResponse("STATUS_INTEGRITY_MISMATCH: Chunk \(chunk.chunkIndex) SHA-256 mismatch")
+            }
+
+            if !chunkData.isEmpty {
+                try fileHandle?.write(contentsOf: chunkData)
+                hasher.update(data: chunkData)
+                bytesWritten += UInt64(chunkData.count)
+            }
+
+            let elapsed = max(0.001, Date().timeIntervalSince(startTime))
+            let speed = Double(bytesWritten) / elapsed
+            let progress = DownloadProgress(
+                bytesTransferred: bytesWritten,
+                totalBytes: expectedInit.totalSizeBytes,
+                chunkIndex: chunk.chunkIndex,
+                bytesPerSecond: speed
+            )
+
+            var finalSha: String? = nil
+            if chunk.isFinalChunk {
+                try fileHandle?.synchronize()
+                try? fileHandle?.close()
+                fileHandle = nil
+
+                guard bytesWritten == expectedInit.totalSizeBytes else {
+                    try? FileManager.default.removeItem(at: partURL)
+                    throw AuthClientError.invalidResponse("Download size mismatch: received \(bytesWritten) bytes, expected \(expectedInit.totalSizeBytes)")
+                }
+
+                let digest = hasher.finalize()
+                finalSha = digest.map { String(format: "%02x", $0) }.joined()
+
+                if !expectedInit.sha256Checksum.isEmpty {
+                    guard finalSha?.lowercased() == expectedInit.sha256Checksum.lowercased() else {
+                        try? FileManager.default.removeItem(at: partURL)
+                        throw AuthClientError.invalidResponse("STATUS_INTEGRITY_MISMATCH: Whole-file SHA-256 mismatch (expected \(expectedInit.sha256Checksum), got \(finalSha ?? ""))")
+                    }
+                }
+
+                try commitPartToDestinationLocked()
+            }
+
+            return (chunk.isFinalChunk, progress, finalSha)
+        }
     }
 
     func closeHandle() {

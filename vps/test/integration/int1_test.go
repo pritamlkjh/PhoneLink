@@ -90,7 +90,7 @@ func TestINT1FirstEndToEndEncryptedConnection(t *testing.T) {
 	andSessionToken := authenticateECDSA(t, httpServer.URL, andDeviceID, andPriv, andPubDER)
 
 	pairingToken := createPairingToken(t, httpServer.URL, macDeviceID, macSessionToken)
-	claimPairing(t, httpServer.URL, pairingToken, andDeviceID)
+	claimPairing(t, httpServer.URL, pairingToken, andDeviceID, andSessionToken)
 
 	// Verify pairing is recognized symmetrically
 	peerOfMac, err := srv.Registry().GetPairedDevice(macDeviceID)
@@ -305,15 +305,23 @@ func createPairingToken(t *testing.T, baseURL, deviceID, sessionToken string) st
 	return res["pairing_token"]
 }
 
-func claimPairing(t *testing.T, baseURL, token, claimantID string) {
+func claimPairing(t *testing.T, baseURL, token, claimantID, sessionToken string) {
 	t.Helper()
 	body, _ := json.Marshal(map[string]string{
 		"pairing_token":      token,
 		"claimant_device_id": claimantID,
 	})
-	resp, err := http.Post(baseURL+"/api/v1/pairing/claim", "application/json", bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, baseURL+"/api/v1/pairing/claim", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("failed to build pairing claim request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if sessionToken != "" {
+		req.Header.Set("Authorization", "Bearer "+sessionToken)
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil || resp.StatusCode != 200 {
-		t.Fatalf("failed to claim pairing: %v", err)
+		t.Fatalf("failed to claim pairing: err=%v resp=%v", err, resp)
 	}
 	_ = resp.Body.Close()
 }

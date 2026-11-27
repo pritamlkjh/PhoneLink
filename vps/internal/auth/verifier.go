@@ -3,6 +3,7 @@ package auth
 import (
 	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/x509"
@@ -197,6 +198,9 @@ func VerifySignature(publicKey []byte, keyAlgorithm string, challengeData, signa
 		ecdsaPub, ok := parsedKey.(*ecdsa.PublicKey)
 		if !ok {
 			return fmt.Errorf("%w: key is not ECDSA public key", ErrInvalidPublicKey)
+		}
+		if ecdsaPub.Curve != elliptic.P256() {
+			return fmt.Errorf("%w: unsupported ECDSA curve (expected P-256)", ErrInvalidPublicKey)
 		}
 
 		hash := sha256.Sum256(challengeData)

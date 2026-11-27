@@ -8,8 +8,10 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import com.phonelink.files.FileOperationHandler
 import com.phonelink.files.StorageAccessLayer
@@ -32,10 +34,27 @@ class ConnectionForegroundService : Service() {
 
     companion object {
         const val CHANNEL_ID = "phonelink_connection_channel"
+        const val MEDIA_PROMPT_CHANNEL_ID = "phonelink_media_prompts"
         const val NOTIFICATION_ID = 1001
+        const val MEDIA_PROMPT_NOTIFICATION_ID = 1004
 
         const val ACTION_START = "com.phonelink.service.ACTION_START"
         const val ACTION_STOP = "com.phonelink.service.ACTION_STOP"
+        const val ACTION_STOP_CAMERA = "com.phonelink.service.ACTION_STOP_CAMERA"
+        const val ACTION_STOP_MIC = "com.phonelink.service.ACTION_STOP_MIC"
+        const val ACTION_RELOAD_CONFIG = "com.phonelink.service.ACTION_RELOAD_CONFIG"
+
+        @Volatile
+        var isServiceRunningGlobal: Boolean = false
+            internal set
+
+        @Volatile
+        var lastRelayStatusText: String? = null
+            internal set
+
+        @Volatile
+        var lastPeerOnline: Boolean? = null
+            internal set
 
         internal fun computeForegroundNotificationText(cameraActive: Boolean, micActive: Boolean): String {
             return when {
@@ -57,7 +76,11 @@ class ConnectionForegroundService : Service() {
             return flags
         }
 
+        @Volatile
         var peerStatusListener: ((peerId: String, isOnline: Boolean) -> Unit)? = null
+
+        @Volatile
+        var relayStatusListener: ((statusText: String, isConnected: Boolean) -> Unit)? = null
 
         fun start(context: Context) {
             val intent = Intent(context, ConnectionForegroundService::class.java).apply {
@@ -68,6 +91,45 @@ class ConnectionForegroundService : Service() {
             } else {
                 context.startService(intent)
             }
+        }
+
+        fun reloadConfig(context: Context) {
+            if (!isServiceRunningGlobal) {
+                start(context)
+                return
+            }
+            try {
+                context.startService(Intent(context, ConnectionForegroundService::class.java).apply {
+                    action = ACTION_RELOAD_CONFIG
+                })
+            } catch (_: Exception) {
+                try { start(context) } catch (_: Exception) {}
+            }
+        }
+
+        fun stopCamera(context: Context) {
+            if (!isServiceRunningGlobal) return
+            try {
+                context.startService(Intent(context, ConnectionForegroundService::class.java).apply {
+                    action = ACTION_STOP_CAMERA
+                })
+            } catch (_: Exception) {}
+        }
+
+        fun stopMic(context: Context) {
+            if (!isServiceRunningGlobal) return
+            try {
+                context.startService(Intent(context, ConnectionForegroundService::class.java).apply {
+                    action = ACTION_STOP_MIC
+                })
+            } catch (_: Exception) {}
+        }
+
+        fun clearMediaPromptNotification(context: Context) {
+            try {
+                val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+                nm?.cancel(MEDIA_PROMPT_NOTIFICATION_ID)
+            } catch (_: Exception) {}
         }
 
         fun stop(context: Context) {
@@ -89,11 +151,15 @@ class ConnectionForegroundService : Service() {
     private lateinit var micCaptureModule: com.phonelink.mic.MicCaptureModule
     private var replayFilter = com.phonelink.security.ReplayProtectionFilter()
     private var peerSession: com.phonelink.crypto.E2EPeerSession? = null
-    private var isRunning = false
+    @Volatile private var isRunning = false
     @Volatile private var cameraCaptureActive = false
     @Volatile private var micCaptureActive = false
     @Volatile private var cameraForegroundReady = true
     @Volatile private var micForegroundReady = true
+    @Volatile private var blockedMediaPrompt: String? = null
+    private val mediaLockSync = Any()
+    private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -109,16 +175,27 @@ class ConnectionForegroundService : Service() {
 
             override fun onCameraCaptureStarted() {
                 cameraCaptureActive = true
+                blockedMediaPrompt = null
                 cameraForegroundReady = applyActiveForegroundCapabilities(triggerType = "camera")
                 if (!cameraForegroundReady) {
                     cameraCaptureActive = false
+                    blockedMediaPrompt = "Camera blocked in background"
+                    postMediaPromptNotification(
+                        title = "PhoneLink: Camera Blocked",
+                        text = "Unlock your phone & open PhoneLink on screen before starting remote camera."
+                    )
                 }
+                updateMediaPowerLocks(cameraCaptureActive || micCaptureActive)
             }
 
             override fun onCameraCaptureStopped() {
+                val wasBlocked = !cameraForegroundReady
                 cameraCaptureActive = false
                 cameraForegroundReady = true
-                applyActiveForegroundCapabilities(triggerType = null)
+                updateMediaPowerLocks(cameraCaptureActive || micCaptureActive)
+                if (!wasBlocked) {
+                    applyActiveForegroundCapabilities(triggerType = null)
+                }
             }
         }
 
@@ -127,16 +204,27 @@ class ConnectionForegroundService : Service() {
 
             override fun onMicCaptureStarted() {
                 micCaptureActive = true
+                blockedMediaPrompt = null
                 micForegroundReady = applyActiveForegroundCapabilities(triggerType = "microphone")
                 if (!micForegroundReady) {
                     micCaptureActive = false
+                    blockedMediaPrompt = "Microphone blocked in background"
+                    postMediaPromptNotification(
+                        title = "PhoneLink: Microphone Blocked",
+                        text = "Unlock your phone & open PhoneLink on screen before starting remote microphone."
+                    )
                 }
+                updateMediaPowerLocks(cameraCaptureActive || micCaptureActive)
             }
 
             override fun onMicCaptureStopped() {
+                val wasBlocked = !micForegroundReady
                 micCaptureActive = false
                 micForegroundReady = true
-                applyActiveForegroundCapabilities(triggerType = null)
+                updateMediaPowerLocks(cameraCaptureActive || micCaptureActive)
+                if (!wasBlocked) {
+                    applyActiveForegroundCapabilities(triggerType = null)
+                }
             }
         }
 
@@ -194,14 +282,80 @@ class ConnectionForegroundService : Service() {
     private fun stopActiveMediaCapture(reason: String) {
         if (::cameraCaptureModule.isInitialized && cameraCaptureModule.isCapturing()) {
             try {
-                cameraCaptureModule.stopCapture("disconnect", reason)
+                cameraCaptureModule.stopCapture(cameraCaptureModule.getActiveSessionId() ?: "disconnect", reason)
             } catch (_: Exception) {}
         }
         if (::micCaptureModule.isInitialized && micCaptureModule.isCapturing()) {
             try {
-                micCaptureModule.stopCapture("disconnect", reason)
+                micCaptureModule.stopCapture(micCaptureModule.getActiveSessionId() ?: "disconnect", reason)
             } catch (_: Exception) {}
         }
+        updateMediaPowerLocks(false)
+    }
+
+    private fun updateMediaPowerLocks(needLocks: Boolean) = synchronized(mediaLockSync) {
+        if (needLocks) {
+            try {
+                if (wakeLock == null) {
+                    val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager
+                    wakeLock = pm?.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "PhoneLink::MediaWakeLock")?.apply {
+                        setReferenceCounted(false)
+                    }
+                }
+                if (wakeLock?.isHeld == false) {
+                    wakeLock?.acquire(10 * 60 * 1000L)
+                }
+            } catch (_: Exception) {}
+            try {
+                if (wifiLock == null) {
+                    val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+                    @Suppress("DEPRECATION")
+                    val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+                    } else {
+                        WifiManager.WIFI_MODE_FULL_HIGH_PERF
+                    }
+                    wifiLock = wm?.createWifiLock(mode, "PhoneLink::MediaWifiLock")?.apply {
+                        setReferenceCounted(false)
+                    }
+                }
+                if (wifiLock?.isHeld == false) {
+                    wifiLock?.acquire()
+                }
+            } catch (_: Exception) {}
+        } else {
+            try {
+                if (wakeLock?.isHeld == true) wakeLock?.release()
+            } catch (_: Exception) {}
+            try {
+                if (wifiLock?.isHeld == true) wifiLock?.release()
+            } catch (_: Exception) {}
+        }
+    }
+
+    private fun postMediaPromptNotification(title: String, text: String) {
+        try {
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
+            val launchIntent = Intent(this, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            }
+            val pendingIntent = PendingIntent.getActivity(
+                this,
+                1,
+                launchIntent,
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            )
+            val notification = NotificationCompat.Builder(this, MEDIA_PROMPT_CHANNEL_ID)
+                .setContentTitle(title)
+                .setContentText(text)
+                .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+                .setSmallIcon(android.R.drawable.ic_dialog_alert)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setContentIntent(pendingIntent)
+                .setAutoCancel(true)
+                .build()
+            nm.notify(MEDIA_PROMPT_NOTIFICATION_ID, notification)
+        } catch (_: Exception) {}
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -209,6 +363,26 @@ class ConnectionForegroundService : Service() {
             ACTION_STOP -> {
                 stopForegroundService(stopSelfAfter = true)
                 return START_NOT_STICKY
+            }
+            ACTION_STOP_CAMERA -> {
+                blockedMediaPrompt = null
+                if (::cameraCaptureModule.isInitialized && cameraCaptureModule.isCapturing()) {
+                    val sid = cameraCaptureModule.getActiveSessionId() ?: "owner_disabled"
+                    val stopResp = cameraCaptureModule.stopCapture(sid, "owner_disabled")
+                    peerSession?.sendApplicationMessage(cameraCaptureModule.serializeCameraStopResponse(stopResp))
+                }
+            }
+            ACTION_STOP_MIC -> {
+                blockedMediaPrompt = null
+                if (::micCaptureModule.isInitialized && micCaptureModule.isCapturing()) {
+                    val sid = micCaptureModule.getActiveSessionId() ?: "owner_disabled"
+                    val stopResp = micCaptureModule.stopCapture(sid, "owner_disabled")
+                    peerSession?.sendApplicationMessage(micCaptureModule.serializeMicStopResponse(stopResp))
+                }
+            }
+            ACTION_RELOAD_CONFIG -> {
+                stopForegroundService(stopSelfAfter = false)
+                startForegroundService()
             }
             ACTION_START, null -> {
                 startForegroundService()
@@ -218,24 +392,33 @@ class ConnectionForegroundService : Service() {
     }
 
     private fun startForegroundService() {
-        if (isRunning) return
-        val relayUrl = secureStorage.getRelayUrl()
-        val vpsBaseHttpUrl = RelayUrlHelper.normalizeHttpBaseUrl(relayUrl)
-        if (vpsBaseHttpUrl.isEmpty()) {
-            stopForeground(STOP_FOREGROUND_REMOVE)
+        val initialNotification = buildNotification("Starting PhoneLink service...")
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(NOTIFICATION_ID, initialNotification, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
+            } else {
+                startForeground(NOTIFICATION_ID, initialNotification)
+            }
+        } catch (_: Throwable) {
             stopSelf()
             return
         }
 
-        isRunning = true
+        if (isRunning) return
 
-        val initialNotification = buildNotification("Starting PhoneLink service...")
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, initialNotification, ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE)
-        } else {
-            startForeground(NOTIFICATION_ID, initialNotification)
+        val relayUrl = secureStorage.getRelayUrl()
+        val vpsBaseHttpUrl = RelayUrlHelper.normalizeHttpBaseUrl(relayUrl)
+        if (vpsBaseHttpUrl.isEmpty()) {
+            try {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+            } catch (_: Exception) {}
+            stopSelf()
+            return
         }
+
+        blockedMediaPrompt = null
+        isRunning = true
+        isServiceRunningGlobal = true
 
         val currentTransport = NetworkTransport().also { transport = it }
         val keyMgr = com.phonelink.crypto.KeyManager.fromContext(this, secureStorage)
@@ -249,22 +432,29 @@ class ConnectionForegroundService : Service() {
                 if (validation is com.phonelink.security.ReplayProtectionFilter.ValidationResult.Rejected) {
                     replayFilter.buildErrorResponse(validation.status, validation.message)
                 } else {
+                    val backpressuredSend: (ByteArray) -> Boolean = { payload ->
+                        if (Thread.currentThread().name.startsWith("PhoneLink-FileTransfer")) {
+                            var waited = 0
+                            while (currentTransport.isQueueBackpressured() && isRunning && waited < 100) {
+                                try {
+                                    Thread.sleep(20)
+                                } catch (_: InterruptedException) {
+                                    break
+                                }
+                                waited++
+                            }
+                        }
+                        sendAppMsg(payload)
+                    }
                     cameraCaptureModule.processApplicationMessage(plaintext, sendAppMsg)
                         ?: micCaptureModule.processApplicationMessage(plaintext, sendAppMsg)
-                        ?: fileOperationHandler.processApplicationMessage(plaintext, sendAppMsg)
+                        ?: fileOperationHandler.processApplicationMessage(plaintext, backpressuredSend)
                         ?: remoteActionRegistry.processApplicationMessage(plaintext)
                 }
             },
             signer = keyMgr.signer,
             peerPublicKeyProvider = {
-                var pubB64 = secureStorage.getPairedPublicKey()
-                if (pubB64.isNullOrEmpty()) {
-                    val tok = secureStorage.getSessionToken()
-                    if (!tok.isNullOrEmpty()) {
-                        serviceAuthClient.getDeviceStatus(vpsBaseHttpUrl, tok)
-                        pubB64 = secureStorage.getPairedPublicKey()
-                    }
-                }
+                val pubB64 = secureStorage.getPairedPublicKey()
                 if (!pubB64.isNullOrEmpty()) {
                     try {
                         java.util.Base64.getDecoder().decode(pubB64)
@@ -297,10 +487,18 @@ class ConnectionForegroundService : Service() {
                     is com.phonelink.transport.ReconnectionManager.State.Failed -> "Connection failed: ${newState.cause.message}"
                     is com.phonelink.transport.ReconnectionManager.State.Idle -> "Disconnected"
                 }
+                lastRelayStatusText = statusText
+                relayStatusListener?.invoke(statusText, newState is com.phonelink.transport.ReconnectionManager.State.Connected)
                 updateNotification(statusText)
             }
 
             override fun onReconnectionSucceeded(sessionToken: String, wasResumed: Boolean) {
+                // Pre-fetch paired peer public key on this background thread before opening WebSocket
+                if (secureStorage.getPairedPublicKey().isNullOrEmpty()) {
+                    try {
+                        serviceAuthClient.getDeviceStatus(vpsBaseHttpUrl, sessionToken)
+                    } catch (_: Exception) {}
+                }
                 val wsUrl = RelayUrlHelper.toWebSocketUrl(relayUrl, sessionToken)
                 currentTransport.connect(wsUrl)
             }
@@ -310,13 +508,18 @@ class ConnectionForegroundService : Service() {
             override fun onStateChanged(newState: NetworkTransport.ConnectionState) {
                 when (newState) {
                     is NetworkTransport.ConnectionState.Connected -> {
+                        lastRelayStatusText = "Connected to VPS relay"
+                        relayStatusListener?.invoke("Connected to VPS relay", true)
                         updateNotification("Connected to VPS relay")
                     }
                     is NetworkTransport.ConnectionState.Disconnected -> {
                         stopActiveMediaCapture("transport_disconnected")
                         replayFilter.reset()
                         peerSession?.reset()
+                        lastPeerOnline = false
                         if (isRunning) {
+                            lastRelayStatusText = "Disconnected. Reconnecting..."
+                            relayStatusListener?.invoke("Disconnected. Reconnecting...", false)
                             updateNotification("Disconnected. Reconnecting...")
                             reconnectionManager?.onConnectionLost()
                         }
@@ -325,8 +528,12 @@ class ConnectionForegroundService : Service() {
                         stopActiveMediaCapture("transport_error")
                         replayFilter.reset()
                         peerSession?.reset()
+                        lastPeerOnline = false
                         if (isRunning) {
-                            updateNotification("Connection error: ${newState.cause.message}")
+                            val msg = "Connection error: ${newState.cause.message}"
+                            lastRelayStatusText = msg
+                            relayStatusListener?.invoke(msg, false)
+                            updateNotification(msg)
                             reconnectionManager?.onConnectionLost(newState.cause)
                         }
                     }
@@ -364,13 +571,16 @@ class ConnectionForegroundService : Service() {
             if (json.optString("type") == "PEER_STATUS") {
                 val isOnline = json.optBoolean("is_online", false)
                 val peerId = json.optString("peer_device_id", "")
+                lastPeerOnline = isOnline
                 val statusText = if (isOnline) {
                     "Connected to VPS • Mac is ONLINE"
                 } else {
                     stopActiveMediaCapture("peer_offline")
                     "Connected to VPS • Paired Mac is OFFLINE"
                 }
+                lastRelayStatusText = statusText
                 peerStatusListener?.invoke(peerId, isOnline)
+                relayStatusListener?.invoke(statusText, true)
                 try {
                     updateNotification(statusText)
                 } catch (_: Exception) {}
@@ -391,10 +601,16 @@ class ConnectionForegroundService : Service() {
 
     private fun stopForegroundService(stopSelfAfter: Boolean) {
         if (!isRunning && reconnectionManager == null && transport == null) {
+            isServiceRunningGlobal = false
+            updateMediaPowerLocks(false)
             if (stopSelfAfter) stopSelf()
             return
         }
         isRunning = false
+        isServiceRunningGlobal = false
+        lastPeerOnline = null
+        lastRelayStatusText = "Disconnected"
+        blockedMediaPrompt = null
         try {
             if (::cameraCaptureModule.isInitialized) {
                 cameraCaptureModule.shutdown()
@@ -402,7 +618,14 @@ class ConnectionForegroundService : Service() {
             if (::micCaptureModule.isInitialized) {
                 micCaptureModule.shutdown()
             }
+            if (::fileOperationHandler.isInitialized) {
+                fileOperationHandler.shutdown()
+            }
+            if (::remoteActionRegistry.isInitialized) {
+                remoteActionRegistry.shutdown()
+            }
         } catch (_: Exception) {}
+        updateMediaPowerLocks(false)
         reconnectionManager?.stop()
         reconnectionManager = null
         transport?.disconnect()
@@ -410,6 +633,7 @@ class ConnectionForegroundService : Service() {
         replayFilter.reset()
         peerSession?.reset()
         peerSession = null
+        relayStatusListener?.invoke("Disconnected", false)
         try {
             stopForeground(STOP_FOREGROUND_REMOVE)
         } catch (_: Exception) {}
@@ -435,8 +659,16 @@ class ConnectionForegroundService : Service() {
                 description = "Shows real-time connection status to the PhoneLink relay"
                 setShowBadge(false)
             }
+            val mediaChannel = NotificationChannel(
+                MEDIA_PROMPT_CHANNEL_ID,
+                "PhoneLink Hardware Prompts",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Alerts when Android requires unlocking or opening PhoneLink for camera/mic access"
+            }
             val manager = getSystemService(NotificationManager::class.java)
             manager?.createNotificationChannel(channel)
+            manager?.createNotificationChannel(mediaChannel)
         }
     }
 

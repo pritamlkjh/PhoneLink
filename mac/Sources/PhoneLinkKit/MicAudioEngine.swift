@@ -14,6 +14,7 @@ public final class MicWavWriter: @unchecked Sendable {
     private var fileHandle: FileHandle?
     private var dataBytesWritten: UInt64 = 0
     private var isFinalized = false
+    public private(set) var lastFinalizeError: String? = nil
 
     public static func buildWavHeader(
         sampleRateHz: UInt32,
@@ -31,8 +32,10 @@ public final class MicWavWriter: @unchecked Sendable {
             header.append(Data(bytes: &le, count: 2))
         }
 
-        let blockAlign = channels * (bitsPerSample / 8)
-        let byteRate = sampleRateHz * UInt32(blockAlign)
+        let safeChannels = max(1, min(8, channels))
+        let safeBits: UInt16 = bitsPerSample == 8 ? 8 : 16
+        let blockAlign = safeChannels &* (safeBits / 8)
+        let byteRate = sampleRateHz &* UInt32(blockAlign)
         let riffChunkSize = UInt32(36) &+ dataSizeBytes
 
         header.append(contentsOf: "RIFF".utf8)
@@ -41,11 +44,11 @@ public final class MicWavWriter: @unchecked Sendable {
         header.append(contentsOf: "fmt ".utf8)
         appendLE32(16) // PCM subchunk size
         appendLE16(1)  // Linear PCM format
-        appendLE16(channels)
+        appendLE16(safeChannels)
         appendLE32(sampleRateHz)
         appendLE32(byteRate)
         appendLE16(blockAlign)
-        appendLE16(bitsPerSample)
+        appendLE16(safeBits)
         header.append(contentsOf: "data".utf8)
         appendLE32(dataSizeBytes)
         return header
@@ -53,27 +56,38 @@ public final class MicWavWriter: @unchecked Sendable {
 
     public init(url: URL, sampleRateHz: UInt32, channels: UInt16 = 1, bitsPerSample: UInt16 = 16) throws {
         self.fileURL = url
-        self.sampleRateHz = sampleRateHz
-        self.channels = channels
-        self.bitsPerSample = bitsPerSample
+        self.sampleRateHz = max(1, sampleRateHz)
+        self.channels = max(1, min(8, channels))
+        self.bitsPerSample = bitsPerSample == 8 ? 8 : 16
 
         let parent = url.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: parent, withIntermediateDirectories: true)
-        FileManager.default.createFile(atPath: url.path, contents: nil)
+        guard FileManager.default.createFile(atPath: url.path, contents: nil) else {
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(EIO), userInfo: [NSLocalizedDescriptionKey: "Failed to create WAV file at \(url.path)"])
+        }
         let handle = try FileHandle(forUpdating: url)
-        let initialHeader = Self.buildWavHeader(
-            sampleRateHz: sampleRateHz,
-            channels: channels,
-            bitsPerSample: bitsPerSample,
-            dataSizeBytes: 0
-        )
-        try handle.write(contentsOf: initialHeader)
+        do {
+            let initialHeader = Self.buildWavHeader(
+                sampleRateHz: self.sampleRateHz,
+                channels: self.channels,
+                bitsPerSample: self.bitsPerSample,
+                dataSizeBytes: 0
+            )
+            try handle.write(contentsOf: initialHeader)
+        } catch {
+            try? handle.close()
+            throw error
+        }
         self.fileHandle = handle
     }
 
     public func append(pcmData: Data) throws {
         try lock.withLock {
             guard !isFinalized, let handle = fileHandle else { return }
+            let maxWavPayloadBytes = UInt64(UInt32.max - 36)
+            guard UInt64(pcmData.count) <= maxWavPayloadBytes - dataBytesWritten else {
+                throw NSError(domain: NSPOSIXErrorDomain, code: Int(EFBIG), userInfo: [NSLocalizedDescriptionKey: "WAV 4 GiB RIFF limit exceeded"])
+            }
             if !pcmData.isEmpty {
                 try handle.write(contentsOf: pcmData)
                 dataBytesWritten += UInt64(pcmData.count)
@@ -102,7 +116,9 @@ public final class MicWavWriter: @unchecked Sendable {
                     try handle.seek(toOffset: 0)
                     try handle.write(contentsOf: patched)
                     try handle.synchronize()
-                } catch {}
+                } catch {
+                    lastFinalizeError = error.localizedDescription
+                }
             }
             return dataBytesWritten
         }
@@ -121,6 +137,8 @@ public final class MicLivePlayer: @unchecked Sendable {
     private let channels: UInt32
     private let prebufferTarget: Int
     private var bufferedCount = 0
+    private var inFlightBuffers = 0
+    private let maxQueuedBuffers = 25
     private var started = false
     private var stopped = false
     public private(set) var startupErrorMessage: String? = nil
@@ -129,17 +147,18 @@ public final class MicLivePlayer: @unchecked Sendable {
     private var engine: AVAudioEngine?
     private var playerNode: AVAudioPlayerNode?
     private var renderFormat: AVAudioFormat?
+    private var configObserver: NSObjectProtocol?
     #endif
 
     public init(sampleRateHz: UInt32, channels: UInt32 = 1, prebufferChunks: Int = 2) {
-        self.sampleRateHz = sampleRateHz
-        self.channels = max(1, channels)
+        self.sampleRateHz = max(8000, min(96000, sampleRateHz))
+        self.channels = max(1, min(2, channels))
         self.prebufferTarget = max(1, prebufferChunks)
 
         #if canImport(AVFoundation)
         let format = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
-            sampleRate: Double(sampleRateHz),
+            sampleRate: Double(self.sampleRateHz),
             channels: AVAudioChannelCount(self.channels),
             interleaved: false
         )
@@ -153,6 +172,13 @@ public final class MicLivePlayer: @unchecked Sendable {
                 self.engine = avEngine
                 self.playerNode = node
                 self.renderFormat = fmt
+                self.configObserver = NotificationCenter.default.addObserver(
+                    forName: .AVAudioEngineConfigurationChange,
+                    object: avEngine,
+                    queue: nil
+                ) { [weak self] _ in
+                    self?.handleAudioConfigChange()
+                }
             } catch {
                 // Graceful headless fallback (e.g. CI or no speaker attached)
                 self.startupErrorMessage = error.localizedDescription
@@ -160,6 +186,17 @@ public final class MicLivePlayer: @unchecked Sendable {
         }
         #endif
     }
+
+    #if canImport(AVFoundation)
+    private func handleAudioConfigChange() {
+        lock.withLock {
+            guard !stopped, let avEngine = engine else { return }
+            if !avEngine.isRunning {
+                try? avEngine.start()
+            }
+        }
+    }
+    #endif
 
     public var isAvailable: Bool {
         #if canImport(AVFoundation)
@@ -189,7 +226,8 @@ public final class MicLivePlayer: @unchecked Sendable {
     public func enqueue(pcmData: Data) {
         #if canImport(AVFoundation)
         lock.withLock {
-            guard !stopped, let node = playerNode, let fmt = renderFormat else { return }
+            guard !stopped, let avEngine = engine, let node = playerNode, let fmt = renderFormat else { return }
+            guard inFlightBuffers < maxQueuedBuffers else { return }
             let floats = Self.convertInt16PcmToFloat32(pcmData)
             let frameCount = AVAudioFrameCount(floats.count / Int(channels))
             guard frameCount > 0,
@@ -204,9 +242,19 @@ public final class MicLivePlayer: @unchecked Sendable {
                     }
                 }
             }
-            node.scheduleBuffer(buffer)
+            inFlightBuffers += 1
+            node.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+                self?.lock.withLock {
+                    if let s = self, s.inFlightBuffers > 0 {
+                        s.inFlightBuffers -= 1
+                    }
+                }
+            }
             bufferedCount += 1
-            if !started && bufferedCount >= prebufferTarget {
+            if !avEngine.isRunning {
+                try? avEngine.start()
+            }
+            if avEngine.isRunning && (!started && bufferedCount >= prebufferTarget || (started && !node.isPlaying)) {
                 node.play()
                 started = true
             }
@@ -214,15 +262,33 @@ public final class MicLivePlayer: @unchecked Sendable {
         #endif
     }
 
+    public func drainAndStop(maxWaitMs: Int = 500) {
+        #if canImport(AVFoundation)
+        let deadline = Date().addingTimeInterval(Double(max(0, maxWaitMs)) / 1000.0)
+        while Date() < deadline {
+            let remaining = lock.withLock { inFlightBuffers }
+            if remaining == 0 { break }
+            Thread.sleep(forTimeInterval: 0.02)
+        }
+        #endif
+        stop()
+    }
+
     public func stop() {
         #if canImport(AVFoundation)
-        lock.withLock {
-            guard !stopped else { return }
+        let observer: NSObjectProtocol? = lock.withLock {
+            guard !stopped else { return nil }
             stopped = true
             playerNode?.stop()
             engine?.stop()
             playerNode = nil
             engine = nil
+            let obs = configObserver
+            configObserver = nil
+            return obs
+        }
+        if let observer {
+            NotificationCenter.default.removeObserver(observer)
         }
         #endif
     }

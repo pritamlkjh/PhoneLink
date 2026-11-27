@@ -18,7 +18,10 @@ public final class DeviceIdentityManager: @unchecked Sendable {
 
     public init(storageDirectory: URL? = nil) {
         self.customStorageDirectoryProvided = (storageDirectory != nil)
-        let baseDir = storageDirectory ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?.appendingPathComponent("com.phonelink", isDirectory: true) ?? URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("com.phonelink", isDirectory: true)
+        let defaultDir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("com.phonelink", isDirectory: true)
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config/phonelink", isDirectory: true)
+        let baseDir = storageDirectory ?? defaultDir
         self.baseDirectory = baseDir
         self.fallbackFilePath = baseDir.appendingPathComponent("phonelink_identity.key")
     }
@@ -33,9 +36,12 @@ public final class DeviceIdentityManager: @unchecked Sendable {
         }
 
         // 1. Try macOS Keychain first for standard host installs
-        if !customStorageDirectoryProvided, let keyData = readFromKeychain() {
-            if let key = try? Curve25519.Signing.PrivateKey(rawRepresentation: keyData) {
-                // Remove any stale unencrypted legacy file on disk now that Keychain holds it
+        var keychainReadStatus: OSStatus = errSecItemNotFound
+        if !customStorageDirectoryProvided {
+            let result = readFromKeychain()
+            keychainReadStatus = result.status
+            if let keyData = result.data,
+               let key = try? Curve25519.Signing.PrivateKey(rawRepresentation: keyData) {
                 if FileManager.default.fileExists(atPath: fallbackFilePath.path) {
                     try? FileManager.default.removeItem(at: fallbackFilePath)
                 }
@@ -44,15 +50,23 @@ public final class DeviceIdentityManager: @unchecked Sendable {
             }
         }
 
-        // 2. Try isolated test / headless fallback file
+        // 2. Try isolated test / headless / Keychain-locked fallback file
         if let keyData = try? Data(contentsOf: fallbackFilePath) {
             if let key = try? Curve25519.Signing.PrivateKey(rawRepresentation: keyData) {
-                if !customStorageDirectoryProvided, saveToKeychain(data: keyData) {
+                if !customStorageDirectoryProvided, keychainReadStatus == errSecItemNotFound, saveToKeychain(data: keyData) {
                     try? FileManager.default.removeItem(at: fallbackFilePath)
                 }
                 cachedPrivateKey = key
                 return key
             }
+        }
+
+        // If Keychain access was temporarily denied (e.g. headless/SSH locked Keychain) and no fallback file
+        // exists, do not mint a conflicting identity silently unless no Keychain entry exists.
+        if !customStorageDirectoryProvided &&
+           keychainReadStatus != errSecItemNotFound &&
+           keychainReadStatus != errSecSuccess {
+            fputs("WARN: macOS Keychain unavailable (OSStatus \(keychainReadStatus)) and no fallback key at \(fallbackFilePath.path).\n", stderr)
         }
 
         // 3. Generate fresh keypair; store primarily in Keychain when not isolated to a test directory
@@ -64,9 +78,14 @@ public final class DeviceIdentityManager: @unchecked Sendable {
                 withIntermediateDirectories: true,
                 attributes: [.posixPermissions: 0o700]
             )
-            if (try? newKey.rawRepresentation.write(to: fallbackFilePath, options: .atomic)) != nil {
-                try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fallbackFilePath.path)
-            }
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: baseDirectory.path)
+            // Create with 0600 permissions upfront so private key bytes are never world-readable (TOCTOU fix)
+            _ = FileManager.default.createFile(
+                atPath: fallbackFilePath.path,
+                contents: newKey.rawRepresentation,
+                attributes: [.posixPermissions: 0o600]
+            )
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fallbackFilePath.path)
         }
 
         cachedPrivateKey = newKey
@@ -124,18 +143,24 @@ public final class DeviceIdentityManager: @unchecked Sendable {
 
     @discardableResult
     private func saveToKeychain(data: Data) -> Bool {
-        let query: [String: Any] = [
+        let deleteQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
+            kSecAttrAccount as String: keychainAccount
+        ]
+        SecItemDelete(deleteQuery as CFDictionary)
+
+        let addQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
             kSecAttrAccount as String: keychainAccount,
             kSecValueData as String: data,
             kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         ]
-        SecItemDelete(query as CFDictionary)
-        return SecItemAdd(query as CFDictionary, nil) == errSecSuccess
+        return SecItemAdd(addQuery as CFDictionary, nil) == errSecSuccess
     }
 
-    private func readFromKeychain() -> Data? {
+    private func readFromKeychain() -> (data: Data?, status: OSStatus) {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
@@ -146,9 +171,9 @@ public final class DeviceIdentityManager: @unchecked Sendable {
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
         if status == errSecSuccess, let data = item as? Data {
-            return data
+            return (data, status)
         }
-        return nil
+        return (nil, status)
     }
 
     private func deleteFromKeychain() {

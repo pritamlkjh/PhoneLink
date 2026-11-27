@@ -31,7 +31,8 @@ class BootReceiver : BroadcastReceiver() {
 
         val SUPPORTED_BOOT_ACTIONS = setOf(
             Intent.ACTION_BOOT_COMPLETED,
-            "android.intent.action.QUICKBOOT_POWERON"
+            "android.intent.action.QUICKBOOT_POWERON",
+            Intent.ACTION_MY_PACKAGE_REPLACED
         )
     }
 
@@ -85,7 +86,11 @@ class BootReceiver : BroadcastReceiver() {
             context,
             0,
             openIntent,
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            } else {
+                PendingIntent.FLAG_UPDATE_CURRENT
+            }
         )
 
         val notification = NotificationCompat.Builder(context, BOOT_RECOVERY_CHANNEL_ID)

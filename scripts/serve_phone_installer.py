@@ -276,17 +276,49 @@ class PhoneInstallerHandler(http.server.BaseHTTPRequestHandler):
     apk_path = None
     apk_size_str = "2.1 MB"
 
-    def do_GET(self):
-        if self.path in ("/", "/install", "/install/"):
+    def _send_security_headers(self):
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Content-Security-Policy", "default-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'none'")
+
+    def do_HEAD(self):
+        route = self.path.split("?", 1)[0]
+        if route in ("/", "/install", "/install/"):
             content = HTML_TEMPLATE.replace("__APK_SIZE__", self.apk_size_str).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(content)))
+            self._send_security_headers()
+            self.end_headers()
+            return
+        if route.startswith("/download/") or route.endswith(".apk"):
+            if not self.apk_path or not self.apk_path.exists():
+                self.send_error(404, "APK file not found.")
+                return
+            file_size = self.apk_path.stat().st_size
+            self.send_response(200)
+            self.send_header("Content-Type", "application/vnd.android.package-archive")
+            self.send_header("Content-Disposition", 'attachment; filename="PhoneLink.apk"')
+            self.send_header("Content-Length", str(file_size))
+            self.send_header("Cache-Control", "no-cache")
+            self._send_security_headers()
+            self.end_headers()
+            return
+        self.send_error(404, "Not Found")
+
+    def do_GET(self):
+        route = self.path.split("?", 1)[0]
+        if route in ("/", "/install", "/install/"):
+            content = HTML_TEMPLATE.replace("__APK_SIZE__", self.apk_size_str).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(content)))
+            self._send_security_headers()
             self.end_headers()
             self.wfile.write(content)
             return
 
-        if self.path.startswith("/download/") or self.path.endswith(".apk"):
+        if route.startswith("/download/") or route.endswith(".apk"):
             if not self.apk_path or not self.apk_path.exists():
                 self.send_error(404, "APK file not found. Please build the APK first with ./android/scripts/build_release_apk.sh")
                 return
@@ -300,6 +332,7 @@ class PhoneInstallerHandler(http.server.BaseHTTPRequestHandler):
                 self.send_header("Content-Disposition", 'attachment; filename="PhoneLink.apk"')
                 self.send_header("Content-Length", str(file_size))
                 self.send_header("Cache-Control", "no-cache")
+                self._send_security_headers()
                 self.end_headers()
                 headers_sent = True
 
@@ -374,6 +407,8 @@ def main():
     parser.add_argument("--ip", type=str, default=None, help="LAN IP address override")
     parser.add_argument("--apk", type=Path, default=None, help="Path to PhoneLink release APK")
     args = parser.parse_args()
+    if args.port < 1 or args.port > 65535:
+        parser.error(f"invalid --port {args.port} (must be 1..65535)")
 
     host = args.ip or detect_lan_ip()
     run_installer_server(host, args.port, args.apk)

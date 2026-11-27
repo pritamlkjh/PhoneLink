@@ -51,8 +51,9 @@ class E2EPeerSession(
     }
 
     /**
-     * Encrypts and transmits an outgoing application payload to the paired peer.
+     * Encrypts and transmits an outgoing application payload to the paired peer in strict sequence order.
      */
+    @Synchronized
     fun sendApplicationMessage(payloadBytes: ByteArray): Boolean {
         val keys = sessionKeys ?: return false
         val seq = outgoingSeq.incrementAndGet()
@@ -123,7 +124,13 @@ class E2EPeerSession(
             if (peerIdentityKeyBytes == null || peerIdentityKeyBytes.isEmpty()) {
                 return false
             }
-            if (timestamp <= 0L || abs(System.currentTimeMillis() - timestamp) > MAX_HANDSHAKE_CLOCK_SKEW_MS) {
+            val nowMs = System.currentTimeMillis()
+            val skewMs = if (nowMs >= timestamp) {
+                nowMs.toULong() - timestamp.toULong()
+            } else {
+                timestamp.toULong() - nowMs.toULong()
+            }
+            if (timestamp <= 0L || skewMs > MAX_HANDSHAKE_CLOCK_SKEW_MS.toULong()) {
                 return false
             }
             val sigBytes = try {
@@ -149,23 +156,28 @@ class E2EPeerSession(
             return false
         }
 
+        val ackTimestamp = System.currentTimeMillis()
+        val ownRawEph = freshManager.getRawPublicKey()
+        val ackJson = try {
+            JSONObject().apply {
+                put("type", "E2E_ACK")
+                put("ephemeral_public_key", Base64.getEncoder().encodeToString(ownRawEph))
+                put("timestamp", ackTimestamp)
+                if (signer != null) {
+                    val transcript = E2EEncryptionManager.buildHandshakeTranscript(ownRawEph, ackTimestamp)
+                    val sig = signer.sign(transcript)
+                    put("signature", Base64.getEncoder().encodeToString(sig))
+                }
+            }
+        } catch (_: Exception) {
+            return false
+        }
+
         e2eManager = freshManager
         sessionKeys = keys
         outgoingSeq.set(0L)
         lastReceivedSeq = -1L
 
-        val ackTimestamp = System.currentTimeMillis()
-        val ownRawEph = freshManager.getRawPublicKey()
-        val ackJson = JSONObject().apply {
-            put("type", "E2E_ACK")
-            put("ephemeral_public_key", Base64.getEncoder().encodeToString(ownRawEph))
-            put("timestamp", ackTimestamp)
-            if (signer != null) {
-                val transcript = E2EEncryptionManager.buildHandshakeTranscript(ownRawEph, ackTimestamp)
-                val sig = signer.sign(transcript)
-                put("signature", Base64.getEncoder().encodeToString(sig))
-            }
-        }
         return sendFunction(ackJson.toString().toByteArray(Charsets.UTF_8))
     }
 
@@ -184,7 +196,7 @@ class E2EPeerSession(
     }
 
     private fun handleEncryptedBytes(ciphertext: ByteArray, seq: Long): Boolean {
-        val keys = sessionKeys ?: return false
+        val keys = synchronized(this) { sessionKeys } ?: return false
 
         val aad: ByteArray? = synchronized(this) {
             if (seq >= 0L) {

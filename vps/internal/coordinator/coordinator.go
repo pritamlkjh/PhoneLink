@@ -54,17 +54,19 @@ func NewCoordinator(registry *auth.Registry) *Coordinator {
 
 // ConnectSession registers an active connection for an authorized device.
 func (c *Coordinator) ConnectSession(deviceID string, sendChan chan []byte, closeFunc func()) (*Session, error) {
+	var priorClose func()
+	c.mu.Lock()
 	if !c.registry.IsAuthorized(deviceID) {
+		c.mu.Unlock()
 		return nil, ErrDeviceNotAuthorized
 	}
 
 	pairedDeviceID, err := c.registry.GetPairedDevice(deviceID)
 	if err != nil {
+		c.mu.Unlock()
 		return nil, fmt.Errorf("%w: %v", ErrDeviceNotPaired, err)
 	}
 
-	var priorClose func()
-	c.mu.Lock()
 	// Replace prior session if present; close outside mutex to avoid deadlock
 	if prior, exists := c.activeSessions[deviceID]; exists {
 		priorClose = prior.CloseFunc
@@ -80,38 +82,38 @@ func (c *Coordinator) ConnectSession(deviceID string, sendChan chan []byte, clos
 	}
 	c.activeSessions[deviceID] = sess
 
-	// Check if paired peer is online
+	// Check if paired peer is online and enqueue initial PEER_STATUS under c.mu
+	// so connect/disconnect presence ordering stays consistent.
 	peerSess, peerOnline := c.activeSessions[pairedDeviceID]
-	c.mu.Unlock()
 
-	if priorClose != nil {
-		priorClose()
-	}
-
-	// Notify this device of peer's status
+	nowUnix := time.Now().Unix()
 	selfStatusEvent, _ := json.Marshal(PeerStatusEvent{
 		Type:         "PEER_STATUS",
 		PeerDeviceID: pairedDeviceID,
 		IsOnline:     peerOnline,
-		Timestamp:    time.Now().Unix(),
+		Timestamp:    nowUnix,
 	})
 	select {
 	case sendChan <- selfStatusEvent:
 	default:
 	}
 
-	// If peer is online, notify peer that this device is now online
 	if peerOnline && peerSess != nil {
 		peerStatusEvent, _ := json.Marshal(PeerStatusEvent{
 			Type:         "PEER_STATUS",
 			PeerDeviceID: deviceID,
 			IsOnline:     true,
-			Timestamp:    time.Now().Unix(),
+			Timestamp:    nowUnix,
 		})
 		select {
 		case peerSess.SendChan <- peerStatusEvent:
 		default:
 		}
+	}
+	c.mu.Unlock()
+
+	if priorClose != nil {
+		priorClose()
 	}
 
 	return sess, nil
@@ -152,9 +154,6 @@ func (c *Coordinator) DisconnectIfSession(deviceID string, expected *Session) {
 	pairedDeviceID := sess.PeerDeviceID
 	delete(c.activeSessions, deviceID)
 	peerSess, peerOnline := c.activeSessions[pairedDeviceID]
-	c.mu.Unlock()
-
-	// Notify peer if online
 	if peerOnline && peerSess != nil {
 		peerStatusEvent, _ := json.Marshal(PeerStatusEvent{
 			Type:         "PEER_STATUS",
@@ -166,6 +165,24 @@ func (c *Coordinator) DisconnectIfSession(deviceID string, expected *Session) {
 		case peerSess.SendChan <- peerStatusEvent:
 		default:
 		}
+	}
+	c.mu.Unlock()
+}
+
+// TerminateAll closes and clears all active sessions (used during graceful server shutdown).
+func (c *Coordinator) TerminateAll() {
+	c.mu.Lock()
+	closeFns := make([]func(), 0, len(c.activeSessions))
+	for id, sess := range c.activeSessions {
+		if sess != nil && sess.CloseFunc != nil {
+			closeFns = append(closeFns, sess.CloseFunc)
+		}
+		delete(c.activeSessions, id)
+	}
+	c.mu.Unlock()
+
+	for _, fn := range closeFns {
+		fn()
 	}
 }
 
@@ -181,6 +198,10 @@ func (c *Coordinator) IsDeviceOnline(deviceID string) bool {
 // Strictly enforces mutual authorization: targetDeviceID MUST be sourceDeviceID's paired peer.
 func (c *Coordinator) ForwardPayload(sourceDeviceID, targetDeviceID string, payload []byte) error {
 	c.mu.RLock()
+	if !c.registry.IsAuthorized(sourceDeviceID) {
+		c.mu.RUnlock()
+		return ErrDeviceNotAuthorized
+	}
 	sourceSess, sourceExists := c.activeSessions[sourceDeviceID]
 	if !sourceExists {
 		c.mu.RUnlock()
@@ -193,7 +214,7 @@ func (c *Coordinator) ForwardPayload(sourceDeviceID, targetDeviceID string, payl
 	}
 
 	peerSess, peerExists := c.activeSessions[targetDeviceID]
-	if !peerExists {
+	if !peerExists || !c.registry.IsAuthorized(targetDeviceID) {
 		c.mu.RUnlock()
 		return ErrPeerOffline
 	}

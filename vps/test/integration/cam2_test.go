@@ -61,7 +61,7 @@ func TestCAM2AndroidCameraCaptureModule(t *testing.T) {
 	andToken := authenticateECDSA(t, httpServer.URL, andDeviceID, andPriv, andPubDER)
 
 	pairToken := createPairingToken(t, httpServer.URL, macDeviceID, macToken)
-	claimPairing(t, httpServer.URL, pairToken, andDeviceID)
+	claimPairing(t, httpServer.URL, pairToken, andDeviceID, andToken)
 
 	// 4. Connect WebSockets
 	macWSURL := wsBaseURL + "/ws/v1/connect?token=" + macToken

@@ -24,7 +24,9 @@ echo "  -> Restored $BACKUP_BIN -> $TARGET_BIN"
 
 echo "[2/2] Verifying rolled-back binary health..."
 TEST_PORT=58444
-PHONELINK_HOST="127.0.0.1" PHONELINK_PORT="$TEST_PORT" "$TARGET_BIN" > /tmp/phonelink_rollback_test.log 2>&1 &
+ROLLBACK_TEST_LOG=$(mktemp -t phonelink_rollback_test.XXXXXX)
+trap 'rm -f "$ROLLBACK_TEST_LOG"' EXIT
+PHONELINK_HOST="127.0.0.1" PHONELINK_PORT="$TEST_PORT" "$TARGET_BIN" > "$ROLLBACK_TEST_LOG" 2>&1 &
 SERVER_PID=$!
 
 sleep 0.5

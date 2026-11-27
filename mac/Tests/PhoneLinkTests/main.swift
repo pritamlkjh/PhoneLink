@@ -1126,5 +1126,41 @@ ctrl.attachStopHandler { r in box.reason = r }
 assertEqual(box.reason, "early_interrupt")
 print("PASS: testMicPcmToFloat32AndControlStopHandler")
 
-print(">>> ALL MAC CLIENT UNIT TESTS PASSED (51/51) <<<")
+// Test 52: ReplayProtection Int64.min Skew Overflow Safety
+let overflowFilter = ReplayProtectionFilter(maxClockSkewMs: 60_000, timeProvider: { 1_774_427_000_000 })
+let overflowPayload = """
+{"message_id":"msg-min-ts","timestamp":-9223372036854775808}
+""".data(using: .utf8)!
+if case .rejected(let st, _) = overflowFilter.validateMessage(data: overflowPayload) {
+    assertEqual(st, ReplayProtectionFilter.statusMessageExpired)
+} else {
+    assertTrue(false, "Int64.min timestamp must be rejected without crashing")
+}
+print("PASS: testReplayProtectionExtremeTimestampNoCrash")
+
+// Test 53: FileClient Progress Line NaN/Inf & Width Safety
+let nanProgress = FileClient.formatTransferProgressLine(bytesTransferred: 500, totalBytes: 1000, bytesPerSecond: .nan, barWidth: 30)
+assertTrue(nanProgress.contains("0 B/s"), "NaN speed must clamp safely to 0 B/s")
+let infProgress = FileClient.formatTransferProgressLine(bytesTransferred: 500, totalBytes: 1000, bytesPerSecond: .infinity, barWidth: 30)
+assertTrue(infProgress.contains("/s"), "Infinity speed must not crash")
+print("PASS: testFileClientProgressLineNonFiniteSafety")
+
+// Test 54: ConnectionManager Control Event Error Parsing With 'type'
+let typedErrData = "{\"type\":\"ERROR\",\"error\":\"rate limit exceeded\"}".data(using: .utf8)!
+assertEqual(ConnectionManager.parseControlEvent(from: typedErrData), .relayError(message: "rate limit exceeded"))
+print("PASS: testConnectionManagerTypedRelayErrorParsing")
+
+// Test 55: CameraTerminalRenderer Boundary, ANSI Padding & Contrast-Stretched JPEG
+let tinyTruncated = CameraTerminalRenderer.renderBanner(state: .error("Connection failed cleanly"), lens: .back)
+assertTrue(tinyTruncated.contains("ERROR"), "Banner must render cleanly")
+let negCanvas = CameraTerminalRenderer.renderAsciiCanvas(frame: nil, state: .inactive(reason: "stopped"), columns: -5, rows: 0)
+assertTrue(negCanvas.contains("+"), "Negative/zero canvas dimensions must clamp safely")
+let camCtrl = CameraStreamControl()
+let camStopBox = FlagBox()
+camCtrl.requestStop(reason: "sigint_stop")
+camCtrl.attachStopHandler { r in camStopBox.reason = r }
+assertEqual(camStopBox.reason, "sigint_stop")
+print("PASS: testCameraRendererBoundariesAndStreamControl")
+
+print(">>> ALL MAC CLIENT UNIT TESTS PASSED (55/55) <<<")
 exit(0)

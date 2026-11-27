@@ -270,3 +270,25 @@ func TestDisconnectIfSessionDoesNotEvictNewSession(t *testing.T) {
 		t.Fatalf("expected matching session disconnect to mark device offline")
 	}
 }
+
+func TestTerminateAllAndRevokedForwardBlocked(t *testing.T) {
+	reg, coord, macID, andID := setupTestPair(t)
+
+	macClosed := false
+	andClosed := false
+	_, _ = coord.ConnectSession(macID, make(chan []byte, 4), func() { macClosed = true })
+	_, _ = coord.ConnectSession(andID, make(chan []byte, 4), func() { andClosed = true })
+
+	_ = reg.RevokeDevice(andID)
+	if err := coord.ForwardPayload(macID, andID, []byte("blocked")); err != ErrPeerOffline {
+		t.Fatalf("expected revoked target to block ForwardPayload, got %v", err)
+	}
+
+	coord.TerminateAll()
+	if !macClosed || !andClosed {
+		t.Fatalf("expected TerminateAll to close all active sessions (mac=%v, and=%v)", macClosed, andClosed)
+	}
+	if coord.IsDeviceOnline(macID) || coord.IsDeviceOnline(andID) {
+		t.Fatalf("expected no active sessions after TerminateAll")
+	}
+}

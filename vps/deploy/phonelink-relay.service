@@ -28,8 +28,10 @@ RestrictSUIDSGID=true
 LockPersonality=true
 
 # Environment & Limits
+StateDirectory=phonelink
 Environment=PHONELINK_HOST=127.0.0.1
 Environment=PHONELINK_PORT=8443
+Environment=PHONELINK_DATA_DIR=/var/lib/phonelink
 LimitNOFILE=65536
 StandardOutput=journal
 StandardError=journal

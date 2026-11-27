@@ -76,8 +76,17 @@ type HealthResponse struct {
 	Timestamp int64  `json:"timestamp"`
 }
 
-// NewServer initializes a new Server instance
+// NewServer initializes a new Server instance (panicking only if persistent storage is corrupt/unreadable).
 func NewServer(cfg Config, logger *slog.Logger) *Server {
+	s, err := NewServerWithError(cfg, logger)
+	if err != nil {
+		panic(fmt.Sprintf("failed to initialize PhoneLink VPS Relay: %v", err))
+	}
+	return s
+}
+
+// NewServerWithError initializes a new Server instance and fails explicitly if StateFile cannot be loaded.
+func NewServerWithError(cfg Config, logger *slog.Logger) (*Server, error) {
 	if logger == nil {
 		logger = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	}
@@ -87,11 +96,9 @@ func NewServer(cfg Config, logger *slog.Logger) *Server {
 	if cfg.StateFile != "" {
 		persistentReg, err := auth.NewPersistentRegistry(cfg.StateFile)
 		if err != nil {
-			logger.Error("Failed to initialize persistent registry; falling back to memory", "state_file", cfg.StateFile, "err", err)
-			reg = auth.NewRegistry()
-		} else {
-			reg = persistentReg
+			return nil, fmt.Errorf("failed to initialize persistent registry %q: %w", cfg.StateFile, err)
 		}
+		reg = persistentReg
 	} else {
 		reg = auth.NewRegistry()
 	}
@@ -139,7 +146,7 @@ func NewServer(cfg Config, logger *slog.Logger) *Server {
 		MaxHeaderBytes:    security.MaxHeaderSizeBytes,
 	}
 
-	return s
+	return s, nil
 }
 
 // Registry returns the underlying auth.Registry instance
@@ -181,6 +188,7 @@ func (s *Server) registerRoutes() {
 
 	// Web Distribution endpoints (1-tap OTA phone installation)
 	s.mux.HandleFunc("GET /install", s.handleInstallPage)
+	s.mux.HandleFunc("GET /install/", s.handleInstallPage)
 	s.mux.HandleFunc("GET /download/PhoneLink.apk", s.handleDownloadApk)
 }
 
@@ -204,8 +212,7 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 	_, _ = fmt.Fprintf(w, "%s v%s\n", Name, Version)
 }
 
-func (s *Server) handleWebSocketConnect(w http.ResponseWriter, r *http.Request) {
-	// Extract session token from query string (?token=...) or Authorization header
+func extractSessionToken(r *http.Request) string {
 	token := r.URL.Query().Get("token")
 	if token == "" {
 		authHeader := r.Header.Get("Authorization")
@@ -213,6 +220,11 @@ func (s *Server) handleWebSocketConnect(w http.ResponseWriter, r *http.Request) 
 			token = strings.TrimPrefix(authHeader, "Bearer ")
 		}
 	}
+	return token
+}
+
+func (s *Server) handleWebSocketConnect(w http.ResponseWriter, r *http.Request) {
+	token := extractSessionToken(r)
 
 	if token == "" {
 		http.Error(w, `{"error":"session token is required"}`, http.StatusUnauthorized)
@@ -261,6 +273,7 @@ func (s *Server) handleWebSocketConnect(w http.ResponseWriter, r *http.Request) 
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
+		defer func() { _ = conn.Close() }()
 		pingTicker := time.NewTicker(wsPingPeriod)
 		defer pingTicker.Stop()
 		for {
@@ -271,7 +284,11 @@ func (s *Server) handleWebSocketConnect(w http.ResponseWriter, r *http.Request) 
 				if !ok {
 					return
 				}
-				_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+				writeWait := 10*time.Second + time.Duration(len(msg)/(256*1024))*time.Second
+				if writeWait > 60*time.Second {
+					writeWait = 60 * time.Second
+				}
+				_ = conn.SetWriteDeadline(time.Now().Add(writeWait))
 				if err := conn.WriteMessage(websocket.BinaryMessage, msg); err != nil {
 					return
 				}
@@ -295,6 +312,11 @@ func (s *Server) handleWebSocketConnect(w http.ResponseWriter, r *http.Request) 
 			s.auditLogger.LogRelayForward(deviceID, sess.PeerDeviceID, len(payload))
 			if err := s.coordinator.ForwardPayload(deviceID, sess.PeerDeviceID, payload); err != nil {
 				s.logger.Debug("Relay forward failed", "from", deviceID, "to", sess.PeerDeviceID, "err", err)
+				errBytes, _ := json.Marshal(map[string]string{"error": err.Error()})
+				select {
+				case sendChan <- errBytes:
+				default:
+				}
 			}
 		}
 	}
@@ -366,13 +388,7 @@ type RevokeDeviceRequest struct {
 }
 
 func (s *Server) authenticateSessionRequest(r *http.Request) (string, error) {
-	token := r.URL.Query().Get("token")
-	if token == "" {
-		authHeader := r.Header.Get("Authorization")
-		if strings.HasPrefix(authHeader, "Bearer ") {
-			token = strings.TrimPrefix(authHeader, "Bearer ")
-		}
-	}
+	token := extractSessionToken(r)
 	if token == "" {
 		return "", fmt.Errorf("missing session token")
 	}
@@ -535,6 +551,12 @@ func (s *Server) handleAuthVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	pairedID, _ := s.registry.GetPairedDevice(req.DeviceID)
+	peerOnline := false
+	if pairedID != "" {
+		peerOnline = s.coordinator.IsDeviceOnline(pairedID)
+	}
+
 	s.auditLogger.LogAuthSuccess(r.RemoteAddr, req.DeviceID)
 
 	w.Header().Set("Content-Type", "application/json")
@@ -544,7 +566,7 @@ func (s *Server) handleAuthVerify(w http.ResponseWriter, r *http.Request) {
 		"session_token":          sessionToken,
 		"resumption_token":       resumptionToken,
 		"resumption_ttl_seconds": int64(auth.DefaultResumptionTTL.Seconds()),
-		"peer_online":            false,
+		"peer_online":            peerOnline,
 	})
 }
 
@@ -657,19 +679,37 @@ type PairingClaimRequest struct {
 }
 
 func (s *Server) handlePairingClaim(w http.ResponseWriter, r *http.Request) {
+	callerID, err := s.authenticateSessionRequest(r)
+	if err != nil {
+		s.auditLogger.LogAuthFailure(r.RemoteAddr, "", "unauthenticated_pairing_claim")
+		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		return
+	}
+
 	var req PairingClaimRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.PairingToken == "" || req.ClaimantDeviceID == "" {
 		http.Error(w, `{"error":"pairing_token and claimant_device_id are required"}`, http.StatusBadRequest)
 		return
 	}
 
-	if err := s.registry.ClaimPairing(req.PairingToken, req.ClaimantDeviceID); err != nil {
-		if err == auth.ErrPairingTokenNotFound || err == auth.ErrDeviceRevoked || err == auth.ErrDeviceNotFound {
+	if callerID != req.ClaimantDeviceID {
+		s.auditLogger.LogAuthFailure(r.RemoteAddr, req.ClaimantDeviceID, "claimant_device_id_mismatch")
+		http.Error(w, `{"error":"forbidden: claimant_device_id mismatch"}`, http.StatusForbidden)
+		return
+	}
+
+	unlinkedPeers, err := s.registry.ClaimPairingWithUnlinked(req.PairingToken, req.ClaimantDeviceID)
+	if err != nil {
+		if err == auth.ErrPairingTokenNotFound || err == auth.ErrDeviceRevoked || err == auth.ErrDeviceNotFound || err == auth.ErrCannotPairSelf {
 			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusBadRequest)
 			return
 		}
 		http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusInternalServerError)
 		return
+	}
+
+	for _, staleID := range unlinkedPeers {
+		s.coordinator.TerminateSession(staleID)
 	}
 
 	pairedPeer, _ := s.registry.GetPairedDevice(req.ClaimantDeviceID)
@@ -703,14 +743,7 @@ type DeviceStatusResponse struct {
 }
 
 func (s *Server) handleDeviceStatus(w http.ResponseWriter, r *http.Request) {
-	// Extract session token from query string (?token=...) or Authorization header
-	token := r.URL.Query().Get("token")
-	if token == "" {
-		authHeader := r.Header.Get("Authorization")
-		if strings.HasPrefix(authHeader, "Bearer ") {
-			token = strings.TrimPrefix(authHeader, "Bearer ")
-		}
-	}
+	token := extractSessionToken(r)
 
 	if token == "" {
 		http.Error(w, `{"error":"session token is required"}`, http.StatusUnauthorized)
@@ -921,6 +954,8 @@ func (s *Server) handleDownloadApk(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/vnd.android.package-archive")
 	w.Header().Set("Content-Disposition", "attachment; filename=\"PhoneLink.apk\"")
 	w.Header().Set("Cache-Control", "no-cache")
+	rc := http.NewResponseController(w)
+	_ = rc.SetWriteDeadline(time.Now().Add(2 * time.Minute))
 	http.ServeFile(w, r, apkPath)
 }
 
@@ -944,9 +979,13 @@ func (s *Server) Start() error {
 	return s.httpServer.ListenAndServe()
 }
 
-// Shutdown gracefully shuts down the server and background janitors
+// Shutdown gracefully shuts down active WebSocket sessions, server, and background janitors
 func (s *Server) Shutdown(ctx context.Context) error {
 	s.logger.Info("Shutting down PhoneLink VPS Relay")
+	if s.coordinator != nil {
+		s.coordinator.TerminateAll()
+	}
+	err := s.httpServer.Shutdown(ctx)
 	if s.rateLimiter != nil {
 		s.rateLimiter.Stop()
 	}
@@ -956,5 +995,5 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if s.registry != nil {
 		s.registry.Stop()
 	}
-	return s.httpServer.Shutdown(ctx)
+	return err
 }

@@ -149,6 +149,9 @@ public final class CameraViewerController: @unchecked Sendable {
     private func transitionTo(_ newState: CameraViewerState) {
         lock.lock()
         currentState = newState
+        if !newState.isActive {
+            lastFrame = nil
+        }
         let cb = onStateChanged
         lock.unlock()
         cb?(newState)
@@ -157,6 +160,15 @@ public final class CameraViewerController: @unchecked Sendable {
 
 public struct CameraTerminalRenderer: Sendable {
     private static let shadedChars: [Character] = [" ", ".", ":", "░", "▒", "▓", "█"]
+
+    /// Strips ANSI CSI color escapes before computing padded visible width.
+    private static func padVisible(_ str: String, toLength targetLength: Int) -> String {
+        let plain = str.replacingOccurrences(of: "\u{001B}\\[[0-9;]*m", with: "", options: .regularExpression)
+        if plain.count >= targetLength {
+            return str
+        }
+        return str + String(repeating: " ", count: targetLength - plain.count)
+    }
 
     /// Generates a structured terminal status banner for live stream viewing.
     public static func renderBanner(
@@ -170,7 +182,7 @@ public struct CameraTerminalRenderer: Sendable {
         lines.append("┌────────────────────────────────────────────────────────────────────────┐")
         let lensPadded = lens.rawValue.padding(toLength: 18, withPad: " ", startingAt: 0)
         lines.append("│ PhoneLink Camera Preview (CAM-4)              Lens: \(lensPadded) │")
-        lines.append("│ Status: " + state.statusBadge.padding(toLength: 70, withPad: " ", startingAt: 0) + " │")
+        lines.append("│ Status: " + padVisible(state.statusBadge, toLength: 62) + " │")
         let infoPadded = truncateString(state.statusDescription, maxLength: 62).padding(toLength: 62, withPad: " ", startingAt: 0)
         lines.append("│ Info:   \(infoPadded) │")
 
@@ -192,44 +204,46 @@ public struct CameraTerminalRenderer: Sendable {
         columns: Int = 40,
         rows: Int = 12
     ) -> String {
+        let safeCols = max(1, columns)
+        let safeRows = max(1, rows)
         var lines: [String] = []
 
         if !state.isActive || frame == nil {
             // Distinct Inactive Screen
-            lines.append("  +" + String(repeating: "-", count: columns) + "+")
-            let middleRow = rows / 2
-            for r in 0..<rows {
+            lines.append("  +" + String(repeating: "-", count: safeCols) + "+")
+            let middleRow = safeRows / 2
+            for r in 0..<safeRows {
                 if r == middleRow - 1 {
                     let msg = "[ STREAM INACTIVE ]"
-                    let text = centerText(msg, width: columns)
+                    let text = centerText(msg, width: safeCols)
                     lines.append("  |" + text + "|")
                 } else if r == middleRow {
                     let msg = "Camera sensor is powered off"
-                    let text = centerText(msg, width: columns)
+                    let text = centerText(msg, width: safeCols)
                     lines.append("  |" + text + "|")
                 } else {
-                    lines.append("  |" + String(repeating: " ", count: columns) + "|")
+                    lines.append("  |" + String(repeating: " ", count: safeCols) + "|")
                 }
             }
-            lines.append("  +" + String(repeating: "-", count: columns) + "+")
+            lines.append("  +" + String(repeating: "-", count: safeCols) + "+")
             return lines.joined(separator: "\n")
         }
 
         // Active Frame Canvas
         let jpeg = frame!.jpegData
-        lines.append("  +" + String(repeating: "-", count: columns) + "+")
+        lines.append("  +" + String(repeating: "-", count: safeCols) + "+")
 
-        if let lumaRows = decodeGrayscaleAsciiGrid(jpegData: jpeg, columns: columns, rows: rows) {
+        if let lumaRows = decodeGrayscaleAsciiGrid(jpegData: jpeg, columns: safeCols, rows: safeRows) {
             for rowStr in lumaRows {
                 lines.append("  |" + rowStr + "|")
             }
         } else {
             // Fallback block representation when raw payload is non-image test fixture data
             var byteIdx = 0
-            for r in 0..<rows {
+            for r in 0..<safeRows {
                 var rowChars: [Character] = []
-                for c in 0..<columns {
-                    let seed = byteIdx < jpeg.count ? Int(jpeg[byteIdx]) : (r * columns + c)
+                for c in 0..<safeCols {
+                    let seed = byteIdx < jpeg.count ? Int(jpeg[byteIdx]) : (r * safeCols + c)
                     let charIdx = (seed + r + c) % shadedChars.count
                     rowChars.append(shadedChars[charIdx])
                     byteIdx = (byteIdx + 7) % max(1, jpeg.count)
@@ -237,33 +251,47 @@ public struct CameraTerminalRenderer: Sendable {
                 lines.append("  |" + String(rowChars) + "|")
             }
         }
-        lines.append("  +" + String(repeating: "-", count: columns) + "+")
+        lines.append("  +" + String(repeating: "-", count: safeCols) + "+")
         return lines.joined(separator: "\n")
     }
 
     private static func decodeGrayscaleAsciiGrid(jpegData: Data, columns: Int, rows: Int) -> [String]? {
         guard columns > 0, rows > 0 else { return nil }
         #if canImport(ImageIO) && canImport(CoreGraphics)
-        guard let source = CGImageSourceCreateWithData(jpegData as CFData, nil),
-              let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+        guard let source = CGImageSourceCreateWithData(jpegData as CFData, nil) else {
+            return nil
+        }
+        let thumbOptions: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceThumbnailMaxPixelSize: max(64, max(columns, rows) * 4),
+            kCGImageSourceCreateThumbnailWithTransform: true
+        ]
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbOptions as CFDictionary)
+                ?? CGImageSourceCreateImageAtIndex(source, 0, nil) else {
             return nil
         }
 
         var pixels = [UInt8](repeating: 0, count: columns * rows)
         let colorSpace = CGColorSpaceCreateDeviceGray()
-        guard let context = CGContext(
-                data: &pixels,
-                width: columns,
-                height: rows,
-                bitsPerComponent: 8,
-                bytesPerRow: columns,
-                space: colorSpace,
-                bitmapInfo: CGImageAlphaInfo.none.rawValue
-              ) else {
-            return nil
+        // Keep buffer base pointer valid across CGContext creation AND draw() (fixes blank release-build frames)
+        let drew = pixels.withUnsafeMutableBytes { rawBuf -> Bool in
+            guard let baseAddress = rawBuf.baseAddress,
+                  let context = CGContext(
+                    data: baseAddress,
+                    width: columns,
+                    height: rows,
+                    bitsPerComponent: 8,
+                    bytesPerRow: columns,
+                    space: colorSpace,
+                    bitmapInfo: CGImageAlphaInfo.none.rawValue
+                  ) else {
+                return false
+            }
+            context.interpolationQuality = .medium
+            context.draw(cgImage, in: CGRect(x: 0, y: 0, width: columns, height: rows))
+            return true
         }
-        context.interpolationQuality = .medium
-        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: columns, height: rows))
+        guard drew else { return nil }
 
         var minLum = 255
         var maxLum = 0
@@ -273,7 +301,7 @@ public struct CameraTerminalRenderer: Sendable {
             if v > maxLum { maxLum = v }
         }
         let spread = maxLum - minLum
-        let stretchContrast = (spread >= 16 && maxLum < 220)
+        let stretchContrast = (spread >= 16 && (maxLum < 220 || minLum > 35))
 
         var out: [String] = []
         out.reserveCapacity(rows)
@@ -305,6 +333,9 @@ public struct CameraTerminalRenderer: Sendable {
     }
 
     private static func truncateString(_ str: String, maxLength: Int) -> String {
+        guard maxLength >= 3 else {
+            return String(str.prefix(max(0, maxLength)))
+        }
         if str.count <= maxLength {
             return str
         }

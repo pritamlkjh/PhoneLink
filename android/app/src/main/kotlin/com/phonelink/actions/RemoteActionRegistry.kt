@@ -5,6 +5,7 @@ import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.media.AudioAttributes
 import android.media.Ringtone
 import android.media.RingtoneManager
 import android.os.BatteryManager
@@ -98,6 +99,10 @@ class RemoteActionRegistry(
         val appVersion: String,
         val errorMessage: String = ""
     )
+
+    fun shutdown() {
+        (feedbackController as? AndroidActionFeedbackController)?.shutdown()
+    }
 
     /**
      * Checks if the given action identifier is present in the build-time allowlist.
@@ -366,7 +371,13 @@ class AndroidActionFeedbackController(private val context: Context) : RemoteActi
                 context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                vibrator?.vibrate(VibrationEffect.createOneShot(millis, VibrationEffect.DEFAULT_AMPLITUDE))
+                @Suppress("DEPRECATION")
+                val vibAttrs = AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_ALARM)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build()
+                @Suppress("DEPRECATION")
+                vibrator?.vibrate(VibrationEffect.createOneShot(millis, VibrationEffect.DEFAULT_AMPLITUDE), vibAttrs)
             } else {
                 @Suppress("DEPRECATION")
                 vibrator?.vibrate(millis)
@@ -379,6 +390,12 @@ class AndroidActionFeedbackController(private val context: Context) : RemoteActi
             val alarmUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
                 ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
             val ringtone = RingtoneManager.getRingtone(context, alarmUri)
+            if (ringtone != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                ringtone.audioAttributes = AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_ALARM)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                    .build()
+            }
             activeRingtone = ringtone
             ringtone?.play()
             scheduledStopTask = stopScheduler.schedule({
@@ -390,6 +407,18 @@ class AndroidActionFeedbackController(private val context: Context) : RemoteActi
                 }
             }, millis, TimeUnit.MILLISECONDS)
         } catch (_: Exception) {}
+    }
+
+    fun shutdown() {
+        synchronized(this) {
+            try {
+                scheduledStopTask?.cancel(false)
+                scheduledStopTask = null
+                activeRingtone?.stop()
+                activeRingtone = null
+            } catch (_: Exception) {}
+        }
+        stopScheduler.shutdownNow()
     }
 
     override fun notifyActionExecuted(actionName: String) {

@@ -44,7 +44,9 @@ echo "  -> Installed new binary at $TARGET_BIN"
 # 4. Production Smoke / Health Check Verification
 echo "[4/4] Verifying binary execution & health check..."
 TEST_PORT=58443
-PHONELINK_HOST="127.0.0.1" PHONELINK_PORT="$TEST_PORT" "$TARGET_BIN" > /tmp/phonelink_prod_test.log 2>&1 &
+PROD_TEST_LOG=$(mktemp -t phonelink_prod_test.XXXXXX)
+trap 'rm -f "$PROD_TEST_LOG"' EXIT
+PHONELINK_HOST="127.0.0.1" PHONELINK_PORT="$TEST_PORT" "$TARGET_BIN" > "$PROD_TEST_LOG" 2>&1 &
 SERVER_PID=$!
 
 sleep 0.5

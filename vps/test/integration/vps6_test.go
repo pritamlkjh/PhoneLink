@@ -43,8 +43,9 @@ func TestVPS6SessionResumptionAndReconnection(t *testing.T) {
 	registerDevice(t, httpServer.URL, andDeviceID, "android", base64.StdEncoding.EncodeToString(andPub), auth.AlgorithmEd25519)
 
 	macInitToken := authenticateWithResumption(t, httpServer.URL, macDeviceID, macPriv).SessionToken
+	andInitToken := authenticateWithResumption(t, httpServer.URL, andDeviceID, andPriv).SessionToken
 	pairingToken := createPairingToken(t, httpServer.URL, macDeviceID, macInitToken)
-	claimPairing(t, httpServer.URL, pairingToken, andDeviceID)
+	claimPairing(t, httpServer.URL, pairingToken, andDeviceID, andInitToken)
 
 	// --- SUB-TEST 1: Fast Session Resumption Without Full Re-Auth Handshake ---
 	t.Run("FastSessionResumptionAfterDisconnect", func(t *testing.T) {

@@ -50,6 +50,9 @@ class E2EEncryptionManager(
         private val X25519_X509_HEADER = byteArrayOf(
             0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x6e, 0x03, 0x21, 0x00
         )
+        private val ED25519_X509_HEADER = byteArrayOf(
+            0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00
+        )
         private val X25519_PKCS8_HEADER = byteArrayOf(
             0x30, 0x2e, 0x02, 0x01, 0x00, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x6e, 0x04, 0x22, 0x04, 0x20
         )
@@ -73,8 +76,10 @@ class E2EEncryptionManager(
 
         fun extractRawEd25519PublicKey(rawOrDer: ByteArray): ByteArray? {
             return when {
-                rawOrDer.size == 32 -> rawOrDer
-                rawOrDer.size == 44 && rawOrDer[0] == 0x30.toByte() -> rawOrDer.copyOfRange(12, 44)
+                rawOrDer.size == KEY_SIZE_BYTES -> rawOrDer
+                rawOrDer.size == ED25519_X509_HEADER.size + KEY_SIZE_BYTES &&
+                    rawOrDer.copyOfRange(0, ED25519_X509_HEADER.size).contentEquals(ED25519_X509_HEADER) ->
+                    rawOrDer.copyOfRange(ED25519_X509_HEADER.size, rawOrDer.size)
                 else -> null
             }
         }

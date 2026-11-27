@@ -4,8 +4,9 @@ import CryptoKit
 /// ARCH-2 / INT-1: Swift End-to-End Encryption Manager
 /// Implements X25519 key exchange, HKDF key derivation, and AES-256-GCM / ChaChaPoly AEAD encryption.
 public final class E2EEncryptionManager: @unchecked Sendable {
-    public static let infoM2A = "PhoneLink-M2A-v1".data(using: .utf8)!
-    public static let infoA2M = "PhoneLink-A2M-v1".data(using: .utf8)!
+    public static let infoM2A = Data("PhoneLink-M2A-v1".utf8)
+    public static let infoA2M = Data("PhoneLink-A2M-v1".utf8)
+    private static let ed25519X509Prefix = Data([0x30, 0x2A, 0x30, 0x05, 0x06, 0x03, 0x2B, 0x65, 0x70, 0x03, 0x21, 0x00])
 
     public static func buildHandshakeTranscript(ephemeralPublicKey: Data, timestampMs: Int64) -> Data {
         var data = Data(ephemeralPublicKey)
@@ -17,7 +18,7 @@ public final class E2EEncryptionManager: @unchecked Sendable {
     }
 
     public static func buildPayloadAad(direction: String, seq: Int64) -> Data {
-        return "PhoneLink-E2E-v1|\(direction)|\(seq)".data(using: .utf8)!
+        return Data("PhoneLink-E2E-v1|\(direction)|\(seq)".utf8)
     }
 
     public static func verifyPeerSignature(publicKeyBytes: Data, algorithm: String?, message: Data, signature: Data) -> Bool {
@@ -26,7 +27,7 @@ public final class E2EEncryptionManager: @unchecked Sendable {
             let rawKey: Data
             if publicKeyBytes.count == 32 {
                 rawKey = publicKeyBytes
-            } else if publicKeyBytes.count == 44 && publicKeyBytes.first == 0x30 {
+            } else if publicKeyBytes.count == 44 && publicKeyBytes.prefix(12) == ed25519X509Prefix {
                 rawKey = publicKeyBytes.subdata(in: 12..<44)
             } else {
                 return false

@@ -287,12 +287,13 @@ class StorageAccessLayer(
             return Result.failure(StorageAccessException("Target path is not a directory: $relativePath"))
         }
 
-        val files = targetFile.listFiles() ?: emptyArray()
+        val files = targetFile.listFiles()
+            ?: return Result.failure(StorageAccessException("Unable to list directory (permission denied or I/O error): $relativePath"))
         val rootCanonical = scopedRootDirectory.canonicalPath
 
         val infoList = files.mapNotNull { file ->
             val fileCanonical = file.canonicalPath
-            if (isSensitivePath(fileCanonical)) {
+            if (isSensitivePath(fileCanonical) || file.name.endsWith(".part") || file.name.startsWith(".phonelink_tmp_")) {
                 null
             } else {
                 val rel = fileCanonical.removePrefix(rootCanonical).trimStart(File.separatorChar)
@@ -516,7 +517,7 @@ class StorageAccessLayer(
         val prefix = info.relativePath
         val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(tree, docId)
         val out = mutableListOf<ScopedFileInfo>()
-        ctx.contentResolver.query(
+        val cursor = ctx.contentResolver.query(
             childrenUri,
             arrayOf(
                 DocumentsContract.Document.COLUMN_DISPLAY_NAME,
@@ -527,18 +528,20 @@ class StorageAccessLayer(
             null,
             null,
             null
-        )?.use { cursor ->
-            val nameIdx = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
-            val mimeIdx = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_MIME_TYPE)
-            val sizeIdx = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_SIZE)
-            val modIdx = cursor.getColumnIndex(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
-            while (cursor.moveToNext()) {
-                val name = if (nameIdx >= 0) cursor.getString(nameIdx) else continue
-                if (isSensitivePath(name)) continue
-                val mime = if (mimeIdx >= 0) cursor.getString(mimeIdx) else ""
+        ) ?: return Result.failure(StorageAccessException("Unable to query SAF directory (permission revoked or I/O error): $relativePath"))
+
+        cursor.use { c ->
+            val nameIdx = c.getColumnIndex(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+            val mimeIdx = c.getColumnIndex(DocumentsContract.Document.COLUMN_MIME_TYPE)
+            val sizeIdx = c.getColumnIndex(DocumentsContract.Document.COLUMN_SIZE)
+            val modIdx = c.getColumnIndex(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
+            while (c.moveToNext()) {
+                val name = if (nameIdx >= 0) c.getString(nameIdx) else continue
+                if (isSensitivePath(name) || name.endsWith(".part") || name.startsWith(".phonelink_tmp_")) continue
+                val mime = if (mimeIdx >= 0) c.getString(mimeIdx) else ""
                 val isDir = mime == DocumentsContract.Document.MIME_TYPE_DIR
-                val size = if (!isDir && sizeIdx >= 0) cursor.getLong(sizeIdx) else 0L
-                val mod = if (modIdx >= 0) cursor.getLong(modIdx) else 0L
+                val size = if (!isDir && sizeIdx >= 0) c.getLong(sizeIdx) else 0L
+                val mod = if (modIdx >= 0) c.getLong(modIdx) else 0L
                 val rel = if (prefix.isEmpty()) name else "$prefix/$name"
                 out.add(ScopedFileInfo(name, rel, isDir, size, mod))
             }
@@ -559,6 +562,14 @@ class StorageAccessLayer(
         val fileName = segments.last()
         var currentDocId = DocumentsContract.getTreeDocumentId(tree)
 
+        // Ensure write permission is still held before modifying SAF documents
+        val hasWriteGrant = ctx.contentResolver.persistedUriPermissions.any {
+            it.uri == tree && it.isWritePermission
+        }
+        if (!hasWriteGrant) {
+            return Result.failure(StorageAccessException("Write permission not granted for SAF folder; re-select shared folder"))
+        }
+
         // Ensure subdirectories exist
         for (dir in dirSegments) {
             val childId = findSafChildDocId(ctx, tree, currentDocId, dir)
@@ -576,7 +587,26 @@ class StorageAccessLayer(
             }
         }
 
-        // Delete existing file with same name if present
+        val parentUri = DocumentsContract.buildDocumentUriUsingTree(tree, currentDocId)
+        val mime = FileOperationHandler.guessMimeType(fileName, false)
+        val tempName = ".phonelink_tmp_${java.util.UUID.randomUUID().toString().take(8)}_$fileName"
+        val tempUri = DocumentsContract.createDocument(ctx.contentResolver, parentUri, "application/octet-stream", tempName)
+            ?: return Result.failure(StorageAccessException("Failed to create temporary SAF document: $fileName"))
+
+        try {
+            ctx.contentResolver.openOutputStream(tempUri)?.use { out ->
+                partFile.inputStream().use { inp ->
+                    inp.copyTo(out)
+                }
+            } ?: throw StorageAccessException("Failed to write temporary SAF document stream: $fileName")
+        } catch (e: Exception) {
+            try {
+                DocumentsContract.deleteDocument(ctx.contentResolver, tempUri)
+            } catch (_: Exception) {}
+            return Result.failure(if (e is StorageAccessException) e else StorageAccessException("SAF write failed: ${e.message}"))
+        }
+
+        // Only remove existing file after the new upload is safely written to tempUri
         findSafChildDocId(ctx, tree, currentDocId, fileName)?.let { existingId ->
             val existingUri = DocumentsContract.buildDocumentUriUsingTree(tree, existingId)
             try {
@@ -584,16 +614,28 @@ class StorageAccessLayer(
             } catch (_: Exception) {}
         }
 
-        val parentUri = DocumentsContract.buildDocumentUriUsingTree(tree, currentDocId)
-        val mime = FileOperationHandler.guessMimeType(fileName, false)
-        val destUri = DocumentsContract.createDocument(ctx.contentResolver, parentUri, mime, fileName)
-            ?: return Result.failure(StorageAccessException("Failed to create SAF document: $fileName"))
-
-        ctx.contentResolver.openOutputStream(destUri)?.use { out ->
-            partFile.inputStream().use { inp ->
-                inp.copyTo(out)
+        val renamedUri = try {
+            DocumentsContract.renameDocument(ctx.contentResolver, tempUri, fileName)
+        } catch (_: Exception) {
+            null
+        }
+        if (renamedUri == null) {
+            // Fallback for DocumentsProviders that disallow renameDocument: copy tempUri into final file name
+            val destUri = DocumentsContract.createDocument(ctx.contentResolver, parentUri, mime, fileName)
+            if (destUri == null) {
+                try { DocumentsContract.deleteDocument(ctx.contentResolver, tempUri) } catch (_: Exception) {}
+                return Result.failure(StorageAccessException("Failed to finalize SAF document: $fileName"))
             }
-        } ?: return Result.failure(StorageAccessException("Failed to write SAF document stream: $fileName"))
+            try {
+                ctx.contentResolver.openOutputStream(destUri)?.use { out ->
+                    partFile.inputStream().use { inp ->
+                        inp.copyTo(out)
+                    }
+                } ?: return Result.failure(StorageAccessException("Failed to write SAF document stream: $fileName"))
+            } finally {
+                try { DocumentsContract.deleteDocument(ctx.contentResolver, tempUri) } catch (_: Exception) {}
+            }
+        }
 
         return Result.success(Unit)
     }

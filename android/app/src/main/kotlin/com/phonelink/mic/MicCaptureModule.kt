@@ -5,8 +5,13 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
 import android.media.AudioFormat
+import android.media.AudioManager
 import android.media.AudioRecord
+import android.media.AudioRecordingConfiguration
 import android.media.MediaRecorder
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import org.json.JSONObject
 import java.util.Base64
 import java.util.UUID
@@ -109,6 +114,8 @@ class MicCaptureModule(
 
         fun close()
         fun isCapturing(): Boolean
+
+        fun setUnexpectedStopListener(listener: ((reason: String) -> Unit)?) {}
     }
 
     private val isCapturing = AtomicBoolean(false)
@@ -171,6 +178,18 @@ class MicCaptureModule(
 
         val source = micSource ?: DefaultMockMicSource()
         activeMicSource = source
+        source.setUnexpectedStopListener { reason ->
+            val currentSession = activeSessionId
+            if (isCapturing.get() && currentSession == request.sessionId) {
+                val stopResp = stopCapture(request.sessionId, reason)
+                val notifier = activeSendAppMsg
+                if (notifier != null) {
+                    try {
+                        notifier(serializeMicStopResponse(stopResp))
+                    } catch (_: Exception) {}
+                }
+            }
+        }
 
         // Promote foreground service before opening AudioRecord so Android 14-16 FGS rules see MICROPHONE active.
         serviceController?.onMicCaptureStarted()
@@ -224,10 +243,14 @@ class MicCaptureModule(
 
         val actualFormat = openResult.getOrThrow()
 
+        val watchdogSessionId = request.sessionId
         sessionTimeoutTask?.cancel(false)
         val watchdogSeconds = maxSessionDurationSeconds.coerceIn(1L, DEFAULT_MAX_SESSION_DURATION_SECONDS)
         sessionTimeoutTask = scheduler.schedule({
-            val stopResp = stopCapture(request.sessionId, "session_timeout")
+            if (!isCapturing.get() || activeSessionId != watchdogSessionId) {
+                return@schedule
+            }
+            val stopResp = stopCapture(watchdogSessionId, "session_timeout")
             val notifier = activeSendAppMsg
             if (notifier != null) {
                 try {
@@ -250,6 +273,9 @@ class MicCaptureModule(
     /** Immediately stops microphone capture and releases hardware resources. */
     @Synchronized
     fun stopCapture(sessionId: String, reason: String = "user_stopped"): MicStopResponseDto {
+        if (reason == "session_timeout" && sessionId.isNotEmpty() && activeSessionId != null && activeSessionId != sessionId) {
+            return MicStopResponseDto(sessionId = sessionId, status = STATUS_OK)
+        }
         sessionTimeoutTask?.cancel(false)
         sessionTimeoutTask = null
         lastStopReason = reason
@@ -259,6 +285,7 @@ class MicCaptureModule(
 
         val source = activeMicSource ?: micSource
         activeMicSource = null
+        source?.setUnexpectedStopListener(null)
         source?.close()
 
         if (wasCapturing) {
@@ -424,9 +451,15 @@ class MicCaptureModule(
 class AndroidMicSource(private val context: Context) : MicCaptureModule.MicSource {
     private val micLock = Any()
     private val capturing = AtomicBoolean(false)
+    @Volatile private var unexpectedStopListener: ((String) -> Unit)? = null
     private var audioRecord: AudioRecord? = null
     private var captureThread: Thread? = null
     private var senderThread: Thread? = null
+    private var audioRecordingCallback: AudioManager.AudioRecordingCallback? = null
+
+    override fun setUnexpectedStopListener(listener: ((reason: String) -> Unit)?) {
+        unexpectedStopListener = listener
+    }
 
     companion object {
         private const val QUEUE_CAPACITY = 16
@@ -499,6 +532,36 @@ class AndroidMicSource(private val context: Context) : MicCaptureModule.MicSourc
             capturing.set(true)
             recorder.startRecording()
 
+            if (recorder.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+                close()
+                return Result.failure(
+                    IllegalStateException("Microphone could not enter recording state (privacy switch or active call may be blocking access)")
+                )
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+                if (am != null) {
+                    val recSessionId = recorder.audioSessionId
+                    val recCb = object : AudioManager.AudioRecordingCallback() {
+                        override fun onRecordingConfigChanged(configs: List<AudioRecordingConfiguration>) {
+                            val mine = configs.firstOrNull { it.clientAudioSessionId == recSessionId }
+                            if (mine != null && mine.isClientSilenced && capturing.get()) {
+                                capturing.set(false)
+                                Executors.newSingleThreadExecutor { r ->
+                                    Thread(r, "PhoneLink-MicSilenceStop").apply { isDaemon = true }
+                                }.execute {
+                                    close()
+                                    unexpectedStopListener?.invoke("mic_silenced_by_system")
+                                }
+                            }
+                        }
+                    }
+                    audioRecordingCallback = recCb
+                    am.registerAudioRecordingCallback(recCb, Handler(Looper.getMainLooper()))
+                }
+            }
+
             val sender = Thread({
                 while (capturing.get() || queue.isNotEmpty()) {
                     try {
@@ -516,16 +579,24 @@ class AndroidMicSource(private val context: Context) : MicCaptureModule.MicSourc
             val reader = Thread({
                 val frameBuf = ByteArray(chunkBytes)
                 var filled = 0
+                var errorReason: String? = null
                 while (capturing.get()) {
                     val read = try {
                         recorder.read(frameBuf, filled, chunkBytes - filled)
                     } catch (_: Exception) {
+                        errorReason = "mic_read_exception"
                         break
                     }
                     if (read < 0) {
+                        errorReason = "mic_read_error_$read"
                         break
                     }
                     if (read == 0) {
+                        try {
+                            Thread.sleep(10)
+                        } catch (_: InterruptedException) {
+                            break
+                        }
                         continue
                     }
                     filled += read
@@ -537,6 +608,16 @@ class AndroidMicSource(private val context: Context) : MicCaptureModule.MicSourc
                             queue.offer(packet)
                         }
                         filled = 0
+                    }
+                }
+                if (errorReason != null && capturing.get()) {
+                    capturing.set(false)
+                    val reasonCopy = errorReason
+                    Executors.newSingleThreadExecutor { r ->
+                        Thread(r, "PhoneLink-MicErrStop").apply { isDaemon = true }
+                    }.execute {
+                        close()
+                        unexpectedStopListener?.invoke(reasonCopy)
                     }
                 }
             }, "PhoneLink-MicCapture").apply { isDaemon = true }
@@ -555,6 +636,16 @@ class AndroidMicSource(private val context: Context) : MicCaptureModule.MicSourc
 
     override fun close() = synchronized(micLock) {
         capturing.set(false)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            audioRecordingCallback?.let { cb ->
+                try {
+                    val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+                    am?.unregisterAudioRecordingCallback(cb)
+                } catch (_: Exception) {}
+            }
+        }
+        audioRecordingCallback = null
+
         val recorder = audioRecord
         if (recorder != null) {
             try {
@@ -567,7 +658,7 @@ class AndroidMicSource(private val context: Context) : MicCaptureModule.MicSourc
         captureThread?.interrupt()
         senderThread?.interrupt()
         try {
-            captureThread?.join(500)
+            captureThread?.join(1500)
         } catch (_: Exception) {}
         try {
             senderThread?.join(500)

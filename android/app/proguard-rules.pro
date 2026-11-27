@@ -21,6 +21,7 @@
 -keep class com.phonelink.service.ConnectionForegroundService { *; }
 -keep class com.phonelink.receiver.BootReceiver { *; }
 -keep class com.phonelink.camera.** { *; }
+-keep class com.phonelink.mic.** { *; }
 -keep class com.phonelink.files.** { *; }
 -keep class com.phonelink.actions.** { *; }
 -keep class com.phonelink.storage.** { *; }

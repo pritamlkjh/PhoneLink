@@ -88,11 +88,27 @@ class MainActivity : AppCompatActivity() {
         bindViews()
         setupListeners()
         updateUIState()
-        ensureServiceRunningIfPaired()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        ConnectionForegroundService.peerStatusListener = { _, _ ->
+            runOnUiThread { updateUIState() }
+        }
+        ConnectionForegroundService.relayStatusListener = { _, _ ->
+            runOnUiThread { updateUIState() }
+        }
+    }
+
+    override fun onStop() {
+        ConnectionForegroundService.peerStatusListener = null
+        ConnectionForegroundService.relayStatusListener = null
+        super.onStop()
     }
 
     override fun onResume() {
         super.onResume()
+        ConnectionForegroundService.clearMediaPromptNotification(this)
         updateUIState()
         ensureServiceRunningIfPaired()
     }
@@ -145,7 +161,9 @@ class MainActivity : AppCompatActivity() {
         // Camera toggle
         switchCamera.setOnCheckedChangeListener { _, isChecked ->
             secureStorage.setCameraAllowed(isChecked)
-            if (isChecked && ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+            if (!isChecked) {
+                ConnectionForegroundService.stopCamera(this)
+            } else if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
                 ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), REQ_CODE_CAMERA)
             }
         }
@@ -153,7 +171,9 @@ class MainActivity : AppCompatActivity() {
         // Microphone toggle
         switchMic.setOnCheckedChangeListener { _, isChecked ->
             secureStorage.setMicAllowed(isChecked)
-            if (isChecked && ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            if (!isChecked) {
+                ConnectionForegroundService.stopMic(this)
+            } else if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
                 ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), REQ_CODE_MIC)
             }
         }
@@ -204,7 +224,16 @@ class MainActivity : AppCompatActivity() {
         val pairedId = secureStorage.getPairedDeviceId()
 
         if (isPaired) {
-            tvStatus.text = "🟢 Paired & Active (Peer: ${pairedId ?: "Mac"})"
+            val peerOnline = ConnectionForegroundService.lastPeerOnline
+            val relayText = ConnectionForegroundService.lastRelayStatusText
+            val statusSummary = when {
+                peerOnline == true -> "🟢 Mac ONLINE (Peer: ${pairedId ?: "Mac"})"
+                peerOnline == false -> "🟡 Connected • Mac OFFLINE (Peer: ${pairedId ?: "Mac"})"
+                !relayText.isNullOrBlank() && ConnectionForegroundService.isServiceRunningGlobal ->
+                    "🟡 $relayText (Peer: ${pairedId ?: "Mac"})"
+                else -> "🟢 Paired (Peer: ${pairedId ?: "Mac"})"
+            }
+            tvStatus.text = statusSummary
             tvStatus.setTextColor(Color.parseColor("#2E7D32"))
             tvStatus.setBackgroundColor(Color.parseColor("#E8F5E9"))
             btnUnpair.visibility = View.VISIBLE
@@ -265,6 +294,14 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_CODE_NOTIFICATIONS)
+        }
+
+        val previousRelay = RelayUrlHelper.normalizeHttpBaseUrl(secureStorage.getRelayUrl())
+        val relayChanged = previousRelay != httpBaseUrl
         secureStorage.setRelayUrl(httpBaseUrl)
 
         btnConnectPair.isEnabled = false
@@ -283,9 +320,21 @@ class MainActivity : AppCompatActivity() {
                     return@execute
                 }
 
-                // Step 2: Claim pairing if code provided
+                // Step 2: Authenticate challenge-response BEFORE claiming pairing so /pairing/claim carries Bearer auth
+                val authRes = authClient.authenticate(httpBaseUrl, identityManager, keyManager)
+                if (authRes.isFailure) {
+                    runOnUiThread {
+                        btnConnectPair.isEnabled = true
+                        btnConnectPair.text = "Connect & Pair"
+                        Toast.makeText(this, "Authentication Failed: ${authRes.exceptionOrNull()?.message}", Toast.LENGTH_LONG).show()
+                    }
+                    return@execute
+                }
+                val sessionToken = authRes.getOrThrow()
+
+                // Step 3: Claim pairing if code provided
                 if (pairingCode.isNotEmpty()) {
-                    val claimRes = authClient.claimPairing(httpBaseUrl, pairingCode, identityManager)
+                    val claimRes = authClient.claimPairing(httpBaseUrl, pairingCode, identityManager, sessionToken)
                     if (claimRes.isFailure) {
                         runOnUiThread {
                             btnConnectPair.isEnabled = true
@@ -296,19 +345,12 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
 
-                // Step 3: Authenticate challenge-response
-                val authRes = authClient.authenticate(httpBaseUrl, identityManager, keyManager)
-                if (authRes.isFailure) {
-                    runOnUiThread {
-                        btnConnectPair.isEnabled = true
-                        btnConnectPair.text = "Connect & Pair"
-                        Toast.makeText(this, "Authentication Failed: ${authRes.exceptionOrNull()?.message}", Toast.LENGTH_LONG).show()
-                    }
-                    return@execute
+                // Step 4: Start or reload background connection service
+                if (relayChanged) {
+                    ConnectionForegroundService.reloadConfig(this@MainActivity)
+                } else {
+                    ConnectionForegroundService.start(this@MainActivity)
                 }
-
-                // Step 4: Start background connection service
-                ConnectionForegroundService.start(this@MainActivity)
 
                 runOnUiThread {
                     btnConnectPair.isEnabled = true

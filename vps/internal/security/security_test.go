@@ -160,3 +160,19 @@ func TestRateLimiterIPv6AndStop(t *testing.T) {
 	rl.Stop()
 	rl.Stop() // Idempotent stop must not panic
 }
+
+func TestRateLimiterHonorsProxyHeadersOnlyFromTrustedProxy(t *testing.T) {
+	reqFromCaddy := httptest.NewRequest(http.MethodGet, "/ok", nil)
+	reqFromCaddy.RemoteAddr = "127.0.0.1:50000"
+	reqFromCaddy.Header.Set("X-Forwarded-For", "203.0.113.1, 198.51.100.77, 127.0.0.1")
+	if got := ExtractRequestClientIP(reqFromCaddy); got != "198.51.100.77" {
+		t.Fatalf("expected right-most untrusted X-Forwarded-For IP from trusted proxy, got %q", got)
+	}
+
+	reqSpoofed := httptest.NewRequest(http.MethodGet, "/ok", nil)
+	reqSpoofed.RemoteAddr = "203.0.113.10:50000"
+	reqSpoofed.Header.Set("X-Forwarded-For", "198.51.100.88")
+	if got := ExtractRequestClientIP(reqSpoofed); got != "203.0.113.10" {
+		t.Fatalf("expected untrusted X-Forwarded-For to be ignored, got %q", got)
+	}
+}

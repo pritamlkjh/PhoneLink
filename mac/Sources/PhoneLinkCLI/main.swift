@@ -11,7 +11,11 @@ struct Config {
     static let defaultRelayURL = ProcessInfo.processInfo.environment["PHONELINK_RELAY_URL"] ?? "http://127.0.0.1:8443"
 
     static func resolvePinnedSHA256(args: [String]) -> String? {
-        if let cliPin = parseOption("--tls-pin", in: args), !cliPin.isEmpty {
+        if let cliPin = parseStrictOption("--tls-pin", in: args) {
+            if cliPin.isEmpty {
+                fputs("ERROR: --tls-pin requires a non-empty SHA-256 fingerprint.\n", stderr)
+                exit(2)
+            }
             return cliPin
         }
         if let envPin = ProcessInfo.processInfo.environment["PHONELINK_TLS_PIN"], !envPin.isEmpty {
@@ -64,11 +68,35 @@ func parseFlag(_ flag: String, in args: [String]) -> Bool {
     return args.contains(flag)
 }
 
-func parseOption(_ option: String, in args: [String]) -> String? {
-    if let idx = args.firstIndex(of: option), idx + 1 < args.count {
-        return args[idx + 1]
+func parseStrictOption(_ option: String, in args: [String]) -> String? {
+    for (idx, arg) in args.enumerated() {
+        if arg == option {
+            guard idx + 1 < args.count else {
+                fputs("ERROR: Missing value for option '\(option)'.\n", stderr)
+                exit(2)
+            }
+            let val = args[idx + 1]
+            if val.hasPrefix("--") {
+                fputs("ERROR: Missing value for option '\(option)' (got flag '\(val)').\n", stderr)
+                exit(2)
+            }
+            return val
+        }
+        let eqPrefix = option + "="
+        if arg.hasPrefix(eqPrefix) {
+            let val = String(arg.dropFirst(eqPrefix.count))
+            if val.isEmpty {
+                fputs("ERROR: Empty value for option '\(option)'.\n", stderr)
+                exit(2)
+            }
+            return val
+        }
     }
     return nil
+}
+
+func parseOption(_ option: String, in args: [String]) -> String? {
+    return parseStrictOption(option, in: args)
 }
 
 func parsePositionalArgs(in args: [String], valuedOptions: Set<String>) -> [String] {
@@ -80,11 +108,11 @@ func parsePositionalArgs(in args: [String], valuedOptions: Set<String>) -> [Stri
             i += 2
             continue
         }
+        if valuedOptions.contains(where: { arg.hasPrefix($0 + "=") }) {
+            i += 1
+            continue
+        }
         if arg.hasPrefix("-") {
-            if arg.contains("=") {
-                i += 1
-                continue
-            }
             i += 1
             continue
         }
@@ -92,6 +120,97 @@ func parsePositionalArgs(in args: [String], valuedOptions: Set<String>) -> [Stri
         i += 1
     }
     return result
+}
+
+func resolveRelayURL(from args: [String]) -> URL {
+    let raw = (parseStrictOption("--vps", in: args) ?? Config.defaultRelayURL).trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !raw.isEmpty, var comps = URLComponents(string: raw) else {
+        fputs("ERROR: Invalid VPS relay URL: \(raw)\n", stderr)
+        exit(2)
+    }
+    let lowerScheme = comps.scheme?.lowercased() ?? ""
+    if lowerScheme == "ws" {
+        comps.scheme = "http"
+    } else if lowerScheme == "wss" {
+        comps.scheme = "https"
+    } else {
+        comps.scheme = lowerScheme
+    }
+    guard let scheme = comps.scheme, (scheme == "http" || scheme == "https"),
+          let host = comps.host, !host.isEmpty,
+          let normalized = comps.url else {
+        fputs("ERROR: Invalid VPS relay URL '\(raw)'. Expected http(s)://host[:port].\n", stderr)
+        exit(2)
+    }
+    return normalized
+}
+
+func parseFiniteDoubleOption(
+    _ option: String,
+    in args: [String],
+    default defaultValue: Double,
+    min minVal: Double,
+    max maxVal: Double,
+    clampWithNote: Bool = false
+) -> Double {
+    guard let raw = parseStrictOption(option, in: args) else { return defaultValue }
+    guard let val = Double(raw), val.isFinite, val > 0 else {
+        fputs("ERROR: Invalid value '\(raw)' for \(option). Expected a finite positive number.\n", stderr)
+        exit(2)
+    }
+    if val < minVal || val > maxVal {
+        if clampWithNote {
+            let clamped = Swift.min(Swift.max(val, minVal), maxVal)
+            fputs("Note: Clamping \(option) \(raw) to supported range \(minVal)...\(maxVal).\n", stderr)
+            return clamped
+        }
+        fputs("ERROR: Value '\(raw)' for \(option) out of range (\(minVal)...\(maxVal)).\n", stderr)
+        exit(2)
+    }
+    return val
+}
+
+func parseStrictUInt32Option(
+    _ option: String,
+    in args: [String],
+    default defaultValue: UInt32,
+    min minVal: UInt32,
+    max maxVal: UInt32,
+    clampWithNote: Bool = false
+) -> UInt32 {
+    guard let raw = parseStrictOption(option, in: args) else { return defaultValue }
+    guard let val = UInt32(raw), val > 0 else {
+        fputs("ERROR: Invalid value '\(raw)' for \(option). Expected a positive integer.\n", stderr)
+        exit(2)
+    }
+    if val < minVal || val > maxVal {
+        if clampWithNote {
+            let clamped = Swift.min(Swift.max(val, minVal), maxVal)
+            fputs("Note: Clamping \(option) \(raw) to supported range \(minVal)...\(maxVal).\n", stderr)
+            return clamped
+        }
+        fputs("ERROR: Value '\(raw)' for \(option) out of range (\(minVal)...\(maxVal)).\n", stderr)
+        exit(2)
+    }
+    return val
+}
+
+func parseStrictUInt64Option(_ option: String, in args: [String], min minVal: UInt64 = 1) -> UInt64? {
+    guard let raw = parseStrictOption(option, in: args) else { return nil }
+    guard let val = UInt64(raw), val >= minVal else {
+        fputs("ERROR: Invalid value '\(raw)' for \(option). Expected an integer >= \(minVal).\n", stderr)
+        exit(2)
+    }
+    return val
+}
+
+func parseStrictIntOption(_ option: String, in args: [String], default defaultValue: Int, min minVal: Int, max maxVal: Int) -> Int {
+    guard let raw = parseStrictOption(option, in: args) else { return defaultValue }
+    guard let val = Int(raw), val >= minVal && val <= maxVal else {
+        fputs("ERROR: Invalid value '\(raw)' for \(option). Expected integer \(minVal)...\(maxVal).\n", stderr)
+        exit(2)
+    }
+    return val
 }
 
 func printJSON(_ dict: [String: Any]) {
@@ -106,13 +225,10 @@ func printJSON(_ dict: [String: Any]) {
 func handleInfo(args: [String], identity: DeviceIdentityManager, client: AuthClient) async {
     let isJSON = parseFlag("--json", in: args)
     let isDevice = parseFlag("--device", in: args)
-    let vpsStr = parseOption("--vps", in: args) ?? Config.defaultRelayURL
+    let vpsStr = parseStrictOption("--vps", in: args) ?? Config.defaultRelayURL
 
     if isDevice {
-        guard let vpsURL = URL(string: vpsStr) else {
-            fputs("ERROR: Invalid VPS relay URL: \(vpsStr)\n", stderr)
-            exit(2)
-        }
+        let vpsURL = resolveRelayURL(from: args)
         do {
             let resp = try await ActionClient.fetchDeviceInfo(vpsBaseURL: vpsURL, identity: identity, client: client)
             if isJSON {
@@ -128,10 +244,10 @@ func handleInfo(args: [String], identity: DeviceIdentityManager, client: AuthCli
                     "app_version": resp.appVersion,
                     "error_message": resp.errorMessage ?? ""
                 ]
-                if let data = try? JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted, .sortedKeys]),
-                   let str = String(data: data, encoding: .utf8) {
-                    print(str)
-                }
+                printJSON(dict)
+            } else if resp.status != "STATUS_OK" {
+                let err = resp.errorMessage ?? resp.status
+                fputs("ERROR: Remote device info failed (\(resp.status)): \(err)\n", stderr)
             } else {
                 print("PhoneLink Remote Device Info")
                 print("--------------------------------------------------")
@@ -142,13 +258,17 @@ func handleInfo(args: [String], identity: DeviceIdentityManager, client: AuthCli
                 print("Total Storage:     \(FileClient.formatByteSize(resp.totalStorageBytes))")
                 print("Available Storage: \(FileClient.formatByteSize(resp.availableStorageBytes))")
                 print("App Version:       \(resp.appVersion)")
-                if let err = resp.errorMessage, !err.isEmpty {
-                    print("Error:             \(err)")
-                }
             }
             exit(resp.status == "STATUS_OK" ? 0 : 1)
         } catch {
-            fputs("ERROR: Failed to fetch remote device info: \(error.localizedDescription)\n", stderr)
+            if isJSON {
+                printJSON([
+                    "status": "ERROR",
+                    "error_message": error.localizedDescription
+                ])
+            } else {
+                fputs("ERROR: Failed to fetch remote device info: \(error.localizedDescription)\n", stderr)
+            }
             exit(1)
         }
     }
@@ -197,11 +317,7 @@ func handleWipe(args: [String], identity: DeviceIdentityManager) {
 
 func handlePair(args: [String], identity: DeviceIdentityManager, client: AuthClient) async {
     let isJSON = parseFlag("--json", in: args)
-    let vpsStr = parseOption("--vps", in: args) ?? Config.defaultRelayURL
-    guard let vpsURL = URL(string: vpsStr) else {
-        fputs("ERROR: Invalid VPS relay URL: \(vpsStr)\n", stderr)
-        exit(2)
-    }
+    let vpsURL = resolveRelayURL(from: args)
 
     do {
         // Register device if not yet registered and authenticate for Bearer token
@@ -248,12 +364,8 @@ func handleRevoke(args: [String], identity: DeviceIdentityManager, client: AuthC
     let isJSON = parseFlag("--json", in: args)
     let revokeSelf = parseFlag("--self", in: args)
     let confirm = parseFlag("--confirm", in: args) || parseFlag("-y", in: args)
-    let explicitDevice = parseOption("--device", in: args)
-    let vpsStr = parseOption("--vps", in: args) ?? Config.defaultRelayURL
-    guard let vpsURL = URL(string: vpsStr) else {
-        fputs("ERROR: Invalid VPS relay URL: \(vpsStr)\n", stderr)
-        exit(2)
-    }
+    let explicitDevice = parseStrictOption("--device", in: args)
+    let vpsURL = resolveRelayURL(from: args)
 
     if revokeSelf && !confirm {
         fputs("CAUTION: Revoking this Mac's identity permanently disables it until 'wipe' + re-pair.\n", stderr)
@@ -321,11 +433,7 @@ func handleRevoke(args: [String], identity: DeviceIdentityManager, client: AuthC
 func handleStatus(args: [String], identity: DeviceIdentityManager, client: AuthClient) async {
     let isJSON = parseFlag("--json", in: args)
     let isWatch = parseFlag("--watch", in: args)
-    let vpsStr = parseOption("--vps", in: args) ?? Config.defaultRelayURL
-    guard let vpsURL = URL(string: vpsStr) else {
-        fputs("ERROR: Invalid VPS relay URL: \(vpsStr)\n", stderr)
-        exit(2)
-    }
+    let vpsURL = resolveRelayURL(from: args)
 
     if isWatch {
         let manager = ConnectionManager(
@@ -338,38 +446,53 @@ func handleStatus(args: [String], identity: DeviceIdentityManager, client: AuthC
             print("Connecting to PhoneLink Relay at \(vpsURL)...")
             print("Listening for real-time presence events (Press Ctrl+C to stop)")
             print("--------------------------------------------------")
+            fflush(stdout)
         }
 
         manager.onStateChange = { newState in
-            let dateStr = Date().formatted(.iso8601)
+            let dateStr = Date().ISO8601Format()
+            func emitJSON(_ dict: [String: Any]) {
+                if let data = try? JSONSerialization.data(withJSONObject: dict, options: [.sortedKeys]),
+                   let str = String(data: data, encoding: .utf8) {
+                    print(str)
+                    fflush(stdout)
+                }
+            }
             switch newState {
             case .peerOnline(let id):
                 if isJSON {
-                    print("{\"timestamp\":\"\(dateStr)\",\"event\":\"PEER_ONLINE\",\"peer_device_id\":\"\(id)\",\"is_online\":true}")
-                    fflush(stdout)
+                    emitJSON(["timestamp": dateStr, "event": "PEER_ONLINE", "peer_device_id": id, "is_online": true])
                 } else {
                     print("[\(dateStr)] Phone is ONLINE (\(id))")
+                    fflush(stdout)
                 }
             case .peerOffline(let id):
                 if isJSON {
-                    print("{\"timestamp\":\"\(dateStr)\",\"event\":\"PEER_OFFLINE\",\"peer_device_id\":\"\(id)\",\"is_online\":false}")
-                    fflush(stdout)
+                    emitJSON(["timestamp": dateStr, "event": "PEER_OFFLINE", "peer_device_id": id, "is_online": false])
                 } else {
                     print("[\(dateStr)] Phone is OFFLINE (\(id))")
+                    fflush(stdout)
+                }
+            case .reconnecting(let attempt, let delaySeconds):
+                if isJSON {
+                    emitJSON(["timestamp": dateStr, "event": "RECONNECTING", "attempt": attempt, "delay_seconds": delaySeconds])
+                } else {
+                    print(String(format: "[\(dateStr)] Reconnecting (attempt #%d in %.1fs)...", attempt, delaySeconds))
+                    fflush(stdout)
                 }
             case .error(let msg):
                 if isJSON {
-                    print("{\"timestamp\":\"\(dateStr)\",\"event\":\"ERROR\",\"message\":\"\(msg)\"}")
-                    fflush(stdout)
+                    emitJSON(["timestamp": dateStr, "event": "ERROR", "message": msg])
                 } else {
                     print("[\(dateStr)] Error: \(msg)")
+                    fflush(stdout)
                 }
             default:
                 break
             }
         }
 
-        await manager.connect()
+        await manager.connectWithAutoReconnect()
 
         while true {
             try? await Task.sleep(nanoseconds: 1_000_000_000)
@@ -422,16 +545,12 @@ func handlePing(args: [String], identity: DeviceIdentityManager, client: AuthCli
     let isJSON = parseFlag("--json", in: args)
     let isRelayOnly = parseFlag("--relay", in: args)
     let isDevice = parseFlag("--device", in: args)
-    let count = max(1, Int(parseOption("--count", in: args) ?? "1") ?? 1)
-    let vpsStr = parseOption("--vps", in: args) ?? Config.defaultRelayURL
-    guard let vpsURL = URL(string: vpsStr) else {
-        fputs("ERROR: Invalid VPS relay URL: \(vpsStr)\n", stderr)
-        exit(2)
-    }
+    let count = parseStrictIntOption("--count", in: args, default: 1, min: 1, max: 100)
+    let vpsURL = resolveRelayURL(from: args)
+    let vpsStr = vpsURL.absoluteString
 
     if isDevice || !isRelayOnly {
-        let durationStr = parseOption("--duration", in: args) ?? "5"
-        let duration = UInt32(durationStr) ?? 5
+        let duration = parseStrictUInt32Option("--duration", in: args, default: 5, min: 1, max: 30, clampWithNote: true)
         var latencies: [Int] = []
         var lastResp: DevicePingResponse? = nil
 
@@ -500,8 +619,24 @@ func handlePing(args: [String], identity: DeviceIdentityManager, client: AuthCli
         let startTime = Date()
         await manager.connect()
 
+        let finalState = manager.state
         let latencyMs = Int(Date().timeIntervalSince(startTime) * 1000)
         manager.disconnect()
+
+        guard finalState.isConnected else {
+            let errMsg: String
+            if case .error(let m) = finalState { errMsg = m } else { errMsg = "Relay unreachable (\(finalState))" }
+            if isJSON {
+                printJSON([
+                    "status": "ERROR",
+                    "target": vpsStr,
+                    "error": errMsg
+                ])
+            } else {
+                fputs("ERROR: Relay ping to [\(vpsStr)] failed: \(errMsg)\n", stderr)
+            }
+            exit(1)
+        }
         relayLatencies.append(latencyMs)
         if !isJSON && count > 1 {
             print("Ping to PhoneLink VPS [\(vpsStr)] seq=\(seq)/\(count): time=\(latencyMs)ms status=OK")
@@ -594,8 +729,15 @@ func handleFiles(args: [String], identity: DeviceIdentityManager, client: AuthCl
         exit(0)
     }
 
-    let fileSubcommand = args[0]
-    let remainingArgs = Array(args.dropFirst())
+    let positional = parsePositionalArgs(in: args, valuedOptions: ["--vps", "--tls-pin", "--timeout"])
+    guard let fileSubcommand = positional.first else {
+        printFilesUsage()
+        exit(2)
+    }
+    var remainingArgs = args
+    if let subIdx = remainingArgs.firstIndex(of: fileSubcommand) {
+        remainingArgs.remove(at: subIdx)
+    }
 
     switch fileSubcommand {
     case "ls", "list":
@@ -611,14 +753,8 @@ func handleFiles(args: [String], identity: DeviceIdentityManager, client: AuthCl
 }
 
 func handleFilesPut(args: [String], identity: DeviceIdentityManager, client: AuthClient, isJSON: Bool) async {
-    let vpsStr = parseOption("--vps", in: args) ?? Config.defaultRelayURL
-    guard let vpsURL = URL(string: vpsStr) else {
-        fputs("ERROR: Invalid VPS relay URL: \(vpsStr)\n", stderr)
-        exit(2)
-    }
-
-    let timeoutStr = parseOption("--timeout", in: args)
-    let timeout = Double(timeoutStr ?? "60.0") ?? 60.0
+    let vpsURL = resolveRelayURL(from: args)
+    let timeout = parseFiniteDoubleOption("--timeout", in: args, default: 60.0, min: 1.0, max: 86_400.0)
 
     // Positional arguments: <local_path> [remote_destination_directory]
     let positionalArgs = parsePositionalArgs(in: args, valuedOptions: ["--vps", "--tls-pin", "--timeout"])
@@ -629,9 +765,14 @@ func handleFilesPut(args: [String], identity: DeviceIdentityManager, client: Aut
     }
 
     let localURL = URL(fileURLWithPath: localPath)
-    guard FileManager.default.fileExists(atPath: localURL.path) else {
+    var srcIsDir: ObjCBool = false
+    guard FileManager.default.fileExists(atPath: localURL.path, isDirectory: &srcIsDir) else {
         fputs("ERROR: Local source file does not exist: \(localURL.path)\n", stderr)
         exit(1)
+    }
+    if srcIsDir.boolValue {
+        fputs("ERROR: Local source path is a directory, expected a file: \(localURL.path)\n", stderr)
+        exit(2)
     }
 
     let remoteDirectory = positionalArgs.count > 1 ? positionalArgs[1] : ""
@@ -685,37 +826,28 @@ func handleFilesPut(args: [String], identity: DeviceIdentityManager, client: Aut
                 "sha256": result.sha256,
                 "elapsed_seconds": (Double(Int(elapsed * 1000)) / 1000.0)
             ]
-            let data = try JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted, .sortedKeys])
-            print(String(data: data, encoding: .utf8)!)
+            printJSON(dict)
         }
         exit(0)
     } catch {
         if !isJSON {
             fputs("\nERROR: Upload failed: \(error.localizedDescription)\n", stderr)
         } else {
-            let dict: [String: Any] = [
+            printJSON([
                 "status": "ERROR",
                 "local_path": localURL.path,
                 "error_message": error.localizedDescription
-            ]
-            if let data = try? JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted]) {
-                print(String(data: data, encoding: .utf8)!)
-            }
+            ])
         }
         exit(1)
     }
 }
 
 func handleFilesGet(args: [String], identity: DeviceIdentityManager, client: AuthClient, isJSON: Bool) async {
-    let vpsStr = parseOption("--vps", in: args) ?? Config.defaultRelayURL
-    guard let vpsURL = URL(string: vpsStr) else {
-        fputs("ERROR: Invalid VPS relay URL: \(vpsStr)\n", stderr)
-        exit(2)
-    }
+    let vpsURL = resolveRelayURL(from: args)
 
     let noResume = parseFlag("--no-resume", in: args)
-    let timeoutStr = parseOption("--timeout", in: args)
-    let timeout = Double(timeoutStr ?? "60.0") ?? 60.0
+    let timeout = parseFiniteDoubleOption("--timeout", in: args, default: 60.0, min: 1.0, max: 86_400.0)
 
     // Positional arguments: remote_path and optional local_path
     let positionalArgs = parsePositionalArgs(in: args, valuedOptions: ["--vps", "--tls-pin", "--timeout"])
@@ -729,11 +861,20 @@ func handleFilesGet(args: [String], identity: DeviceIdentityManager, client: Aut
     if positionalArgs.count > 1 {
         localDestinationPath = positionalArgs[1]
     } else {
-        let filename = URL(fileURLWithPath: remotePath).lastPathComponent
+        let filename = (remotePath as NSString).lastPathComponent
+        guard !filename.isEmpty && filename != "." && filename != ".." && filename != "/" else {
+            fputs("ERROR: Cannot derive local filename from '\(remotePath)'; pass explicit [local_path].\n", stderr)
+            exit(2)
+        }
         localDestinationPath = (FileManager.default.currentDirectoryPath as NSString).appendingPathComponent(filename)
     }
 
     let localURL = URL(fileURLWithPath: localDestinationPath)
+    var destIsDir: ObjCBool = false
+    if FileManager.default.fileExists(atPath: localURL.path, isDirectory: &destIsDir), destIsDir.boolValue {
+        fputs("ERROR: Local destination is an existing directory: \(localURL.path)\n", stderr)
+        exit(2)
+    }
 
     if !isJSON {
         print("Connecting to Android device via relay...")
@@ -781,33 +922,25 @@ func handleFilesGet(args: [String], identity: DeviceIdentityManager, client: Aut
                 "sha256": result.sha256,
                 "elapsed_seconds": (Double(Int(elapsed * 1000)) / 1000.0)
             ]
-            let data = try JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted, .sortedKeys])
-            print(String(data: data, encoding: .utf8)!)
+            printJSON(dict)
         }
         exit(0)
     } catch {
         if !isJSON {
             fputs("\nERROR: Download failed: \(error.localizedDescription)\n", stderr)
         } else {
-            let dict: [String: Any] = [
+            printJSON([
                 "status": "ERROR",
                 "remote_path": remotePath,
                 "error_message": error.localizedDescription
-            ]
-            if let data = try? JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted]) {
-                print(String(data: data, encoding: .utf8)!)
-            }
+            ])
         }
         exit(1)
     }
 }
 
 func handleFilesList(args: [String], identity: DeviceIdentityManager, client: AuthClient, isJSON: Bool) async {
-    let vpsStr = parseOption("--vps", in: args) ?? Config.defaultRelayURL
-    guard let vpsURL = URL(string: vpsStr) else {
-        fputs("ERROR: Invalid VPS relay URL: \(vpsStr)\n", stderr)
-        exit(2)
-    }
+    let vpsURL = resolveRelayURL(from: args)
 
     // Extract target directory path (first option-aware positional argument)
     let targetPath = parsePositionalArgs(in: args, valuedOptions: ["--vps", "--tls-pin", "--timeout"]).first ?? ""
@@ -824,14 +957,12 @@ func handleFilesList(args: [String], identity: DeviceIdentityManager, client: Au
         if response.status != "STATUS_OK" {
             let errMsg = response.errorMessage ?? "Unknown remote error"
             if isJSON {
-                let dict: [String: Any] = [
+                printJSON([
                     "status": "ERROR",
                     "error_code": response.status,
                     "error_message": errMsg,
                     "directory": targetPath
-                ]
-                let data = try JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted])
-                print(String(data: data, encoding: .utf8)!)
+                ])
             } else {
                 fputs("ERROR: Remote file listing failed (\(response.status)): \(errMsg)\n", stderr)
             }
@@ -858,8 +989,7 @@ func handleFilesList(args: [String], identity: DeviceIdentityManager, client: Au
                 "count": response.items.count,
                 "items": itemDicts
             ]
-            let data = try JSONSerialization.data(withJSONObject: dict, options: [.prettyPrinted])
-            print(String(data: data, encoding: .utf8)!)
+            printJSON(dict)
         } else {
             for line in FileClient.formatFileListLines(response) {
                 print(line)
@@ -909,38 +1039,34 @@ func handleCamera(args: [String], identity: DeviceIdentityManager, client: AuthC
         exit(0)
     }
 
-    let isViewMode = !args.contains("stream") // 'view' or default is view mode
-    let showCanvas = isViewMode && !parseFlag("--no-canvas", in: args)
-    let saveDir = parseOption("--save", in: args)
-
-    let vpsStr = parseOption("--vps", in: args) ?? Config.defaultRelayURL
-    guard let vpsURL = URL(string: vpsStr) else {
-        fputs("ERROR: Invalid VPS relay URL: \(vpsStr)\n", stderr)
+    let valuedOpts: Set<String> = ["--lens", "--fps", "--quality", "--duration", "--max-frames", "--save", "--vps", "--tls-pin"]
+    let positional = parsePositionalArgs(in: args, valuedOptions: valuedOpts)
+    let mode = positional.first?.lowercased() ?? "view"
+    if mode != "view" && mode != "stream" {
+        fputs("ERROR: Unknown camera mode '\(mode)'. Expected 'view' or 'stream'. Run 'phonelink camera --help'.\n", stderr)
         exit(2)
     }
+    let isViewMode = (mode == "view")
+    let showCanvas = isViewMode && !parseFlag("--no-canvas", in: args)
+    let saveDir = parseStrictOption("--save", in: args)
+
+    let vpsURL = resolveRelayURL(from: args)
 
     var lens: CameraLens = .back
-    if let lensStr = parseOption("--lens", in: args)?.lowercased() {
-        if lensStr == "front" {
-            lens = .front
-        } else {
-            lens = .back
+    if let lensStr = parseStrictOption("--lens", in: args)?.lowercased() {
+        switch lensStr {
+        case "front": lens = .front
+        case "back": lens = .back
+        default:
+            fputs("ERROR: Invalid --lens '\(lensStr)'. Expected 'front' or 'back'.\n", stderr)
+            exit(2)
         }
     }
 
-    let fpsVal = UInt32(parseOption("--fps", in: args) ?? "2") ?? 2
-    let targetFps = min(max(fpsVal, 1), 5)
-
-    let qVal = UInt32(parseOption("--quality", in: args) ?? "80") ?? 80
-    let jpegQuality = min(max(qVal, 10), 100)
-
-    let dVal = Double(parseOption("--duration", in: args) ?? "10.0") ?? 10.0
-    let durationSeconds = max(dVal, 1.0)
-
-    var maxFrames: UInt64? = nil
-    if let mfStr = parseOption("--max-frames", in: args), let mfVal = UInt64(mfStr) {
-        maxFrames = mfVal
-    }
+    let targetFps = parseStrictUInt32Option("--fps", in: args, default: 2, min: 1, max: 5, clampWithNote: true)
+    let jpegQuality = parseStrictUInt32Option("--quality", in: args, default: 80, min: 10, max: 100, clampWithNote: true)
+    let durationSeconds = parseFiniteDoubleOption("--duration", in: args, default: 10.0, min: 1.0, max: 300.0, clampWithNote: true)
+    let maxFrames = parseStrictUInt64Option("--max-frames", in: args, min: 1)
 
     let maxWidth: UInt32 = 1280
     let maxHeight: UInt32 = 720
@@ -949,12 +1075,19 @@ func handleCamera(args: [String], identity: DeviceIdentityManager, client: AuthC
     var saveURL: URL? = nil
     if let dir = saveDir {
         let url = URL(fileURLWithPath: (dir as NSString).expandingTildeInPath)
-        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        saveURL = url
+        do {
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+            saveURL = url
+        } catch {
+            fputs("ERROR: Failed to create save directory '\(url.path)': \(error.localizedDescription)\n", stderr)
+            exit(1)
+        }
     }
 
     let viewerController = CameraViewerController()
     viewerController.notifyConnecting()
+    let renderLock = NSLock()
+    let isInteractiveTTY = isatty(STDOUT_FILENO) == 1
 
     if !isJSON {
         print(CameraTerminalRenderer.renderBanner(state: viewerController.state, lens: lens, width: maxWidth, height: maxHeight))
@@ -965,6 +1098,39 @@ func handleCamera(args: [String], identity: DeviceIdentityManager, client: AuthC
 
     let targetSaveURL = saveURL
     let activeLens = lens
+    let control = CameraStreamControl()
+
+    signal(SIGINT, SIG_IGN)
+    signal(SIGTERM, SIG_IGN)
+    let sigintSource = DispatchSource.makeSignalSource(signal: SIGINT, queue: .global())
+    sigintSource.setEventHandler { control.requestStop(reason: "user_interrupted") }
+    sigintSource.resume()
+    let sigtermSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .global())
+    sigtermSource.setEventHandler { control.requestStop(reason: "terminated") }
+    sigtermSource.resume()
+
+    func cleanupSignals() {
+        sigintSource.cancel()
+        sigtermSource.cancel()
+        signal(SIGINT, SIG_DFL)
+        signal(SIGTERM, SIG_DFL)
+    }
+
+    let staleWatchdogTask: Task<Void, Never>? = (!isJSON && showCanvas) ? Task {
+        while !Task.isCancelled {
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            guard !Task.isCancelled else { break }
+            if viewerController.checkStale() {
+                renderLock.withLock {
+                    let banner = CameraTerminalRenderer.renderBanner(state: viewerController.state, lens: activeLens)
+                    let canvas = CameraTerminalRenderer.renderAsciiCanvas(frame: nil, state: viewerController.state)
+                    let prefix = isInteractiveTTY ? "\u{001B}[H\u{001B}[2J" : "\n"
+                    print(prefix + banner + "\n" + canvas)
+                    fflush(stdout)
+                }
+            }
+        }
+    } : nil
 
     do {
         let summary = try await CameraClient.streamCamera(
@@ -978,6 +1144,7 @@ func handleCamera(args: [String], identity: DeviceIdentityManager, client: AuthC
             maxHeight: maxHeight,
             maxDurationSeconds: durationSeconds,
             maxFrames: maxFrames,
+            control: control,
             onFrame: { frame, stats in
                 viewerController.notifyFrameReceived(frame: frame, stats: stats)
 
@@ -989,59 +1156,73 @@ func handleCamera(args: [String], identity: DeviceIdentityManager, client: AuthC
                 }
 
                 if !isJSON {
-                    if showCanvas {
-                        // In interactive view mode, redraw banner and canvas
-                        let banner = CameraTerminalRenderer.renderBanner(
-                            state: viewerController.state,
-                            lens: activeLens,
-                            width: frame.width,
-                            height: frame.height,
-                            frameBytes: frame.jpegData.count
-                        )
-                        let canvas = CameraTerminalRenderer.renderAsciiCanvas(frame: frame, state: viewerController.state)
-                        print("\u{001B}[H\u{001B}[2J" + banner + "\n" + canvas)
-                    } else {
-                        let sizeKB = Double(frame.jpegData.count) / 1024.0
-                        print(String(format: "[Frame #%llu] %ux%u (%.1f KB) | Latency: %lld ms | Rate: %.1f FPS",
-                                     frame.frameNumber, frame.width, frame.height, sizeKB, stats.lastLatencyMs, stats.currentFps))
+                    renderLock.withLock {
+                        if showCanvas {
+                            let banner = CameraTerminalRenderer.renderBanner(
+                                state: viewerController.state,
+                                lens: activeLens,
+                                width: frame.width,
+                                height: frame.height,
+                                frameBytes: frame.jpegData.count
+                            )
+                            let canvas = CameraTerminalRenderer.renderAsciiCanvas(frame: frame, state: viewerController.state)
+                            let prefix = isInteractiveTTY ? "\u{001B}[H\u{001B}[2J" : "\n"
+                            print(prefix + banner + "\n" + canvas)
+                            fflush(stdout)
+                        } else {
+                            let sizeKB = Double(frame.jpegData.count) / 1024.0
+                            print(String(format: "[Frame #%llu] %ux%u (%.1f KB) | Latency: %lld ms | Rate: %.1f FPS",
+                                         frame.frameNumber, frame.width, frame.height, sizeKB, stats.lastLatencyMs, stats.currentFps))
+                            fflush(stdout)
+                        }
                     }
                 }
             },
             onStatusChange: { status in
                 if !isJSON && !showCanvas {
-                    print(">> \(status)")
+                    renderLock.withLock {
+                        print(">> \(status)")
+                        fflush(stdout)
+                    }
                 }
             }
         )
 
-        // Stream deactivation - strictly transition viewer to inactive state (CAM-4 invariant)
+        staleWatchdogTask?.cancel()
         viewerController.notifyStopped(reason: summary.stopReason)
 
         if isJSON {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted]
             let data = try encoder.encode(summary)
-            print(String(data: data, encoding: .utf8)!)
-        } else {
-            if showCanvas {
-                let banner = CameraTerminalRenderer.renderBanner(
-                    state: viewerController.state,
-                    lens: lens,
-                    width: maxWidth,
-                    height: maxHeight
-                )
-                let canvas = CameraTerminalRenderer.renderAsciiCanvas(frame: nil, state: viewerController.state)
-                print("\u{001B}[H\u{001B}[2J" + banner + "\n" + canvas)
+            if let str = String(data: data, encoding: .utf8) {
+                print(str)
             }
-            print("--------------------------------------------------------------------------------")
-            print("Viewer state: \(viewerController.state.statusBadge) - \(viewerController.state.statusDescription)")
-            print("Stream summary: \(summary.totalFrames) frames received, \(summary.droppedFrames) dropped")
-            print(String(format: "Average Latency: %.1f ms | Average Rate: %.1f FPS | Duration: %.2f s",
-                         summary.averageLatencyMs, summary.averageFps, summary.durationSeconds))
-            print("Status: \(summary.stopReason)")
+        } else {
+            renderLock.withLock {
+                if showCanvas {
+                    let banner = CameraTerminalRenderer.renderBanner(
+                        state: viewerController.state,
+                        lens: lens,
+                        width: maxWidth,
+                        height: maxHeight
+                    )
+                    let canvas = CameraTerminalRenderer.renderAsciiCanvas(frame: nil, state: viewerController.state)
+                    let prefix = isInteractiveTTY ? "\u{001B}[H\u{001B}[2J" : "\n"
+                    print(prefix + banner + "\n" + canvas)
+                }
+                print("--------------------------------------------------------------------------------")
+                print("Viewer state: \(viewerController.state.statusBadge) - \(viewerController.state.statusDescription)")
+                print("Stream summary: \(summary.totalFrames) frames received, \(summary.droppedFrames) dropped")
+                print(String(format: "Average Latency: %.1f ms | Average Rate: %.1f FPS | Duration: %.2f s",
+                             summary.averageLatencyMs, summary.averageFps, summary.durationSeconds))
+                print("Status: \(summary.stopReason)")
+            }
         }
+        cleanupSignals()
         exit(0)
     } catch {
+        staleWatchdogTask?.cancel()
         viewerController.notifyError(message: error.localizedDescription)
         if isJSON {
             printJSON([
@@ -1052,6 +1233,7 @@ func handleCamera(args: [String], identity: DeviceIdentityManager, client: AuthC
             print(CameraTerminalRenderer.renderBanner(state: viewerController.state, lens: lens))
             fputs("ERROR: \(error.localizedDescription)\n", stderr)
         }
+        cleanupSignals()
         exit(1)
     }
 }
@@ -1064,6 +1246,7 @@ private final class MicOutputCoordinator: @unchecked Sendable {
     private let enablePlayback: Bool
     private var wavWriter: MicWavWriter? = nil
     private var livePlayer: MicLivePlayer? = nil
+    private var writeErrorMessage: String? = nil
 
     init(saveURL: URL?, enablePlayback: Bool) {
         self.saveURL = saveURL
@@ -1074,22 +1257,25 @@ private final class MicOutputCoordinator: @unchecked Sendable {
         lock.withLock {
             var wavErr: String? = nil
             var playWarn: String? = nil
+            let clampedCh = UInt16(min(8, max(1, channels)))
+            let safeBits: UInt16 = bitsPerSample == 8 ? 8 : 16
 
             if let url = saveURL {
                 do {
                     wavWriter = try MicWavWriter(
                         url: url,
                         sampleRateHz: sampleRateHz,
-                        channels: UInt16(max(1, channels)),
-                        bitsPerSample: UInt16(max(8, bitsPerSample))
+                        channels: clampedCh,
+                        bitsPerSample: safeBits
                     )
                 } catch {
                     wavErr = error.localizedDescription
+                    writeErrorMessage = wavErr
                 }
             }
 
             if enablePlayback {
-                let player = MicLivePlayer(sampleRateHz: sampleRateHz, channels: channels)
+                let player = MicLivePlayer(sampleRateHz: sampleRateHz, channels: UInt32(clampedCh))
                 if let warn = player.startupErrorMessage {
                     playWarn = warn
                 }
@@ -1101,23 +1287,39 @@ private final class MicOutputCoordinator: @unchecked Sendable {
         }
     }
 
-    func writeAndPlay(pcmData: Data) {
+    func writeAndPlay(pcmData: Data) -> String? {
         let (writer, player) = lock.withLock { (wavWriter, livePlayer) }
-        try? writer?.append(pcmData: pcmData)
+        var errMsg: String? = nil
+        if let writer {
+            do {
+                try writer.append(pcmData: pcmData)
+            } catch {
+                lock.withLock {
+                    if writeErrorMessage == nil {
+                        writeErrorMessage = error.localizedDescription
+                    }
+                    errMsg = writeErrorMessage
+                }
+            }
+        }
         player?.enqueue(pcmData: pcmData)
+        return errMsg
     }
 
     @discardableResult
-    func finishAll() -> UInt64 {
-        let (writer, player) = lock.withLock {
+    func finishAll() -> (bytes: UInt64, writeError: String?) {
+        let (writer, player, prevErr) = lock.withLock {
             let w = wavWriter
             let p = livePlayer
+            let e = writeErrorMessage
             wavWriter = nil
             livePlayer = nil
-            return (w, p)
+            return (w, p, e)
         }
-        player?.stop()
-        return writer?.finalize() ?? 0
+        player?.drainAndStop(maxWaitMs: 600)
+        let bytes = writer?.finalize() ?? 0
+        let finalErr = prevErr ?? writer?.lastFinalizeError
+        return (bytes, finalErr)
     }
 }
 
@@ -1158,25 +1360,13 @@ func handleMic(args: [String], identity: DeviceIdentityManager, client: AuthClie
     let isRecordMode = (mode == "record")
     let enablePlayback = !isRecordMode && !parseFlag("--no-play", in: args)
 
-    let vpsStr = parseOption("--vps", in: args) ?? Config.defaultRelayURL
-    guard let vpsURL = URL(string: vpsStr) else {
-        fputs("ERROR: Invalid VPS relay URL: \(vpsStr)\n", stderr)
-        exit(2)
-    }
-
-    let requestedRate = UInt32(parseOption("--rate", in: args) ?? "16000") ?? 16000
-    let sampleRateHz = min(max(requestedRate, 8000), 48000)
-
-    let rawDuration = Double(parseOption("--duration", in: args) ?? "15.0") ?? 15.0
-    let durationSeconds = min(max(rawDuration, 1.0), 300.0)
-
-    var maxChunks: UInt64? = nil
-    if let mcStr = parseOption("--max-chunks", in: args), let mcVal = UInt64(mcStr) {
-        maxChunks = mcVal
-    }
+    let vpsURL = resolveRelayURL(from: args)
+    let sampleRateHz = parseStrictUInt32Option("--rate", in: args, default: 16000, min: 8000, max: 48000, clampWithNote: true)
+    let durationSeconds = parseFiniteDoubleOption("--duration", in: args, default: 15.0, min: 1.0, max: 300.0, clampWithNote: true)
+    let maxChunks = parseStrictUInt64Option("--max-chunks", in: args, min: 1)
 
     var saveURL: URL? = nil
-    if let saveOpt = parseOption("--save", in: args), !saveOpt.isEmpty {
+    if let saveOpt = parseStrictOption("--save", in: args), !saveOpt.isEmpty {
         saveURL = URL(fileURLWithPath: (saveOpt as NSString).expandingTildeInPath)
     } else if isRecordMode {
         let ts = Int(Date().timeIntervalSince1970)
@@ -1187,16 +1377,21 @@ func handleMic(args: [String], identity: DeviceIdentityManager, client: AuthClie
     let output = MicOutputCoordinator(saveURL: saveURL, enablePlayback: enablePlayback)
     let control = MicStreamControl()
 
-    // Ensure Ctrl+C stops Android mic cleanly and finalizes WAV RIFF header
+    // Ensure Ctrl+C / SIGTERM stops Android mic cleanly and finalizes WAV RIFF header
     signal(SIGINT, SIG_IGN)
+    signal(SIGTERM, SIG_IGN)
     let sigintSource = DispatchSource.makeSignalSource(signal: SIGINT, queue: .global())
-    sigintSource.setEventHandler {
-        control.requestStop(reason: "user_interrupted")
-    }
+    sigintSource.setEventHandler { control.requestStop(reason: "user_interrupted") }
     sigintSource.resume()
-    defer {
+    let sigtermSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .global())
+    sigtermSource.setEventHandler { control.requestStop(reason: "terminated") }
+    sigtermSource.resume()
+
+    func cleanupSignals() {
         sigintSource.cancel()
+        sigtermSource.cancel()
         signal(SIGINT, SIG_DFL)
+        signal(SIGTERM, SIG_DFL)
     }
 
     if !isJSON {
@@ -1226,14 +1421,22 @@ func handleMic(args: [String], identity: DeviceIdentityManager, client: AuthClie
                     bitsPerSample: startResp.bitsPerSample > 0 ? startResp.bitsPerSample : 16
                 )
                 if let wavErr = result.wavError {
-                    fputs("WARN: Failed to initialize WAV output: \(wavErr)\n", stderr)
+                    fputs("ERROR: Failed to initialize WAV output: \(wavErr)\n", stderr)
+                    if isRecordMode {
+                        control.requestStop(reason: "wav_init_failed")
+                    }
                 }
                 if let playWarn = result.playbackWarning, enablePlayback && !isJSON {
                     fputs("WARN: Audio playback unavailable (\(playWarn)); continuing stream without speaker output.\n", stderr)
                 }
             },
             onChunk: { chunk, stats in
-                output.writeAndPlay(pcmData: chunk.pcmData)
+                if let writeErr = output.writeAndPlay(pcmData: chunk.pcmData) {
+                    fputs("\nERROR: WAV write failed: \(writeErr)\n", stderr)
+                    if isRecordMode {
+                        control.requestStop(reason: "wav_write_failed")
+                    }
+                }
                 if !isJSON {
                     let kb = Double(stats.bytesReceived) / 1024.0
                     let line = String(
@@ -1251,7 +1454,19 @@ func handleMic(args: [String], identity: DeviceIdentityManager, client: AuthClie
             }
         )
 
-        let wavBytes = output.finishAll()
+        let finished = output.finishAll()
+        if let wavErr = finished.writeError, isRecordMode || saveURL != nil {
+            if isJSON {
+                printJSON([
+                    "status": "ERROR",
+                    "error": "WAV recording failed: \(wavErr)"
+                ])
+            } else {
+                fputs("\nERROR: WAV recording failed: \(wavErr)\n", stderr)
+            }
+            cleanupSignals()
+            exit(1)
+        }
 
         if isJSON {
             var dict: [String: Any] = [
@@ -1269,7 +1484,7 @@ func handleMic(args: [String], identity: DeviceIdentityManager, client: AuthClie
             ]
             if let path = saveURL?.path {
                 dict["saved_wav_path"] = path
-                dict["saved_pcm_bytes"] = wavBytes
+                dict["saved_pcm_bytes"] = finished.bytes
             }
             printJSON(dict)
         } else {
@@ -1283,6 +1498,7 @@ func handleMic(args: [String], identity: DeviceIdentityManager, client: AuthClie
                 print("Saved WAV File:  \(path)")
             }
         }
+        cleanupSignals()
         exit(0)
     } catch {
         _ = output.finishAll()
@@ -1294,6 +1510,7 @@ func handleMic(args: [String], identity: DeviceIdentityManager, client: AuthClie
         } else {
             fputs("\nERROR: \(error.localizedDescription)\n", stderr)
         }
+        cleanupSignals()
         exit(1)
     }
 }
@@ -1334,32 +1551,44 @@ func resolveInstallerScriptPath() -> String? {
 
 func handleInstallPhone(args: [String]) {
     let isJSON = parseFlag("--json", in: args)
-    let vps = parseOption("--vps", in: args) ?? Config.defaultRelayURL
-    let portStr = parseOption("--port", in: args) ?? "8080"
-    
-    // Construct install URL on VPS
-    var vpsInstallUrl = vps.replacingOccurrences(of: "ws://", with: "http://")
-        .replacingOccurrences(of: "wss://", with: "https://")
-    if let wsIdx = vpsInstallUrl.range(of: "/ws/") {
-        vpsInstallUrl = String(vpsInstallUrl[..<wsIdx.lowerBound])
+    let vpsURL = resolveRelayURL(from: args)
+    let port = parseStrictIntOption("--port", in: args, default: 8080, min: 1, max: 65535)
+
+    // Construct clean install URL on VPS
+    var installComps = URLComponents(url: vpsURL, resolvingAgainstBaseURL: false) ?? URLComponents()
+    installComps.query = nil
+    installComps.fragment = nil
+    let basePath = installComps.path.hasSuffix("/") ? String(installComps.path.dropLast()) : installComps.path
+    if let wsRange = basePath.range(of: "/ws/", options: .caseInsensitive) {
+        installComps.path = String(basePath[..<wsRange.lowerBound]) + "/install"
+    } else {
+        installComps.path = basePath + "/install"
     }
-    vpsInstallUrl = vpsInstallUrl.trimmingCharacters(in: CharacterSet(charactersIn: "/")) + "/install"
+    let vpsInstallUrl = installComps.url?.absoluteString ?? "\(vpsURL.absoluteString)/install"
 
     if parseFlag("--serve", in: args) || parseFlag("--local", in: args) {
         guard let script = resolveInstallerScriptPath() else {
-            fputs("ERROR: Could not locate scripts/serve_phone_installer.py.\n", stderr)
-            fputs("Set PHONELINK_REPO_ROOT=/path/to/PhoneLink or run from the PhoneLink repo root.\n", stderr)
+            if isJSON {
+                printJSON(["status": "ERROR", "error": "Could not locate scripts/serve_phone_installer.py"])
+            } else {
+                fputs("ERROR: Could not locate scripts/serve_phone_installer.py.\n", stderr)
+                fputs("Set PHONELINK_REPO_ROOT=/path/to/PhoneLink or run from the PhoneLink repo root.\n", stderr)
+            }
             exit(1)
         }
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")
-        process.arguments = [script, "--port", portStr]
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["python3", script, "--port", String(port)]
         do {
             try process.run()
             process.waitUntilExit()
             exit(process.terminationStatus)
         } catch {
-            fputs("ERROR: Failed to launch installer server: \(error.localizedDescription)\n", stderr)
+            if isJSON {
+                printJSON(["status": "ERROR", "error": error.localizedDescription])
+            } else {
+                fputs("ERROR: Failed to launch installer server: \(error.localizedDescription)\n", stderr)
+            }
             exit(1)
         }
     }
@@ -1397,6 +1626,8 @@ func handleInstallPhone(args: [String]) {
 }
 
 // MARK: - Main Execution
+
+signal(SIGPIPE, SIG_IGN)
 
 let args = CommandLine.arguments
 

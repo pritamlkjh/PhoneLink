@@ -125,4 +125,17 @@ class StorageAccessLayerTest {
         assertTrue(result.isFailure)
         assertTrue(result.exceptionOrNull()!!.message!!.contains("File not found"))
     }
+
+    @Test
+    fun testPartialUploadTempFilesExcludedFromListing() {
+        File(tempRoot, "partial.bin.part").writeText("incomplete")
+        File(tempRoot, ".phonelink_tmp_1234_doc.txt").writeText("staging")
+        val storage = StorageAccessLayer(tempRoot) { true }
+
+        val result = storage.listFiles("")
+        assertTrue(result.isSuccess)
+        val names = result.getOrThrow().map { it.name }
+        assertFalse(names.contains("partial.bin.part"))
+        assertFalse(names.contains(".phonelink_tmp_1234_doc.txt"))
+    }
 }

@@ -132,6 +132,11 @@ class FileOperationHandler(
         Thread(r, "PhoneLink-FileTransfer").apply { isDaemon = true }
     }
 
+    fun shutdown() {
+        activeUploads.clear()
+        transferExecutor.shutdownNow()
+    }
+
     /**
      * Executes directory listing against StorageAccessLayer.
      */
@@ -337,6 +342,15 @@ class FileOperationHandler(
         sha256Checksum: String,
         expectedChunkSize: Int = DEFAULT_CHUNK_SIZE
     ): FileUploadInitResponseDto {
+        if (totalSizeBytes < 0) {
+            return FileUploadInitResponseDto(
+                transferId = transferId,
+                status = STATUS_STORAGE_ACCESS_DENIED,
+                resumeOffset = 0L,
+                expectedChunkSize = expectedChunkSize,
+                errorMessage = "Invalid total file size: $totalSizeBytes"
+            )
+        }
         // Enforce strict filename validation (must be bare filename without traversal or path separators)
         if (fileName.contains("/") || fileName.contains("\\") || fileName.contains("..")) {
             return FileUploadInitResponseDto(

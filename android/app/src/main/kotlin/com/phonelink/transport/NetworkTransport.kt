@@ -71,9 +71,15 @@ class NetworkTransport(
 
     private val currentState = AtomicReference<ConnectionState>(ConnectionState.Disconnected)
     private val listeners = CopyOnWriteArrayList<Listener>()
+    private val connectionGeneration = java.util.concurrent.atomic.AtomicLong(0)
     private var activeWebSocket: WebSocket? = null
     private var activeUrl: String? = null
     private var currentRetryAttempt = 0
+
+    fun isQueueBackpressured(maxQueuedBytes: Long = 2L * 1024L * 1024L): Boolean {
+        val ws = activeWebSocket ?: return false
+        return ws.queueSize() >= maxQueuedBytes
+    }
 
     fun addListener(listener: Listener) {
         listeners.addIfAbsent(listener)
@@ -103,10 +109,23 @@ class NetworkTransport(
      */
     @Synchronized
     fun connect(url: String) {
-        if (currentState.get() is ConnectionState.Connecting || currentState.get() is ConnectionState.Connected) {
+        val state = currentState.get()
+        if ((state is ConnectionState.Connecting || state is ConnectionState.Connected) && activeUrl == url) {
             return
         }
 
+        // If reconnecting with a new URL or session token, tear down the prior socket cleanly first
+        activeWebSocket?.let { oldWs ->
+            activeWebSocket = null
+            try {
+                oldWs.close(1000, "Superseded by new connection")
+            } catch (_: Throwable) {}
+            try {
+                oldWs.cancel()
+            } catch (_: Throwable) {}
+        }
+
+        val gen = connectionGeneration.incrementAndGet()
         activeUrl = url
         setState(ConnectionState.Connecting)
 
@@ -116,11 +135,13 @@ class NetworkTransport(
 
         activeWebSocket = okHttpClient.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
+                if (connectionGeneration.get() != gen) return
                 currentRetryAttempt = 0
                 setState(ConnectionState.Connected(url, System.currentTimeMillis()))
             }
 
             override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
+                if (connectionGeneration.get() != gen) return
                 val data = bytes.toByteArray()
                 listeners.forEach { listener ->
                     try {
@@ -132,6 +153,7 @@ class NetworkTransport(
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
+                if (connectionGeneration.get() != gen) return
                 listeners.forEach { listener ->
                     try {
                         listener.onMessageReceived(text)
@@ -146,11 +168,15 @@ class NetworkTransport(
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                activeWebSocket = null
+                if (connectionGeneration.get() != gen) return
+                if (activeWebSocket === webSocket) {
+                    activeWebSocket = null
+                }
                 setState(ConnectionState.Disconnected)
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                if (connectionGeneration.get() != gen) return
                 if (activeWebSocket !== webSocket && activeWebSocket != null) {
                     return
                 }
@@ -170,6 +196,7 @@ class NetworkTransport(
      */
     @Synchronized
     fun disconnect(code: Int = 1000, reason: String = "Client disconnect") {
+        connectionGeneration.incrementAndGet()
         currentRetryAttempt = config.maxRetryAttempts // Cancel further auto-retries
         activeWebSocket?.let { ws ->
             try {

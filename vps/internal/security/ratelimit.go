@@ -3,6 +3,7 @@ package security
 import (
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -90,6 +91,16 @@ func (rl *RateLimiter) Allow(key string) bool {
 	cutoff := now.Add(-rl.window)
 	bucket, exists := rl.clients[key]
 	if !exists {
+		if len(rl.clients) > 8192 {
+			for k, b := range rl.clients {
+				pruned := pruneOldTimestamps(b.timestamps, cutoff)
+				if len(pruned) == 0 {
+					delete(rl.clients, k)
+				} else {
+					b.timestamps = pruned
+				}
+			}
+		}
 		bucket = &clientBucket{}
 		rl.clients[key] = bucket
 	}
@@ -112,10 +123,44 @@ func ExtractClientIP(remoteAddr string) string {
 	return remoteAddr
 }
 
+func isTrustedProxyIP(rawIP string) bool {
+	ip := net.ParseIP(strings.TrimSpace(rawIP))
+	if ip == nil {
+		return false
+	}
+	return ip.IsLoopback() || ip.IsPrivate()
+}
+
+// ExtractRequestClientIP extracts the client IP from r, honoring X-Real-IP / X-Forwarded-For
+// only when the direct connection originates from a trusted loopback/private reverse proxy (e.g. Caddy).
+func ExtractRequestClientIP(r *http.Request) string {
+	directIP := ExtractClientIP(r.RemoteAddr)
+	if !isTrustedProxyIP(directIP) {
+		return directIP
+	}
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		// Walk right-to-left skipping trusted proxy hops to resist spoofed left-most client headers
+		parts := strings.Split(xff, ",")
+		for i := len(parts) - 1; i >= 0; i-- {
+			candidate := strings.TrimSpace(parts[i])
+			if net.ParseIP(candidate) == nil {
+				continue
+			}
+			if !isTrustedProxyIP(candidate) {
+				return candidate
+			}
+		}
+	}
+	if realIP := strings.TrimSpace(r.Header.Get("X-Real-IP")); realIP != "" && net.ParseIP(realIP) != nil {
+		return realIP
+	}
+	return directIP
+}
+
 // Middleware wraps an http.Handler with sliding-window rate limiting.
 func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ip := ExtractClientIP(r.RemoteAddr)
+		ip := ExtractRequestClientIP(r)
 
 		if !rl.Allow(ip) {
 			w.Header().Set("Retry-After", "60")

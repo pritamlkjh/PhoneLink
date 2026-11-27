@@ -178,8 +178,19 @@ public final class MicStreamControl: @unchecked Sendable {
     private let lock = NSLock()
     private var pendingStopReason: String? = nil
     private var stopCallback: (@Sendable (String) -> Void)? = nil
+    private var preConnectCancelCallback: (@Sendable (String) -> Void)? = nil
 
     public init() {}
+
+    public func attachPreConnectCancelHandler(_ handler: @escaping @Sendable (String) -> Void) {
+        let pending = lock.withLock { () -> String? in
+            preConnectCancelCallback = handler
+            return stopCallback == nil ? pendingStopReason : nil
+        }
+        if let reason = pending {
+            handler(reason)
+        }
+    }
 
     public func attachStopHandler(_ handler: @escaping @Sendable (String) -> Void) {
         let pending: String? = lock.withLock {
@@ -192,13 +203,17 @@ public final class MicStreamControl: @unchecked Sendable {
     }
 
     public func requestStop(reason: String = "user_stopped") {
-        let handler: (@Sendable (String) -> Void)? = lock.withLock {
+        let (handler, preCb): ((@Sendable (String) -> Void)?, (@Sendable (String) -> Void)?) = lock.withLock {
             if pendingStopReason == nil {
                 pendingStopReason = reason
             }
-            return stopCallback
+            return (stopCallback, preConnectCancelCallback)
         }
-        handler?(reason)
+        if let handler {
+            handler(reason)
+        } else {
+            preCb?(reason)
+        }
     }
 }
 
@@ -311,7 +326,17 @@ public final class MicClient: @unchecked Sendable {
         let activeSessionId = UUID().uuidString
         state.setSessionId(activeSessionId)
 
-        let effectiveTimeout = maxDurationSeconds > 0 ? maxDurationSeconds + 10.0 : 310.0
+        let safeMaxDuration = (maxDurationSeconds.isFinite && maxDurationSeconds > 0) ? min(maxDurationSeconds, 300.0) : 0
+        let effectiveTimeout = safeMaxDuration > 0 ? safeMaxDuration + 10.0 : 310.0
+
+        control?.attachPreConnectCancelHandler { reason in
+            state.setStopReason(reason)
+            session.disconnect()
+        }
+
+        defer {
+            state.cancelTasks()
+        }
 
         return try await session.runSession(
             timeoutSeconds: effectiveTimeout,
@@ -335,20 +360,22 @@ public final class MicClient: @unchecked Sendable {
                     guard state.markStopSent(reason: reason) else { return }
                     onStatusChange?("Stopping microphone stream (\(reason))...")
 
-                    Task {
+                    let task = Task {
                         do {
                             let stopData = try buildMicStopRequest(sessionId: activeSessionId, reason: reason)
                             try await activeSession.sendEncrypted(plaintext: stopData)
                             try? await Task.sleep(nanoseconds: 1_500_000_000)
                             finish(.success(state.buildSummary()))
                         } catch {
-                            finish(.failure(error))
+                            finish(.success(state.buildSummary()))
                         }
                     }
+                    state.trackTask(task)
                 }
 
                 if payloadObj["mic_start_resp"] != nil {
                     let startResp = try parseMicStartResponse(data: decrypted)
+                    guard startResp.sessionId == activeSessionId else { return }
                     if startResp.status != "STATUS_OK" {
                         let errMsg = startResp.errorMessage ?? startResp.status
                         finish(.failure(AuthClientError.invalidResponse("Mic start rejected: \(startResp.status) - \(errMsg)")))
@@ -360,15 +387,18 @@ public final class MicClient: @unchecked Sendable {
                     onStatusChange?("Microphone streaming active (\(startResp.actualSampleRateHz) Hz mono)")
                     control?.attachStopHandler(sendStopRequest)
 
-                    if maxDurationSeconds > 0 {
-                        Task {
-                            let ns = UInt64(maxDurationSeconds * 1_000_000_000)
+                    if safeMaxDuration > 0 {
+                        let task = Task {
+                            let ns = UInt64(safeMaxDuration * 1_000_000_000)
                             try? await Task.sleep(nanoseconds: ns)
+                            guard !Task.isCancelled else { return }
                             sendStopRequest("duration_completed")
                         }
+                        state.trackTask(task)
                     }
                 } else if payloadObj["mic_chunk"] != nil {
                     let chunk = try parseMicAudioChunk(data: decrypted)
+                    guard chunk.sessionId == activeSessionId else { return }
                     let (stats, count) = state.recordChunk(chunk: chunk)
                     onChunk(chunk, stats)
 
@@ -376,15 +406,18 @@ public final class MicClient: @unchecked Sendable {
                         sendStopRequest("max_chunks_reached")
                     }
                 } else if payloadObj["mic_stop_resp"] != nil {
-                    _ = try parseMicStopResponse(data: decrypted)
+                    let stopResp = try parseMicStopResponse(data: decrypted)
+                    guard stopResp.sessionId == activeSessionId else { return }
                     finish(.success(state.buildSummary()))
+                } else if let errObj = payloadObj["error"] as? [String: Any] {
+                    let msg = errObj["message"] as? String ?? "Android error"
+                    finish(.failure(AuthClientError.invalidResponse("Remote error: \(msg)")))
                 }
             },
             onTerminalState: { newState, finish in
                 switch newState {
                 case .peerOffline, .disconnected, .error:
-                    if state.hasStarted() {
-                        state.setStopReason("connection_lost")
+                    if state.isStopAlreadySent() {
                         finish(.success(state.buildSummary()))
                     }
                 default:
@@ -399,6 +432,7 @@ private final class MicStreamingSessionState: @unchecked Sendable {
     private let lock = NSLock()
     private var sessionId: String = ""
     private var isStopSent = false
+    private var isTerminated = false
     private var startTime: Date? = nil
     private var actualSampleRateHz: UInt32 = 16000
     private var actualChannels: UInt32 = 1
@@ -409,9 +443,33 @@ private final class MicStreamingSessionState: @unchecked Sendable {
     private var totalLatencyMs: Int64 = 0
     private var expectedNextChunk: UInt64 = 1
     private var stopReason: String = "completed"
+    private var backgroundTasks: [Task<Void, Never>] = []
 
     func setSessionId(_ id: String) {
         lock.withLock { sessionId = id }
+    }
+
+    func trackTask(_ task: Task<Void, Never>) {
+        let cancel = lock.withLock { () -> Bool in
+            if isTerminated { return true }
+            backgroundTasks.append(task)
+            return false
+        }
+        if cancel { task.cancel() }
+    }
+
+    func cancelTasks() {
+        let tasks = lock.withLock { () -> [Task<Void, Never>] in
+            isTerminated = true
+            let list = backgroundTasks
+            backgroundTasks.removeAll()
+            return list
+        }
+        tasks.forEach { $0.cancel() }
+    }
+
+    func isStopAlreadySent() -> Bool {
+        lock.withLock { isStopSent }
     }
 
     func markStarted(format: MicStartResponse) {
@@ -435,13 +493,14 @@ private final class MicStreamingSessionState: @unchecked Sendable {
         lock.withLock {
             if startTime == nil { startTime = Date() }
             let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
-            let latencyMs = max(0, nowMs - chunk.timestampMs)
-            totalLatencyMs += latencyMs
+            let rawLatency = nowMs.subtractingReportingOverflow(chunk.timestampMs)
+            let latencyMs = rawLatency.overflow ? 0 : max(0, rawLatency.partialValue)
+            totalLatencyMs = totalLatencyMs &+ latencyMs
 
             if chunk.chunkNumber > expectedNextChunk {
-                chunksDropped += (chunk.chunkNumber - expectedNextChunk)
+                chunksDropped &+= (chunk.chunkNumber - expectedNextChunk)
             }
-            expectedNextChunk = chunk.chunkNumber + 1
+            expectedNextChunk = chunk.chunkNumber == UInt64.max ? UInt64.max : (chunk.chunkNumber + 1)
             chunksReceived += 1
             totalBytes += UInt64(chunk.pcmData.count)
 

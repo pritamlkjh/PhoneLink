@@ -236,6 +236,7 @@ public final class CameraClient: @unchecked Sendable {
         maxHeight: UInt32 = 720,
         maxDurationSeconds: Double = 30.0,
         maxFrames: UInt64? = nil,
+        control: CameraStreamControl? = nil,
         onFrame: @escaping @Sendable (CameraFrame, CameraStreamStats) -> Void,
         onStatusChange: (@Sendable (String) -> Void)? = nil
     ) async throws -> CameraStreamSummary {
@@ -252,7 +253,17 @@ public final class CameraClient: @unchecked Sendable {
         let activeSessionId = UUID().uuidString
         sessionState.setSessionId(activeSessionId)
 
-        let effectiveTimeout = maxDurationSeconds > 0 ? maxDurationSeconds + 10.0 : 300.0
+        let safeMaxDuration = (maxDurationSeconds.isFinite && maxDurationSeconds > 0) ? min(maxDurationSeconds, 300.0) : 0
+        let effectiveTimeout = safeMaxDuration > 0 ? safeMaxDuration + 10.0 : 300.0
+
+        control?.attachPreConnectCancelHandler { reason in
+            sessionState.setStopReason(reason)
+            session.disconnect()
+        }
+
+        defer {
+            sessionState.cancelTasks()
+        }
 
         return try await session.runSession(
             timeoutSeconds: effectiveTimeout,
@@ -278,7 +289,7 @@ public final class CameraClient: @unchecked Sendable {
                     guard sessionState.markStopSent(reason: reason) else { return }
                     onStatusChange?("Stopping camera stream (\(reason))...")
 
-                    Task {
+                    let task = Task {
                         do {
                             let stopData = try buildCameraStopRequest(sessionId: activeSessionId, reason: reason)
                             try await activeSession.sendEncrypted(plaintext: stopData)
@@ -286,13 +297,15 @@ public final class CameraClient: @unchecked Sendable {
                             try? await Task.sleep(nanoseconds: 2_000_000_000)
                             finish(.success(sessionState.buildSummary()))
                         } catch {
-                            finish(.failure(error))
+                            finish(.success(sessionState.buildSummary()))
                         }
                     }
+                    sessionState.trackTask(task)
                 }
 
                 if payloadObj["camera_start_resp"] != nil {
                     let startResp = try parseCameraStartResponse(data: decrypted)
+                    guard startResp.sessionId == activeSessionId else { return }
                     if startResp.status != "STATUS_OK" {
                         let errMsg = startResp.errorMessage ?? startResp.status
                         finish(.failure(AuthClientError.invalidResponse("Camera start rejected: \(startResp.status) - \(errMsg)")))
@@ -300,16 +313,20 @@ public final class CameraClient: @unchecked Sendable {
                     }
                     sessionState.markStarted()
                     onStatusChange?("Camera streaming active at \(startResp.actualFps) FPS")
+                    control?.attachStopHandler(sendStopRequest)
 
-                    if maxDurationSeconds > 0 {
-                        Task {
-                            let nanoseconds = UInt64(maxDurationSeconds * 1_000_000_000)
+                    if safeMaxDuration > 0 {
+                        let task = Task {
+                            let nanoseconds = UInt64(safeMaxDuration * 1_000_000_000)
                             try? await Task.sleep(nanoseconds: nanoseconds)
+                            guard !Task.isCancelled else { return }
                             sendStopRequest("duration_completed")
                         }
+                        sessionState.trackTask(task)
                     }
                 } else if payloadObj["camera_frame"] != nil {
                     let frame = try parseCameraFrame(data: decrypted)
+                    guard frame.sessionId == activeSessionId else { return }
                     let (stats, count) = sessionState.recordFrame(frame: frame)
                     onFrame(frame, stats)
 
@@ -317,15 +334,18 @@ public final class CameraClient: @unchecked Sendable {
                         sendStopRequest("max_frames_reached")
                     }
                 } else if payloadObj["camera_stop_resp"] != nil {
-                    _ = try parseCameraStopResponse(data: decrypted)
+                    let stopResp = try parseCameraStopResponse(data: decrypted)
+                    guard stopResp.sessionId == activeSessionId else { return }
                     finish(.success(sessionState.buildSummary()))
+                } else if let errObj = payloadObj["error"] as? [String: Any] {
+                    let msg = errObj["message"] as? String ?? "Android error"
+                    finish(.failure(AuthClientError.invalidResponse("Remote error: \(msg)")))
                 }
             },
             onTerminalState: { newState, finish in
                 switch newState {
                 case .peerOffline, .disconnected, .error:
-                    if sessionState.hasStarted() {
-                        sessionState.setStopReason("connection_lost")
+                    if sessionState.isStopAlreadySent() {
                         finish(.success(sessionState.buildSummary()))
                     }
                 default:
@@ -333,6 +353,49 @@ public final class CameraClient: @unchecked Sendable {
                 }
             }
         )
+    }
+}
+
+public final class CameraStreamControl: @unchecked Sendable {
+    private let lock = NSLock()
+    private var pendingStopReason: String? = nil
+    private var stopCallback: (@Sendable (String) -> Void)? = nil
+    private var preConnectCancelCallback: (@Sendable (String) -> Void)? = nil
+
+    public init() {}
+
+    public func attachPreConnectCancelHandler(_ handler: @escaping @Sendable (String) -> Void) {
+        let pending = lock.withLock { () -> String? in
+            preConnectCancelCallback = handler
+            return stopCallback == nil ? pendingStopReason : nil
+        }
+        if let reason = pending {
+            handler(reason)
+        }
+    }
+
+    public func attachStopHandler(_ handler: @escaping @Sendable (String) -> Void) {
+        let pending: String? = lock.withLock {
+            stopCallback = handler
+            return pendingStopReason
+        }
+        if let reason = pending {
+            handler(reason)
+        }
+    }
+
+    public func requestStop(reason: String = "user_stopped") {
+        let (cb, preCb): ((@Sendable (String) -> Void)?, (@Sendable (String) -> Void)?) = lock.withLock {
+            if pendingStopReason == nil {
+                pendingStopReason = reason
+            }
+            return (stopCallback, preConnectCancelCallback)
+        }
+        if let cb {
+            cb(reason)
+        } else {
+            preCb?(reason)
+        }
     }
 }
 
@@ -411,6 +474,30 @@ private final class CameraStreamingSessionState: @unchecked Sendable {
     private var totalLatencyMs: Int64 = 0
     private var expectedNextFrame: UInt64 = 1
     private var stopReason: String = "completed"
+    private var backgroundTasks: [Task<Void, Never>] = []
+
+    func trackTask(_ task: Task<Void, Never>) {
+        let cancel = lock.withLock { () -> Bool in
+            if isTerminated { return true }
+            backgroundTasks.append(task)
+            return false
+        }
+        if cancel { task.cancel() }
+    }
+
+    func cancelTasks() {
+        let tasks = lock.withLock { () -> [Task<Void, Never>] in
+            isTerminated = true
+            let list = backgroundTasks
+            backgroundTasks.removeAll()
+            return list
+        }
+        tasks.forEach { $0.cancel() }
+    }
+
+    func isStopAlreadySent() -> Bool {
+        lock.withLock { isStopSent }
+    }
 
     func setKeys(_ k: E2EEncryptionManager.SessionKeys) {
         lock.lock()
@@ -463,13 +550,14 @@ private final class CameraStreamingSessionState: @unchecked Sendable {
             startTime = Date()
         }
         let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
-        let latencyMs = max(0, nowMs - frame.timestampMs)
-        totalLatencyMs += latencyMs
+        let rawLatency = nowMs.subtractingReportingOverflow(frame.timestampMs)
+        let latencyMs = rawLatency.overflow ? 0 : max(0, rawLatency.partialValue)
+        totalLatencyMs = totalLatencyMs &+ latencyMs
 
         if frame.frameNumber > expectedNextFrame {
-            droppedFrames += (frame.frameNumber - expectedNextFrame)
+            droppedFrames &+= (frame.frameNumber - expectedNextFrame)
         }
-        expectedNextFrame = frame.frameNumber + 1
+        expectedNextFrame = frame.frameNumber == UInt64.max ? UInt64.max : (frame.frameNumber + 1)
         framesReceived += 1
 
         let elapsed = Date().timeIntervalSince(startTime!)

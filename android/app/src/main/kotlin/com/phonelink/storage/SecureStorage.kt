@@ -104,16 +104,38 @@ class SecureStorage(
             return SecretKeySpec(unwrapped, "AES")
         }
 
-        private fun getOrCreateMasterKey(prefs: SharedPreferences): SecretKey {
+        private val keyInitLock = Any()
+
+        @Volatile
+        private var cachedContextInstance: SecureStorage? = null
+
+        private fun isPermanentKeystoreError(error: Throwable): Boolean {
+            val name = error.javaClass.name
+            return error is javax.crypto.AEADBadTagException ||
+                error is javax.crypto.BadPaddingException ||
+                error is java.security.InvalidKeyException ||
+                error is IllegalArgumentException ||
+                name.contains("KeyPermanentlyInvalidatedException") ||
+                name.contains("UnrecoverableKeyException")
+        }
+
+        private fun getOrCreateMasterKey(prefs: SharedPreferences): SecretKey = synchronized(keyInitLock) {
             if (hasAndroidKeyStore()) {
                 val wrapped = prefs.getString(PREF_KEY_WRAPPED_MASTER_KEY, null)
                 if (wrapped != null) {
                     try {
                         return unwrapMasterKeyWithKeystore(wrapped)
-                    } catch (_: Throwable) {
+                    } catch (firstErr: Throwable) {
+                        if (!isPermanentKeystoreError(firstErr)) {
+                            // Brief retry in case Keystore daemon is warming up right after unlock/boot
+                            try {
+                                Thread.sleep(50)
+                                return unwrapMasterKeyWithKeystore(wrapped)
+                            } catch (_: Throwable) {}
+                        }
                         // Vendor Keystore corruption/invalidation (e.g., OEM OTA or lock-screen reset):
                         // scrub unreadable wrapped blob rather than crash-looping on startup.
-                        prefs.edit().remove(PREF_KEY_WRAPPED_MASTER_KEY).apply()
+                        prefs.edit().remove(PREF_KEY_WRAPPED_MASTER_KEY).commit()
                     }
                 }
 
@@ -134,12 +156,12 @@ class SecureStorage(
                     prefs.edit()
                         .putString(PREF_KEY_WRAPPED_MASTER_KEY, newWrapped)
                         .remove(PREF_KEY_MASTER_KEY)
-                        .apply()
+                        .commit()
                     return SecretKeySpec(rawKey, "AES")
                 } catch (_: Throwable) {
                     // Vendor Keystore unavailable/broken for AES/GCM wrapping: fall through to app-private fallback
                     val b64 = Base64.getEncoder().encodeToString(rawKey)
-                    prefs.edit().putString(PREF_KEY_MASTER_KEY, b64).apply()
+                    prefs.edit().putString(PREF_KEY_MASTER_KEY, b64).commit()
                     return SecretKeySpec(rawKey, "AES")
                 }
             }
@@ -154,7 +176,7 @@ class SecureStorage(
             }
             val rawKey = generateRawAes256Key()
             val b64 = Base64.getEncoder().encodeToString(rawKey)
-            prefs.edit().putString(PREF_KEY_MASTER_KEY, b64).apply()
+            prefs.edit().putString(PREF_KEY_MASTER_KEY, b64).commit()
             return SecretKeySpec(rawKey, "AES")
         }
 
@@ -168,8 +190,13 @@ class SecureStorage(
             prefs.contains(PREF_KEY_WRAPPED_MASTER_KEY)
 
         fun fromContext(context: Context): SecureStorage {
-            val prefs = context.getSharedPreferences(PREFS_FILE, Context.MODE_PRIVATE)
-            return SecureStorage(prefs)
+            cachedContextInstance?.let { return it }
+            return synchronized(keyInitLock) {
+                cachedContextInstance?.let { return it }
+                val appCtx = context.applicationContext ?: context
+                val prefs = appCtx.getSharedPreferences(PREFS_FILE, Context.MODE_PRIVATE)
+                SecureStorage(prefs).also { cachedContextInstance = it }
+            }
         }
     }
 
@@ -266,7 +293,9 @@ class SecureStorage(
             .remove(KEY_SESSION_TOKEN)
             .remove(KEY_PAIRED_DEVICE_ID)
             .remove(KEY_PAIRED_PUBLIC_KEY)
-            .apply()
+            .remove(KEY_RESUMPTION_TOKEN)
+            .remove(KEY_RESUMPTION_EXPIRES_AT)
+            .commit()
     }
 
     fun getRelayUrl(): String {
